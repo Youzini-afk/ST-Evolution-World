@@ -38,8 +38,8 @@ if (typeof jq === "function") {
       console.info("[Evolution World] ST context 已就绪");
 
       const [{ initRuntime }, { mountUI }] = await Promise.all([
-        import("./runtime/main"),
-        import("./ui/mount"),
+        import(/* webpackMode: "eager" */ "./runtime/main"),
+        import(/* webpackMode: "eager" */ "./ui/mount"),
       ]);
 
       // 初始化运行时 (settings, events, pipeline)

@@ -1,16 +1,16 @@
 // @ts-check
-const path = require('path');
-const MiniCssExtractPlugin = require('mini-css-extract-plugin');
-const { VueLoaderPlugin } = require('vue-loader');
-const webpack = require('webpack');
+const path = require("path");
+const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+const { VueLoaderPlugin } = require("vue-loader");
+const webpack = require("webpack");
 
 /** @type {import('webpack').Configuration} */
 const config = {
-  entry: './src/index.ts',
+  entry: "./src/index.ts",
 
   output: {
-    path: path.resolve(__dirname, 'dist'),
-    filename: 'index.js',
+    path: path.resolve(__dirname, "dist"),
+    filename: "index.js",
     clean: true,
     // ST 加载扩展 JS 时用 <script type="module">
     // IIFE 在 module 中照常执行
@@ -18,16 +18,16 @@ const config = {
   },
 
   resolve: {
-    extensions: ['.ts', '.tsx', '.js', '.vue', '.json'],
+    extensions: [".ts", ".tsx", ".js", ".vue", ".json"],
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      "@": path.resolve(__dirname, "src"),
     },
   },
 
   // jQuery, lodash, toastr 由 SillyTavern 主页面提供
   // 在 module scope 中必须用 globalThis 前缀才能访问到页面全局变量
   externals: {
-    jquery: 'globalThis jQuery',
+    jquery: "globalThis jQuery",
   },
 
   module: {
@@ -35,12 +35,12 @@ const config = {
       // Vue SFC
       {
         test: /\.vue$/,
-        loader: 'vue-loader',
+        loader: "vue-loader",
       },
       // TypeScript
       {
         test: /\.tsx?$/,
-        loader: 'ts-loader',
+        loader: "ts-loader",
         exclude: /node_modules/,
         options: {
           appendTsSuffixTo: [/\.vue$/],
@@ -50,12 +50,12 @@ const config = {
       // CSS (包括 Vue SFC <style> 和 node_modules CSS 如 @vue-flow)
       {
         test: /\.css$/,
-        use: [MiniCssExtractPlugin.loader, 'css-loader'],
+        use: [MiniCssExtractPlugin.loader, "css-loader"],
       },
       // SCSS
       {
         test: /\.s[ac]ss$/,
-        use: [MiniCssExtractPlugin.loader, 'css-loader', 'sass-loader'],
+        use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
       },
     ],
   },
@@ -64,7 +64,7 @@ const config = {
     new VueLoaderPlugin(),
 
     new MiniCssExtractPlugin({
-      filename: 'style.css',
+      filename: "style.css",
     }),
 
     // Vue feature flags
@@ -74,6 +74,11 @@ const config = {
       __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
     }),
   ],
+
+  optimization: {
+    splitChunks: false,
+    runtimeChunk: false,
+  },
 };
 
 module.exports = config;
