@@ -191,6 +191,7 @@ onMounted(() => {
 
 .ew-app .vue-flow__node {
   display: block !important;
+  visibility: visible !important;
   position: absolute !important;
   pointer-events: all !important;
   transform-origin: 0 0 !important;
