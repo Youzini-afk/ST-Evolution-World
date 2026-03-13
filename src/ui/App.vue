@@ -129,8 +129,94 @@ onMounted(() => {
 }
 </style>
 
-<!-- 非 scoped：暗色主题覆盖 + ST CSS 冲突修复 -->
+<!-- 非 scoped：ST CSS 冲突修复 + 暗色主题 -->
 <style>
+/* ══════════════════════════════════════════════
+   关键：ST 全局 CSS 覆盖了 Vue Flow 的 position 属性，
+   导致 viewport 高度塌缩为 0px，节点不可见。
+   必须用 !important 强制回正。
+   ══════════════════════════════════════════════ */
+.ew-app .vue-flow {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+.ew-app .vue-flow__container {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+
+.ew-app .vue-flow__pane {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 1;
+}
+
+.ew-app .vue-flow__transformationpane {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  transform-origin: 0 0 !important;
+  pointer-events: none !important;
+  z-index: 2;
+}
+
+.ew-app .vue-flow__viewport {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  overflow: visible !important;
+  z-index: 4;
+}
+
+.ew-app .vue-flow__nodes {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  transform-origin: 0 0 !important;
+}
+
+.ew-app .vue-flow__node {
+  position: absolute !important;
+  pointer-events: all !important;
+  transform-origin: 0 0 !important;
+  cursor: grab !important;
+  z-index: 1;
+}
+
+.ew-app .vue-flow .vue-flow__edges {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  overflow: visible !important;
+}
+
+.ew-app .vue-flow__edges svg {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: visible !important;
+}
+
+.ew-app .vue-flow__panel {
+  position: absolute !important;
+  pointer-events: all !important;
+}
+
 /* ── 节点 ── */
 .ew-app .vue-flow__node-default {
   background: rgba(30, 35, 50, 0.95);

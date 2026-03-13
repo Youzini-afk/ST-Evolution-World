@@ -430,21 +430,21 @@
 }
 
 
-.ew-app[data-v-cfbbe8bc] {
+.ew-app[data-v-cafed98e] {
   padding: 12px;
   color: var(--SmartThemeBodyColor, #e2e8f0);
 }
-.ew-app__header[data-v-cfbbe8bc] {
+.ew-app__header[data-v-cafed98e] {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
 }
-.ew-app__header h3[data-v-cfbbe8bc] { margin: 0; font-size: 16px;
+.ew-app__header h3[data-v-cafed98e] { margin: 0; font-size: 16px;
 }
-.ew-app__version[data-v-cfbbe8bc] { font-size: 11px; opacity: 0.5;
+.ew-app__version[data-v-cafed98e] { font-size: 11px; opacity: 0.5;
 }
-.ew-app__graph-test[data-v-cfbbe8bc] {
+.ew-app__graph-test[data-v-cafed98e] {
   width: 100%;
   height: 500px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -453,6 +453,83 @@
   background: rgba(0, 0, 0, 0.3);
 }
 
+
+/* ══════════════════════════════════════════════
+   关键：ST 全局 CSS 覆盖了 Vue Flow 的 position 属性，
+   导致 viewport 高度塌缩为 0px，节点不可见。
+   必须用 !important 强制回正。
+   ══════════════════════════════════════════════ */
+.ew-app .vue-flow {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+.ew-app .vue-flow__container {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+.ew-app .vue-flow__pane {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 1;
+}
+.ew-app .vue-flow__transformationpane {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  transform-origin: 0 0 !important;
+  pointer-events: none !important;
+  z-index: 2;
+}
+.ew-app .vue-flow__viewport {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  top: 0 !important;
+  left: 0 !important;
+  overflow: visible !important;
+  z-index: 4;
+}
+.ew-app .vue-flow__nodes {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  transform-origin: 0 0 !important;
+}
+.ew-app .vue-flow__node {
+  position: absolute !important;
+  pointer-events: all !important;
+  transform-origin: 0 0 !important;
+  cursor: grab !important;
+  z-index: 1;
+}
+.ew-app .vue-flow .vue-flow__edges {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  overflow: visible !important;
+}
+.ew-app .vue-flow__edges svg {
+  position: absolute !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: visible !important;
+}
+.ew-app .vue-flow__panel {
+  position: absolute !important;
+  pointer-events: all !important;
+}
 
 /* ── 节点 ── */
 .ew-app .vue-flow__node-default {
