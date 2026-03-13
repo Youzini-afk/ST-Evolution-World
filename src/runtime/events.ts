@@ -1,4 +1,9 @@
-import { getEventTypes, onSTEvent, onSTEventFirst } from "../st-adapter";
+import {
+  getEventTypes,
+  getSTContext,
+  onSTEvent,
+  onSTEventFirst,
+} from "../st-adapter";
 import { EwWorkflowNoticeInput, showManagedWorkflowNotice } from "../ui/notice";
 import { getEffectiveFlows } from "./char-flows";
 import {
@@ -507,6 +512,44 @@ function shouldReleaseInterceptedMessage(
   }
 
   return outcome.workflowSucceeded;
+}
+
+async function rollbackInterceptedUserMessage(
+  messageId: number | null | undefined,
+  userInput: string,
+  generationType: string,
+): Promise<void> {
+  if (messageId == null || NON_SEND_GENERATION_TYPES.has(generationType)) {
+    return;
+  }
+
+  if (messageId !== getLastMessageId()) {
+    return;
+  }
+
+  const message = getChatMessages(messageId)[0];
+  const messageText = String(message?.message ?? "").trim();
+  if (!message || message.role !== "user") {
+    return;
+  }
+
+  if (userInput.trim() && messageText !== userInput.trim()) {
+    return;
+  }
+
+  try {
+    const ctx = getSTContext() as any;
+    if (typeof ctx.deleteLastMessage === "function") {
+      await ctx.deleteLastMessage();
+      clearAfterReplyPending();
+      return;
+    }
+  } catch (error) {
+    console.warn(
+      "[Evolution World] Failed to rollback intercepted user message:",
+      error,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1046,6 +1089,7 @@ async function runPrimaryBeforeReplyIntercept(
 
   const messageId =
     getRuntimeState().last_send?.message_id ?? getLastMessageId();
+  const pendingUserMessageId = getRuntimeState().last_send?.message_id ?? null;
 
   let workflowOutcome: WorkflowExecutionOutcome = {
     shouldAbortGeneration: false,
@@ -1078,6 +1122,11 @@ async function runPrimaryBeforeReplyIntercept(
   }
 
   if (workflowOutcome.shouldAbortGeneration) {
+    await rollbackInterceptedUserMessage(
+      pendingUserMessageId,
+      userInput,
+      generationType,
+    );
     setSendTextareaValue(userInput);
     clearReplyInstruction();
     abort(true);
@@ -1085,6 +1134,11 @@ async function runPrimaryBeforeReplyIntercept(
   }
 
   if (!shouldReleaseInterceptedMessage(settings, workflowOutcome)) {
+    await rollbackInterceptedUserMessage(
+      pendingUserMessageId,
+      userInput,
+      generationType,
+    );
     setSendTextareaValue(userInput);
     clearReplyInstruction();
     console.debug(
