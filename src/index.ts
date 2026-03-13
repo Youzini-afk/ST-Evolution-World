@@ -4,52 +4,93 @@
  * ST 通过 <script type="module"> 加载此文件。
  * jQuery/lodash/toastr 等全局变量由 ST 主页面提供。
  */
-import { getSTContext } from './st-adapter';
-import { initRuntime } from './runtime/main';
-import { mountUI } from './ui/mount';
 
-// 使用 globalThis.jQuery 而非 import 的 $，确保在 module scope 中能找到全局变量
+// ── 最早的调试日志 ──
+console.log('[Evolution World] ===== ENTRY POINT TOP-LEVEL =====');
+
+let getSTContext: any;
+let initRuntime: any;
+let mountUI: any;
+
+try {
+  console.log('[Evolution World] Importing st-adapter...');
+  const adapter = require('./st-adapter');
+  getSTContext = adapter.getSTContext;
+  console.log('[Evolution World] st-adapter imported OK');
+} catch (err) {
+  console.error('[Evolution World] FAILED to import st-adapter:', err);
+}
+
+try {
+  console.log('[Evolution World] Importing runtime/main...');
+  const main = require('./runtime/main');
+  initRuntime = main.initRuntime;
+  console.log('[Evolution World] runtime/main imported OK');
+} catch (err) {
+  console.error('[Evolution World] FAILED to import runtime/main:', err);
+}
+
+try {
+  console.log('[Evolution World] Importing ui/mount...');
+  const mount = require('./ui/mount');
+  mountUI = mount.mountUI;
+  console.log('[Evolution World] ui/mount imported OK');
+} catch (err) {
+  console.error('[Evolution World] FAILED to import ui/mount:', err);
+}
+
+// ── jQuery ready callback ──
 const jq = (globalThis as any).jQuery || (globalThis as any).$;
+console.log('[Evolution World] jQuery found:', typeof jq);
 
 if (typeof jq === 'function') {
   jq(() => {
+    console.log('[Evolution World] jQuery ready callback fired');
     try {
+      if (!getSTContext) throw new Error('getSTContext not imported');
       const ctx = getSTContext();
       console.info('[Evolution World] ST context ready, chatId:', ctx.chatId);
 
-      // 初始化运行时 (settings, events, pipeline)
+      if (!initRuntime) throw new Error('initRuntime not imported');
       initRuntime()
         .then(() => {
-          // 运行时就绪后挂载 UI (FAB + 魔法棒 + 浮动面板)
-          mountUI();
-          (globalThis as any).toastr?.success?.('Evolution World 扩展已加载！', 'EW', { timeOut: 2000 });
+          console.log('[Evolution World] Runtime init complete, mounting UI...');
+          if (mountUI) {
+            mountUI();
+            (globalThis as any).toastr?.success?.('Evolution World 扩展已加载！', 'EW', { timeOut: 2000 });
+          } else {
+            console.error('[Evolution World] mountUI not available');
+          }
         })
-        .catch(error => {
+        .catch((error: any) => {
           console.error('[Evolution World] Runtime init failed:', error);
-          (globalThis as any).toastr?.error?.('Evolution World 初始化失败', 'EW');
         });
     } catch (error) {
-      console.error('[Evolution World] Failed to load:', error);
+      console.error('[Evolution World] Failed in jQuery ready:', error);
     }
   });
 } else {
-  // jQuery 尚未加载，使用 DOMContentLoaded 作为后备
-  console.warn('[Evolution World] jQuery not found, using DOMContentLoaded fallback');
+  console.warn('[Evolution World] jQuery not found, using DOMContentLoaded');
   document.addEventListener('DOMContentLoaded', () => {
+    console.log('[Evolution World] DOMContentLoaded fired');
     try {
+      if (!getSTContext) throw new Error('getSTContext not imported');
       const ctx = getSTContext();
       console.info('[Evolution World] ST context ready (fallback), chatId:', ctx.chatId);
 
+      if (!initRuntime) throw new Error('initRuntime not imported');
       initRuntime()
         .then(() => {
-          mountUI();
-          console.info('[Evolution World] Extension loaded (fallback path)');
+          console.log('[Evolution World] Runtime init complete (fallback), mounting UI...');
+          if (mountUI) mountUI();
         })
-        .catch(error => {
-          console.error('[Evolution World] Runtime init failed:', error);
+        .catch((error: any) => {
+          console.error('[Evolution World] Runtime init failed (fallback):', error);
         });
     } catch (error) {
-      console.error('[Evolution World] Failed to load (fallback):', error);
+      console.error('[Evolution World] Failed in DOMContentLoaded:', error);
     }
   });
 }
+
+console.log('[Evolution World] ===== ENTRY POINT SETUP DONE =====');
