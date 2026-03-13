@@ -32,6 +32,7 @@ import {
 import { convertStPresetToFlow, isSillyTavernPreset } from './convertStPreset';
 import type { TabKey } from './help-meta';
 import { showEwNotice } from './notice';
+import { getCurrentCharacterName, getChatMessages, getLastMessageId } from '../runtime/compat/character';
 
 export const useEwStore = defineStore('evolution-world-store', () => {
   const settings = ref<EwSettings>(getSettings());
@@ -518,7 +519,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   async function loadCharFlows() {
     charFlowsLoading.value = true;
     try {
-      const name = getCurrentCharacterName?.() ?? '';
+      const name = getCurrentCharacterName() ?? '';
       activeCharName.value = name;
       charFlows.value = await readCharFlows(settings.value);
     } catch (e) {

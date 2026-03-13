@@ -1,27 +1,28 @@
-import { getEffectiveFlows } from './char-flows';
-import { renderControllerTemplate } from './controller-renderer';
-import { dispatchFlows, DispatchFlowsError } from './dispatcher';
-import { uuidv4 } from './helpers';
-import { injectReplyInstructionOnce } from './injection';
-import { mergeFlowResults } from './merger';
-import { getSettings, setLastIo, setLastRun } from './settings';
-import { commitMergedPlan } from './transaction';
+import { getEffectiveFlows } from "./char-flows";
+import { FlowTriggerV1 } from "./contracts";
+import { renderControllerTemplate } from "./controller-renderer";
+import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
+import { uuidv4 } from "./helpers";
+import { injectReplyInstructionOnce } from "./injection";
+import { mergeFlowResults } from "./merger";
+import { getSettings, setLastIo, setLastRun } from "./settings";
+import { commitMergedPlan } from "./transaction";
 import {
   ControllerTemplateSlot,
   DispatchFlowAttempt,
   DispatchFlowResult,
   RunSummarySchema,
   WorkflowProgressUpdate,
-} from './types';
+} from "./types";
 
 type RunWorkflowInput = {
   message_id: number;
   user_input?: string;
-  trigger?: Record<string, any>;
-  mode: 'auto' | 'manual';
+  trigger?: FlowTriggerV1;
+  mode: "auto" | "manual";
   inject_reply?: boolean;
   flow_ids?: string[];
-  timing_filter?: 'before_reply' | 'after_reply';
+  timing_filter?: "before_reply" | "after_reply";
   preserved_results?: DispatchFlowResult[];
   abortSignal?: AbortSignal;
   isCancelled?: () => boolean;
@@ -58,13 +59,18 @@ function buildAttemptRequestPreview(attempt: DispatchFlowAttempt): string {
   );
 }
 
-function saveIoSummary(requestId: string, chatId: string, mode: 'auto' | 'manual', attempts: DispatchFlowAttempt[]) {
+function saveIoSummary(
+  requestId: string,
+  chatId: string,
+  mode: "auto" | "manual",
+  attempts: DispatchFlowAttempt[],
+) {
   setLastIo({
     at: Date.now(),
     request_id: requestId,
     chat_id: chatId,
     mode,
-    flows: attempts.map(attempt => ({
+    flows: attempts.map((attempt) => ({
       flow_id: attempt.flow.id,
       flow_name: attempt.flow.name,
       priority: attempt.flow.priority,
@@ -72,18 +78,24 @@ function saveIoSummary(requestId: string, chatId: string, mode: 'auto' | 'manual
       api_url: attempt.api_url,
       ok: attempt.ok,
       elapsed_ms: attempt.elapsed_ms,
-      error: attempt.error ?? '',
+      error: attempt.error ?? "",
       request_preview: buildAttemptRequestPreview(attempt),
-      response_preview: attempt.response ? toPreview(attempt.response) : '',
+      response_preview: attempt.response ? toPreview(attempt.response) : "",
     })),
   });
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`workflow timeout (${timeoutMs}ms)`)), timeoutMs);
+    timer = setTimeout(
+      () => reject(new Error(`workflow timeout (${timeoutMs}ms)`)),
+      timeoutMs,
+    );
   });
 
   try {
@@ -96,44 +108,54 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   }
 }
 
-function isWorkflowCancelled(input: Pick<RunWorkflowInput, 'abortSignal' | 'isCancelled'>): boolean {
+function isWorkflowCancelled(
+  input: Pick<RunWorkflowInput, "abortSignal" | "isCancelled">,
+): boolean {
   return Boolean(input.abortSignal?.aborted || input.isCancelled?.());
 }
 
-function throwIfWorkflowCancelled(input: Pick<RunWorkflowInput, 'abortSignal' | 'isCancelled'>): void {
+function throwIfWorkflowCancelled(
+  input: Pick<RunWorkflowInput, "abortSignal" | "isCancelled">,
+): void {
   if (isWorkflowCancelled(input)) {
-    throw new Error('workflow cancelled by user');
+    throw new Error("workflow cancelled by user");
   }
 }
 
-export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowOutput> {
+export async function runWorkflow(
+  input: RunWorkflowInput,
+): Promise<RunWorkflowOutput> {
   const startedAt = Date.now();
   const settings = getSettings();
   const requestId = uuidv4();
   const preservedResults = [...(input.preserved_results ?? [])];
   const currentChatId = String(
-    (typeof SillyTavern !== 'undefined' ? (SillyTavern?.getCurrentChatId?.() ?? (SillyTavern as any).chatId) : null) ??
-      'unknown',
+    (typeof SillyTavern !== "undefined"
+      ? (SillyTavern?.getCurrentChatId?.() ?? (SillyTavern as any).chatId)
+      : null) ?? "unknown",
   );
   let attempts: DispatchFlowAttempt[] = [];
 
   try {
     throwIfWorkflowCancelled(input);
     input.onProgress?.({
-      phase: 'preparing',
+      phase: "preparing",
       request_id: requestId,
-      message: '正在准备工作流上下文…',
+      message: "正在准备工作流上下文…",
     });
     // Merge global flows + per-character flows (from EW/Flows worldbook entry).
     const allEnabledFlows = await getEffectiveFlows(settings);
     const selectedFlowIds = new Set((input.flow_ids ?? []).filter(Boolean));
     let enabledFlows =
-      selectedFlowIds.size > 0 ? allEnabledFlows.filter(flow => selectedFlowIds.has(flow.id)) : allEnabledFlows;
+      selectedFlowIds.size > 0
+        ? allEnabledFlows.filter((flow) => selectedFlowIds.has(flow.id))
+        : allEnabledFlows;
 
     // Per-flow timing filter: resolve 'default' to global workflow_timing, then keep only matching.
     if (input.timing_filter) {
-      enabledFlows = enabledFlows.filter(f => {
-        const effective = f.timing === 'default' ? settings.workflow_timing : f.timing;
+      enabledFlows = enabledFlows.filter((f) => {
+        const effective =
+          f.timing === "default" ? settings.workflow_timing : f.timing;
         return effective === input.timing_filter;
       });
     }
@@ -149,12 +171,12 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
           results: [],
         };
       }
-      throw new Error('no enabled flows');
+      throw new Error("no enabled flows");
     }
 
     throwIfWorkflowCancelled(input);
     input.onProgress?.({
-      phase: 'dispatching',
+      phase: "dispatching",
       request_id: requestId,
       message: `已装载 ${enabledFlows.length} 条工作流，正在请求模型…`,
     });
@@ -181,9 +203,9 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
     const results = [...preservedResults, ...dispatchOutput.results];
 
     input.onProgress?.({
-      phase: 'merging',
+      phase: "merging",
       request_id: requestId,
-      message: '模型响应已返回，正在合并条目结果…',
+      message: "模型响应已返回，正在合并条目结果…",
     });
     const mergedPlan = mergeFlowResults(results, settings);
     throwIfWorkflowCancelled(input);
@@ -195,17 +217,26 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
         flow_id: slot.flow_id,
         flow_name: slot.flow_name,
         entry_name: slot.entry_name,
-        content: await renderControllerTemplate(slot.model, settings.dynamic_entry_prefix),
+        content: await renderControllerTemplate(
+          slot.model,
+          settings.dynamic_entry_prefix,
+        ),
       });
     }
     throwIfWorkflowCancelled(input);
     input.onProgress?.({
-      phase: 'committing',
+      phase: "committing",
       request_id: requestId,
-      message: '正在写回世界书与控制器…',
+      message: "正在写回世界书与控制器…",
     });
 
-    const commitResult = await commitMergedPlan(settings, mergedPlan, controllerTemplates, requestId, input.message_id);
+    const commitResult = await commitMergedPlan(
+      settings,
+      mergedPlan,
+      controllerTemplates,
+      requestId,
+      input.message_id,
+    );
     throwIfWorkflowCancelled(input);
 
     if (input.inject_reply !== false) {
@@ -215,7 +246,7 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
     const summary = RunSummarySchema.parse({
       at: Date.now(),
       ok: true,
-      reason: '',
+      reason: "",
       request_id: requestId,
       chat_id: commitResult.chat_id,
       flow_count: results.length,
@@ -226,9 +257,9 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
     setLastRun(summary);
 
     input.onProgress?.({
-      phase: 'completed',
+      phase: "completed",
       request_id: requestId,
-      message: '工作流处理完成。',
+      message: "工作流处理完成。",
     });
 
     return {
@@ -241,7 +272,7 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     input.onProgress?.({
-      phase: 'failed',
+      phase: "failed",
       request_id: requestId,
       message: reason,
     });
@@ -261,13 +292,19 @@ export async function runWorkflow(input: RunWorkflowInput): Promise<RunWorkflowO
       flow_count:
         (input.flow_ids?.length ?? 0) > 0
           ? (input.flow_ids?.length ?? 0)
-          : settings.flows.filter(flow => flow.enabled).length,
+          : settings.flows.filter((flow) => flow.enabled).length,
       elapsed_ms: Date.now() - startedAt,
       mode: input.mode,
       diagnostics: {},
     });
     setLastRun(summary);
 
-    return { ok: false, reason, request_id: requestId, attempts, results: preservedResults };
+    return {
+      ok: false,
+      reason,
+      request_id: requestId,
+      attempts,
+      results: preservedResults,
+    };
   }
 }

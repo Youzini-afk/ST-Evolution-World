@@ -1,8 +1,31 @@
-﻿import { renderEjsContent } from './ejs-internal';
+import { renderEjsContent } from './ejs-internal';
 import { isLikelyMvuWorldInfoContent, stripBlockedPromptContents, stripMvuPromptArtifacts } from './mvu-compat';
 import { applyTavernRegex } from './regex-engine';
 import type { EwFlowConfig, EwPromptOrderEntry, EwSettings } from './types';
 import { collectIgnoredWorldInfoContents, resolveWorldInfo, type ResolvedWiEntry } from './worldinfo-engine';
+
+// SillyTavern 类型命名空间
+declare namespace SillyTavern {
+  interface v1CharData {
+    name?: string;
+    avatar?: string;
+    description?: string;
+    personality?: string;
+    scenario?: string;
+    mes_example?: string;
+    data?: {
+      description?: string;
+      personality?: string;
+      scenario?: string;
+      mes_example?: string;
+      system_prompt?: string;
+      post_history_instructions?: string;
+      extensions?: Record<string, any>;
+      [key: string]: any;
+    };
+    [key: string]: any;
+  }
+}
 
 // SillyTavern 运行时全局变量，在扩展上下文中可用
 declare function getCharacterCardFields():

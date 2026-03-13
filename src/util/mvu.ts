@@ -1,4 +1,11 @@
+import { z } from 'zod';
 import { StoreDefinition } from 'pinia';
+
+// 旧 TavernHelper 全局类型存根 — mvu.ts 是死代码,保留编译兼容
+type VariableOption = { type: string; message_id?: number | string; [key: string]: any };
+declare function errorCatched<T>(fn: () => T): () => T;
+declare function getVariables(option: VariableOption): Record<string, any>;
+declare function updateVariablesWith(updater: (vars: any) => void, option: VariableOption): void;
 
 export function defineMvuDataStore<T extends z.ZodObject>(
   schema: T,

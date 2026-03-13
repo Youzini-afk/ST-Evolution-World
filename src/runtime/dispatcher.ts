@@ -10,6 +10,8 @@ import {
   WorkflowProgressUpdate,
   WorkflowStreamPreview,
 } from './types';
+import { onEvent, EVENT_STREAM_TOKEN, type StopFn } from './compat/events';
+import { resolveGenerateRaw, stopSpecificGeneration, stopGeneration, getStRequestHeaders, getSillyTavernContext } from './compat/generation';
 
 type DispatchInput = {
   settings: EwSettings;
@@ -46,57 +48,10 @@ export const DEFAULT_WORKFLOW_SYSTEM_PROMPT = [
   'version/flow_id/status/priority 等固定字段可省略，插件会自动补全。',
 ].join('\n');
 
-function getHostRuntime(): Record<string, any> {
-  try {
-    if (window.parent && window.parent !== window) {
-      return window.parent as unknown as Record<string, any>;
-    }
-  } catch {
-    // ignore cross-frame access failures and fall back to current window
-  }
-
-  return globalThis as Record<string, any>;
-}
-
-function resolveGenerateRaw(): ((options: Record<string, any>) => Promise<string>) | null {
-  const hostRuntime = getHostRuntime();
-  if (typeof hostRuntime.generateRaw === 'function') {
-    return hostRuntime.generateRaw as (options: Record<string, any>) => Promise<string>;
-  }
-  if (typeof hostRuntime.TavernHelper?.generateRaw === 'function') {
-    return hostRuntime.TavernHelper.generateRaw as (options: Record<string, any>) => Promise<string>;
-  }
-  return null;
-}
-
-function getStRequestHeaders(): Record<string, string> {
-  const hostRuntime = getHostRuntime();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-  if (typeof hostRuntime.SillyTavern?.getRequestHeaders === 'function') {
-    Object.assign(headers, hostRuntime.SillyTavern.getRequestHeaders());
-  } else if (typeof SillyTavern !== 'undefined' && typeof SillyTavern.getRequestHeaders === 'function') {
-    Object.assign(headers, SillyTavern.getRequestHeaders());
-  }
-
-  headers['Content-Type'] = 'application/json';
-  return headers;
-}
-
-function getSillyTavernContext(): Record<string, any> | undefined {
-  const hostRuntime = getHostRuntime();
-  const localRuntime = globalThis as Record<string, any>;
-
-  if (typeof hostRuntime.SillyTavern?.getContext === 'function') {
-    return hostRuntime.SillyTavern.getContext();
-  }
-
-  if (typeof localRuntime.SillyTavern?.getContext === 'function') {
-    return localRuntime.SillyTavern.getContext();
-  }
-
-  return undefined;
-}
+// ── getHostRuntime / resolveGenerateRaw / getSillyTavernContext ──
+// 已迁移至 compat/generation.ts。不再需要本地实现。
+// resolveGenerateRaw, getStRequestHeaders, getSillyTavernContext
+// 均从 compat/generation 导入。
 
 function isDispatchAborted(signal?: AbortSignal, isCancelled?: () => boolean): boolean {
   return Boolean(signal?.aborted || isCancelled?.());
@@ -594,20 +549,8 @@ async function buildOrderedPromptsForFlow(
   return orderedPrompts;
 }
 
-function stopSpecificGeneration(generationId: string): void {
-  try {
-    if (typeof stopGenerationById === 'function' && stopGenerationById(generationId)) {
-      return;
-    }
-  } catch {
-    // ignore and fall through to stopAllGeneration
-  }
-
-  try {
-    stopAllGeneration();
-  } catch {
-    // ignore
-  }
+function _stopSpecificGeneration(generationId: string): void {
+  stopSpecificGeneration(generationId);
 }
 
 function buildGenerateRawCustomApi(
@@ -805,7 +748,7 @@ async function executeFlowViaLlmConnector(
     throw new Error(`[${flow.id}] generateRaw is unavailable`);
   }
 
-  const abortGeneration = () => stopSpecificGeneration(generationId);
+  const abortGeneration = () => _stopSpecificGeneration(generationId);
   if (abortSignal) {
     if (abortSignal.aborted) {
       abortGeneration();
@@ -816,10 +759,8 @@ async function executeFlowViaLlmConnector(
 
   const stopStreamListener =
     flow.generation_options.stream && onStreamText
-      ? eventOn(iframe_events.STREAM_TOKEN_RECEIVED_FULLY, (fullText, streamGenerationId) => {
-          if (streamGenerationId === generationId) {
-            onStreamText(fullText);
-          }
+      ? onEvent(EVENT_STREAM_TOKEN(), (fullText: string) => {
+          onStreamText(fullText);
         })
       : null;
 
@@ -846,7 +787,7 @@ async function executeFlowViaLlmConnector(
     }
     return parsed.data;
   } finally {
-    stopStreamListener?.stop();
+    stopStreamListener?.();
     if (abortSignal) {
       abortSignal.removeEventListener('abort', abortGeneration);
     }
@@ -877,7 +818,7 @@ async function executeFlowViaGenerateRawCustomApi(
   }
   const customApi = buildGenerateRawCustomApi(apiPreset, flow);
 
-  const abortGeneration = () => stopSpecificGeneration(generationId);
+  const abortGeneration = () => _stopSpecificGeneration(generationId);
   if (abortSignal) {
     if (abortSignal.aborted) {
       abortGeneration();
@@ -888,10 +829,8 @@ async function executeFlowViaGenerateRawCustomApi(
 
   const stopStreamListener =
     flow.generation_options.stream && onStreamText
-      ? eventOn(iframe_events.STREAM_TOKEN_RECEIVED_FULLY, (fullText, streamGenerationId) => {
-          if (streamGenerationId === generationId) {
-            onStreamText(fullText);
-          }
+      ? onEvent(EVENT_STREAM_TOKEN(), (fullText: string) => {
+          onStreamText(fullText);
         })
       : null;
 
@@ -919,7 +858,7 @@ async function executeFlowViaGenerateRawCustomApi(
     }
     return parsed.data;
   } finally {
-    stopStreamListener?.stop();
+    stopStreamListener?.();
     if (abortSignal) {
       abortSignal.removeEventListener('abort', abortGeneration);
     }

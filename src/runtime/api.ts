@@ -5,6 +5,8 @@ import { runWorkflow } from './pipeline';
 import { getLastIo, getLastRun, getSettings, patchSettings, readControllerBackup } from './settings';
 import { EwSettingsSchema } from './types';
 import { resolveTargetWorldbook } from './worldbook-runtime';
+import { getWorldbook, replaceWorldbook } from './compat/worldbook';
+import { getChatMessages, getLastMessageId, getChatId } from './compat/character';
 
 declare global {
   interface Window {
@@ -52,7 +54,7 @@ async function validateControllerSyntax(): Promise<{ ok: boolean; reason?: strin
 async function rollbackController(): Promise<{ ok: boolean; reason?: string }> {
   try {
     const settings = getSettings();
-    const chatId = String(SillyTavern.getCurrentChatId?.() ?? SillyTavern.chatId ?? 'unknown');
+    const chatId = getChatId();
     const backup = readControllerBackup(chatId);
     if (!backup) {
       return { ok: false, reason: 'no backup found for current chat' };

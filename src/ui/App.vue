@@ -442,6 +442,7 @@ import { getFieldHelp, PANEL_TABS } from './help-meta';
 // Graph editor deferred — will be custom-built later
 import { showEwNotice } from './notice';
 import { useEwStore } from './store';
+import { replaceWorldbook } from '../runtime/compat/worldbook';
 
 const store = useEwStore();
 

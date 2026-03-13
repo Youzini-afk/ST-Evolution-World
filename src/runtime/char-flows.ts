@@ -10,6 +10,7 @@
 
 import { EwFlowConfig, EwFlowConfigSchema, EwSettings } from './types';
 import { resolveTargetWorldbook, ensureDefaultEntry } from './worldbook-runtime';
+import { replaceWorldbook } from './compat/worldbook';
 
 /** 角色卡工作流在世界书中的条目名称 */
 export const CHAR_FLOWS_ENTRY_NAME = 'EW/Flows';

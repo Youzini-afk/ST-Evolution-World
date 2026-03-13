@@ -2,6 +2,8 @@ import { markFloorEntries } from './floor-binding';
 import { saveControllerBackup } from './settings';
 import { ControllerEntrySnapshot, ControllerTemplateSlot, EwSettings, MergedPlan } from './types';
 import { ensureDefaultEntry, resolveTargetWorldbook } from './worldbook-runtime';
+import { replaceWorldbook, type WbEntry } from './compat/worldbook';
+import { getChatId } from './compat/character';
 
 type CommitResult = {
   worldbook_name: string;
@@ -24,11 +26,11 @@ function isManagedEntryName(settings: EwSettings, name: string): boolean {
  * - remove_entries: each named entry should be deleted if it exists.
  */
 function applyDeclarativeDiff(
-  currentEntries: WorldbookEntry[],
+  currentEntries: WbEntry[],
   desiredEntries: Array<{ name: string; content: string; enabled: boolean }>,
   removeEntries: Array<{ name: string }>,
   settings: EwSettings,
-): WorldbookEntry[] {
+): WbEntry[] {
   // 步骤 1：移除条目。
   const removeSet = new Set(removeEntries.map(e => e.name));
   const result = klona(currentEntries.filter(entry => !removeSet.has(entry.name)));
@@ -70,7 +72,7 @@ export async function commitMergedPlan(
 ): Promise<CommitResult> {
   const target = await resolveTargetWorldbook(settings);
   const beforeEntries = target.entries;
-  const chatId = String(SillyTavern.getCurrentChatId?.() ?? SillyTavern.chatId ?? 'unknown');
+  const chatId = getChatId();
 
   // 覆写前备份当前所有 controller 条目内容。
   const previousControllers: ControllerEntrySnapshot[] = [];

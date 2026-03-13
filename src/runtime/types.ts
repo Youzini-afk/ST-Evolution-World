@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { TextSliceRuleSchema } from './contracts';
 
 export const EwApiPresetSchema = z.object({

@@ -1,8 +1,10 @@
 import { EwSettings } from './types';
+import { getWorldbook, createWorldbook, rebindCharWorldbooks, getCharWorldbookNames, type WbEntry } from './compat/worldbook';
+import { getCurrentCharacterName, getCurrentCharacter } from './compat/character';
 
 export type TargetWorldbook = {
   worldbook_name: string;
-  entries: WorldbookEntry[];
+  entries: WbEntry[];
   created: boolean;
 };
 
@@ -15,7 +17,7 @@ export type FullWorldbookContext = {
   };
 };
 
-function toEntrySnapshot(entries: WorldbookEntry[]): Array<{ name: string; enabled: boolean; content: string }> {
+function toEntrySnapshot(entries: WbEntry[]): Array<{ name: string; enabled: boolean; content: string }> {
   return entries.map(entry => ({
     name: entry.name,
     enabled: entry.enabled,
@@ -31,7 +33,7 @@ function toEntrySnapshot(entries: WorldbookEntry[]): Array<{ name: string; enabl
  *  2. If none exists, auto-create one and bind it to the character.
  */
 export async function resolveTargetWorldbook(_settings: EwSettings): Promise<TargetWorldbook> {
-  const charWb = getCharWorldbookNames('current');
+  const charWb = getCharWorldbookNames();
 
   if (charWb.primary) {
     try {
@@ -58,7 +60,7 @@ export async function resolveTargetWorldbook(_settings: EwSettings): Promise<Tar
     await createWorldbook(autoName, []);
   }
 
-  await rebindCharWorldbooks('current', {
+  await rebindCharWorldbooks({
     primary: autoName,
     additional: charWb.additional ?? [],
   });
@@ -79,8 +81,8 @@ export async function getFullWorldbookContext(preloadedTarget?: TargetWorldbook)
   let charDescription = '';
 
   try {
-    const character = await getCharacter('current');
-    charDescription = character.description ?? '';
+    const character = getCurrentCharacter();
+    charDescription = character?.description ?? '';
   } catch (e) {
     console.debug('[Evolution World] character data unavailable:', e);
     // 以空描述继续。
@@ -94,7 +96,7 @@ export async function getFullWorldbookContext(preloadedTarget?: TargetWorldbook)
     charWbName = preloadedTarget.worldbook_name;
     charEntries = toEntrySnapshot(preloadedTarget.entries);
   } else {
-    const charWb = getCharWorldbookNames('current');
+    const charWb = getCharWorldbookNames();
     charWbName = charWb.primary ?? '';
     if (charWb.primary) {
       try {
@@ -116,7 +118,7 @@ export async function getFullWorldbookContext(preloadedTarget?: TargetWorldbook)
   };
 }
 
-function nextUid(entries: WorldbookEntry[]): number {
+function nextUid(entries: WbEntry[]): number {
   const maxUid = _.max(entries.map(entry => entry.uid));
   return (maxUid ?? 0) + 1;
 }
@@ -125,9 +127,9 @@ export function ensureDefaultEntry(
   name: string,
   content: string,
   enabled: boolean,
-  entries: WorldbookEntry[],
+  entries: WbEntry[],
   _constant = false,
-): WorldbookEntry {
+): WbEntry {
   return {
     uid: nextUid(entries),
     name,

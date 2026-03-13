@@ -1,4 +1,6 @@
 import { onSTEvent, onSTEventFirst, getEventTypes } from '../st-adapter';
+import { stopGeneration } from './compat/generation';
+import { getChatMessages, setChatMessages, getLastMessageId } from './compat/character';
 import { EwWorkflowNoticeInput, showManagedWorkflowNotice } from '../ui/notice';
 import { getEffectiveFlows } from './char-flows';
 import { disposeFloorBindingEvents, initFloorBindingEvents, rollbackBeforeFloor } from './floor-binding';
@@ -185,13 +187,7 @@ function installSendIntentHooks() {
 
 function stopGenerationNow() {
   try {
-    SillyTavern.stopGeneration?.();
-  } catch {
-    // ignore
-  }
-
-  try {
-    stopAllGeneration();
+    stopGeneration();
   } catch {
     // ignore
   }

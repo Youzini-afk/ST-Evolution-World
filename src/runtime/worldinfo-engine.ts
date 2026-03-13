@@ -18,6 +18,8 @@
 import { createRenderContext, evalEjsTemplate } from './ejs-internal';
 import { isLikelyMvuWorldInfoContent, isMvuTaggedWorldInfoNameOrComment } from './mvu-compat';
 import { EwSettings } from './types';
+import { getWorldbook, getCharWorldbookNames, getLorebookEntries } from './compat/worldbook';
+import { getSillyTavernContext } from './compat/generation';
 
 // ---------------------------------------------------------------------------
 // ST Constants (replicated locally to avoid import dependency)
@@ -152,17 +154,12 @@ export interface ResolvedWorldInfo {
 }
 
 // ---------------------------------------------------------------------------
-// ST Runtime Accessors
-// ---------------------------------------------------------------------------
-
-declare function getWorldbook(name: string): Promise<RawWbEntry[]>;
-declare function getLorebookEntries(name: string): Promise<Array<{ uid: number; comment: string; content: string }>>;
-declare function getCharWorldbookNames(target: 'current'): { primary: string | null; additional: string[] };
-declare const SillyTavern: { getContext(): Record<string, any> } | undefined;
+// ST Runtime Accessors — now from compat layer
+// (inline declare statements removed; getWorldbook, getCharWorldbookNames, getLorebookEntries imported from compat/worldbook)
 
 function getStContext(): Record<string, any> {
   try {
-    return SillyTavern?.getContext?.() ?? {};
+    return getSillyTavernContext() ?? {};
   } catch {
     return {};
   }
@@ -643,7 +640,7 @@ async function collectAllWorldbookEntries(): Promise<NormalizedEntry[]> {
 
   // 1. Character primary worldbook
   try {
-    const charWb = getCharWorldbookNames('current');
+    const charWb = getCharWorldbookNames();
     if (charWb.primary) {
       await loadWbOnce(charWb.primary);
     }
@@ -728,7 +725,7 @@ export async function collectIgnoredWorldInfoContents(): Promise<string[]> {
   }
 
   try {
-    const charWb = getCharWorldbookNames('current');
+    const charWb = getCharWorldbookNames();
     if (charWb.primary) {
       await loadWbOnce(charWb.primary);
     }
