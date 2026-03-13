@@ -1,41 +1,29 @@
 /**
- * ST-Evolution-World 入口点
+ * Evolution World — ST 扩展入口
  *
- * 这是 SillyTavern 加载扩展时执行的主文件。
- * 负责：
- * 1. 注册 settings UI panel
- * 2. 初始化运行时（events、settings）
- * 3. 挂载 Vue UI
+ * 标准 jQuery ready 模式初始化。
  */
-
 import { getSTContext } from './st-adapter';
-import { mountUI, unmountUI } from './ui/mount';
+import { initRuntime } from './runtime/main';
+import { mountUI } from './ui/mount';
 
-const EXTENSION_NAME = 'Evolution World';
-
-async function init() {
+$(() => {
   try {
     const ctx = getSTContext();
-    console.info(`[${EXTENSION_NAME}] 扩展加载中...`);
+    console.info('[Evolution World] ST context ready, chatId:', ctx.chatId);
 
-    // 挂载 Vue UI 到 ST 扩展设置面板
-    mountUI();
-
-    // TODO: Round 2 — 初始化运行时（events、pipeline）
-    // await initRuntime();
-
-    console.info(`[${EXTENSION_NAME}] 扩展已就绪 ✓`);
-    toastr.success(`${EXTENSION_NAME} 已加载`, EXTENSION_NAME, { timeOut: 2000 });
+    // 初始化运行时 (settings, events, pipeline)
+    initRuntime()
+      .then(() => {
+        // 运行时就绪后挂载 UI
+        mountUI();
+        toastr.success('Evolution World 扩展已加载！', 'EW', { timeOut: 2000 });
+      })
+      .catch(error => {
+        console.error('[Evolution World] Runtime init failed:', error);
+        toastr.error('Evolution World 初始化失败', 'EW');
+      });
   } catch (error) {
-    console.error(`[${EXTENSION_NAME}] 初始化失败:`, error);
-    toastr.error(
-      `${EXTENSION_NAME} 加载失败: ${error instanceof Error ? error.message : String(error)}`,
-      EXTENSION_NAME,
-    );
+    console.error('[Evolution World] Failed to load:', error);
   }
-}
-
-// jQuery ready — ST 扩展的标准启动方式
-jQuery(async () => {
-  await init();
 });
