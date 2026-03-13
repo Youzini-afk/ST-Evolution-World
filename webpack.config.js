@@ -2,6 +2,7 @@
 const path = require("path");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const { VueLoaderPlugin } = require("vue-loader");
+const AutoImport = require("unplugin-auto-import/webpack");
 const webpack = require("webpack");
 
 /** @type {import('webpack').Configuration} */
@@ -65,6 +66,18 @@ const config = {
 
     new MiniCssExtractPlugin({
       filename: "style.css",
+    }),
+
+    AutoImport({
+      imports: [
+        "vue",
+        "pinia",
+        {
+          zod: [["z", "z"]],
+          "@vueuse/core": ["useIntervalFn", "watchIgnorable"],
+        },
+      ],
+      dts: path.resolve(__dirname, "src/auto-imports.d.ts"),
     }),
 
     // Vue feature flags

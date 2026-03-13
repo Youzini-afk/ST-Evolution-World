@@ -4,6 +4,8 @@
  * @license MIT
  */
 
+/*! #__NO_SIDE_EFFECTS__ */
+
 /**
      * @file Embedded JavaScript templating engine. {@link http://ejs.co}
      * @author Matthew Eernisse <mde@fleegix.org>
