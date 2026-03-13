@@ -1,4 +1,6 @@
-﻿/**
+﻿import { getSTContext } from "../st-adapter";
+
+/**
  * hide-engine.ts — Message hiding & floor limiter logic.
  *
  * Two orthogonal features, unified under global settings:
@@ -11,14 +13,11 @@
  *    Only render the most recent M messages in the chat DOM.
  *    Does NOT affect AI context — purely for UI performance.
  */
-
-declare const SillyTavern: { getContext(): Record<string, any> } | undefined;
-
 // ── Types ─────────────────────────────────────────────────────────────
 
 export interface HideSettings {
   enabled: boolean;
-  hide_last_n: number;       // 0 = don't hide
+  hide_last_n: number; // 0 = don't hide
   limiter_enabled: boolean;
   limiter_count: number;
 }
@@ -41,7 +40,7 @@ const ewHiddenIndices = new Set<number>();
 
 function getChat(): any[] | null {
   try {
-    const ctx = typeof SillyTavern !== 'undefined' ? SillyTavern?.getContext() : undefined;
+    const ctx = getSTContext() as Record<string, any>;
     return ctx?.chat ?? null;
   } catch {
     return null;
@@ -54,7 +53,7 @@ function getContextFns(): {
   swipe?: { refresh: () => void };
 } {
   try {
-    const ctx = typeof SillyTavern !== 'undefined' ? SillyTavern?.getContext() : undefined;
+    const ctx = getSTContext() as Record<string, any>;
     return {
       clearChat: ctx?.clearChat,
       addOneMessage: ctx?.addOneMessage,
@@ -81,7 +80,8 @@ export function runFullHideCheck(settings: HideSettings): void {
   if (hideLastN <= 0) return; // 0 = hide nothing
 
   const chatLen = chat.length;
-  const visibleStart = hideLastN >= chatLen ? 0 : Math.max(0, chatLen - hideLastN);
+  const visibleStart =
+    hideLastN >= chatLen ? 0 : Math.max(0, chatLen - hideLastN);
 
   const toHide: number[] = [];
   const toShow: number[] = [];
@@ -106,21 +106,23 @@ export function runFullHideCheck(settings: HideSettings): void {
   }
 
   // Update DOM attributes
-  if (typeof $ !== 'undefined') {
+  if (typeof $ !== "undefined") {
     if (toHide.length > 0) {
-      const sel = toHide.map(id => `.mes[mesid="${id}"]`).join(',');
-      $(sel).attr('is_system', 'true');
+      const sel = toHide.map((id) => `.mes[mesid="${id}"]`).join(",");
+      $(sel).attr("is_system", "true");
     }
     if (toShow.length > 0) {
-      const sel = toShow.map(id => `.mes[mesid="${id}"]`).join(',');
-      $(sel).attr('is_system', 'false');
+      const sel = toShow.map((id) => `.mes[mesid="${id}"]`).join(",");
+      $(sel).attr("is_system", "false");
     }
   }
 
   hideState.lastProcessedLength = chatLen;
 
   if (toHide.length > 0 || toShow.length > 0) {
-    console.log(`[EW Hide] Full check: hid ${toHide.length}, showed ${toShow.length} messages`);
+    console.log(
+      `[EW Hide] Full check: hid ${toHide.length}, showed ${toShow.length} messages`,
+    );
   }
 }
 
@@ -161,9 +163,9 @@ export function runIncrementalHideCheck(settings: HideSettings): void {
         indices.push(i);
       }
     }
-    if (indices.length > 0 && typeof $ !== 'undefined') {
-      const sel = indices.map(id => `.mes[mesid="${id}"]`).join(',');
-      $(sel).attr('is_system', 'true');
+    if (indices.length > 0 && typeof $ !== "undefined") {
+      const sel = indices.map((id) => `.mes[mesid="${id}"]`).join(",");
+      $(sel).attr("is_system", "true");
       console.log(`[EW Hide] Incremental: hid ${indices.length} messages`);
     }
   }
@@ -188,9 +190,9 @@ export function unhideAll(): void {
   }
   ewHiddenIndices.clear();
 
-  if (toShow.length > 0 && typeof $ !== 'undefined') {
-    const sel = toShow.map(id => `.mes[mesid="${id}"]`).join(',');
-    $(sel).attr('is_system', 'false');
+  if (toShow.length > 0 && typeof $ !== "undefined") {
+    const sel = toShow.map((id) => `.mes[mesid="${id}"]`).join(",");
+    $(sel).attr("is_system", "false");
   }
 
   hideState.lastProcessedLength = chat.length;
@@ -206,9 +208,9 @@ export function unhideAll(): void {
 export function applyFloorLimit(settings: HideSettings): void {
   if (!settings.limiter_enabled) {
     // If was active, restore
-    if (typeof $ !== 'undefined' && $('#chat').attr('data-limiter-active')) {
+    if (typeof $ !== "undefined" && $("#chat").attr("data-limiter-active")) {
       runFullHideCheck(settings); // Restore normal view
-      $('#chat').removeAttr('data-limiter-active');
+      $("#chat").removeAttr("data-limiter-active");
     }
     return;
   }
@@ -221,10 +223,10 @@ export function applyFloorLimit(settings: HideSettings): void {
   if (!chat || !clearChat || !addOneMessage) return;
 
   // Don't run if user is editing
-  if (typeof $ !== 'undefined' && $('#chat .edit_textarea').length > 0) return;
+  if (typeof $ !== "undefined" && $("#chat .edit_textarea").length > 0) return;
 
   clearChat();
-  $('#chat').attr('data-limiter-active', 'true');
+  $("#chat").attr("data-limiter-active", "true");
 
   const startIdx = Math.max(0, chat.length - limit);
   for (let i = startIdx; i < chat.length; i++) {
@@ -232,7 +234,9 @@ export function applyFloorLimit(settings: HideSettings): void {
   }
 
   if (swipe?.refresh) swipe.refresh();
-  console.log(`[EW Hide] Limiter: displaying ${chat.length - startIdx}/${chat.length} messages`);
+  console.log(
+    `[EW Hide] Limiter: displaying ${chat.length - startIdx}/${chat.length} messages`,
+  );
 }
 
 // ── 5. Reset state ───────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { getEffectiveFlows } from "./char-flows";
+import { getChatId } from "./compat/character";
 import { FlowTriggerV1 } from "./contracts";
 import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
@@ -129,11 +130,7 @@ export async function runWorkflow(
   const settings = getSettings();
   const requestId = uuidv4();
   const preservedResults = [...(input.preserved_results ?? [])];
-  const currentChatId = String(
-    (typeof SillyTavern !== "undefined"
-      ? (SillyTavern?.getCurrentChatId?.() ?? (SillyTavern as any).chatId)
-      : null) ?? "unknown",
-  );
+  const currentChatId = String(getChatId() ?? "unknown");
   let attempts: DispatchFlowAttempt[] = [];
 
   try {

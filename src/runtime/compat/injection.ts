@@ -8,9 +8,9 @@
  * - position 0 = IN_PROMPT (after story string)
  * - position 1 = IN_CHAT (at depth)
  */
-import { getSTContext } from '../../st-adapter';
+import { getSTContext } from "../../st-adapter";
 
-const EW_INJECT_KEY = 'ew_reply_instruction';
+const EW_INJECT_KEY = "ew_reply_instruction";
 
 // ST extension_prompt_types
 const EXTENSION_PROMPT_IN_CHAT = 1;
@@ -30,8 +30,8 @@ export function injectReplyInstruction(content: string): void {
   if (!content.trim()) return;
 
   const ctx = getSTContext() as any;
-  if (typeof ctx.setExtensionPrompt !== 'function') {
-    console.warn('[Compat] setExtensionPrompt not available');
+  if (typeof ctx.setExtensionPrompt !== "function") {
+    console.warn("[Compat] setExtensionPrompt not available");
     return;
   }
 
@@ -40,7 +40,7 @@ export function injectReplyInstruction(content: string): void {
     EW_INJECT_KEY,
     content.trim(),
     EXTENSION_PROMPT_IN_CHAT,
-    0,    // depth
+    0, // depth
     true, // scan (include in WI scan)
     PROMPT_ROLE_SYSTEM,
   );
@@ -48,16 +48,27 @@ export function injectReplyInstruction(content: string): void {
   // 注册一次性清除:generation 完成后清除注入
   const es = ctx.eventSource;
   const eventTypes = ctx.eventTypes ?? ctx.event_types ?? {};
-  const clearEvent = eventTypes.MESSAGE_RECEIVED ?? 'messageReceived';
+  const clearEvents = [
+    eventTypes.MESSAGE_RECEIVED ?? "messageReceived",
+    eventTypes.GENERATION_STOPPED,
+    eventTypes.GENERATION_ENDED,
+  ].filter(
+    (eventName): eventName is string =>
+      typeof eventName === "string" && eventName.trim().length > 0,
+  );
 
   const clearHandler = () => {
     try {
-      ctx.setExtensionPrompt(EW_INJECT_KEY, '', EXTENSION_PROMPT_IN_CHAT, 0);
-    } catch { /* 静默 */ }
+      ctx.setExtensionPrompt(EW_INJECT_KEY, "", EXTENSION_PROMPT_IN_CHAT, 0);
+    } catch {
+      /* 静默 */
+    }
   };
 
-  if (es && typeof es.once === 'function') {
-    es.once(clearEvent, clearHandler);
+  if (es && typeof es.once === "function") {
+    for (const eventName of clearEvents) {
+      es.once(eventName, clearHandler);
+    }
   }
 }
 
@@ -67,8 +78,10 @@ export function injectReplyInstruction(content: string): void {
 export function clearReplyInstruction(): void {
   try {
     const ctx = getSTContext() as any;
-    if (typeof ctx.setExtensionPrompt === 'function') {
-      ctx.setExtensionPrompt(EW_INJECT_KEY, '', EXTENSION_PROMPT_IN_CHAT, 0);
+    if (typeof ctx.setExtensionPrompt === "function") {
+      ctx.setExtensionPrompt(EW_INJECT_KEY, "", EXTENSION_PROMPT_IN_CHAT, 0);
     }
-  } catch { /* 静默 */ }
+  } catch {
+    /* 静默 */
+  }
 }

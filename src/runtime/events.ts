@@ -1,13 +1,22 @@
-import { onSTEvent, onSTEventFirst, getEventTypes } from '../st-adapter';
-import { stopGeneration } from './compat/generation';
-import { getChatMessages, setChatMessages, getLastMessageId } from './compat/character';
-import { EwWorkflowNoticeInput, showManagedWorkflowNotice } from '../ui/notice';
-import { getEffectiveFlows } from './char-flows';
-import { disposeFloorBindingEvents, initFloorBindingEvents, rollbackBeforeFloor } from './floor-binding';
-import { runIncrementalHideCheck } from './hide-engine';
-import { markIntercepted, resetInterceptGuard, wasRecentlyIntercepted } from './intercept-guard';
-import { runWorkflow } from './pipeline';
-import { getSettings } from './settings';
+import { getEventTypes, onSTEvent, onSTEventFirst } from "../st-adapter";
+import { EwWorkflowNoticeInput, showManagedWorkflowNotice } from "../ui/notice";
+import { getEffectiveFlows } from "./char-flows";
+import {
+  getChatMessages,
+  getLastMessageId,
+  setChatMessages,
+} from "./compat/character";
+import { stopGeneration } from "./compat/generation";
+import { clearReplyInstruction } from "./compat/injection";
+import {
+  disposeFloorBindingEvents,
+  initFloorBindingEvents,
+  rollbackBeforeFloor,
+} from "./floor-binding";
+import { runIncrementalHideCheck } from "./hide-engine";
+import { resetInterceptGuard, wasRecentlyIntercepted } from "./intercept-guard";
+import { runWorkflow } from "./pipeline";
+import { getSettings } from "./settings";
 import {
   clearAfterReplyPending,
   clearSendContext,
@@ -22,12 +31,16 @@ import {
   shouldHandleAfterReply,
   shouldHandleGenerationAfter,
   wasAfterReplyHandled,
-} from './state';
-import { DispatchFlowResult, EwSettings, WorkflowProgressUpdate } from './types';
+} from "./state";
+import {
+  DispatchFlowResult,
+  EwSettings,
+  WorkflowProgressUpdate,
+} from "./types";
 
 type StopFn = () => void;
 
-const EW_FLOOR_WORKFLOW_EXECUTION_KEY = 'ew_workflow_execution';
+const EW_FLOOR_WORKFLOW_EXECUTION_KEY = "ew_workflow_execution";
 
 type FloorWorkflowStoredResult = {
   flow_id: string;
@@ -44,8 +57,9 @@ type FloorWorkflowExecutionState = {
 const listenerStops: StopFn[] = [];
 const domCleanup: Array<() => void> = [];
 const HOOK_RETRY_DELAY_MS = 1200;
+const EW_GENERATE_INTERCEPTOR_KEY = "ew_generation_interceptor";
 let sendIntentRetryTimer: ReturnType<typeof setTimeout> | null = null;
-const NON_SEND_GENERATION_TYPES = new Set(['continue', 'regenerate', 'swipe']);
+const NON_SEND_GENERATION_TYPES = new Set(["continue", "regenerate", "swipe"]);
 const WORKFLOW_NOTICE_COLLAPSE_MS = 5000;
 
 // ST 扩展直接运行在主页面，无需 getHostWindow/getChatDocument
@@ -65,35 +79,45 @@ function scheduleSendIntentHooksRetry() {
 }
 
 function registerGenerationAfterCommands(
-  handler: (type: string, params: Record<string, any>, dryRun: boolean) => Promise<void>,
+  handler: (
+    type: string,
+    params: Record<string, any>,
+    dryRun: boolean,
+  ) => Promise<void>,
 ): StopFn {
   const eventTypes = getEventTypes();
   return onSTEventFirst(eventTypes.GENERATION_AFTER_COMMANDS, handler);
 }
 
 function getSendTextareaValue(): string {
-  const textarea = getChatDocument().getElementById('send_textarea') as HTMLTextAreaElement | null;
-  return String(textarea?.value ?? '');
+  const textarea = getChatDocument().getElementById(
+    "send_textarea",
+  ) as HTMLTextAreaElement | null;
+  return String(textarea?.value ?? "");
 }
 
 function firstNonEmptyText(...values: unknown[]): string {
   for (const value of values) {
-    const text = String(value ?? '');
+    const text = String(value ?? "");
     if (text.trim()) {
       return text;
     }
   }
 
-  return '';
+  return "";
 }
 
 function getLatestUserMessageText(): string {
   try {
-    const msgs = getChatMessages(`0-${getLastMessageId()}`, { hide_state: 'unhidden' });
-    const lastUserMsg = [...msgs].reverse().find((message: any) => message.role === 'user');
-    return String(lastUserMsg?.message ?? '');
+    const msgs = getChatMessages(`0-${getLastMessageId()}`, {
+      hide_state: "unhidden",
+    });
+    const lastUserMsg = [...msgs]
+      .reverse()
+      .find((message: any) => message.role === "user");
+    return String(lastUserMsg?.message ?? "");
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -107,7 +131,10 @@ function getInterceptedUserInput(options: Record<string, any>): string {
   );
 }
 
-function resolveWorkflowUserInput(options: Record<string, any>, generationType: string): string {
+function resolveWorkflowUserInput(
+  options: Record<string, any>,
+  generationType: string,
+): string {
   const interceptedInput = getInterceptedUserInput(options);
   if (interceptedInput) {
     return interceptedInput;
@@ -117,7 +144,7 @@ function resolveWorkflowUserInput(options: Record<string, any>, generationType: 
     return getLatestUserMessageText();
   }
 
-  return '';
+  return "";
 }
 
 function resolveFallbackWorkflowUserInput(generationType: string): string {
@@ -134,7 +161,16 @@ function resolveFallbackWorkflowUserInput(generationType: string): string {
     return getLatestUserMessageText();
   }
 
-  return '';
+  return "";
+}
+
+function resolvePrimaryWorkflowUserInput(generationType: string): string {
+  const textareaInput = getSendTextareaValue();
+  if (textareaInput.trim()) {
+    return textareaInput;
+  }
+
+  return resolveFallbackWorkflowUserInput(generationType);
 }
 
 function resolveAfterReplyUserInput(): string {
@@ -153,31 +189,37 @@ function installSendIntentHooks() {
   }
 
   const doc = getChatDocument();
-  const sendButton = doc.getElementById('send_but');
+  const sendButton = doc.getElementById("send_but");
   if (sendButton) {
     const onSendIntent = () => {
       recordUserSendIntent(getSendTextareaValue());
     };
-    sendButton.addEventListener('click', onSendIntent, true);
-    sendButton.addEventListener('pointerup', onSendIntent, true);
-    sendButton.addEventListener('touchend', onSendIntent, true);
+    sendButton.addEventListener("click", onSendIntent, true);
+    sendButton.addEventListener("pointerup", onSendIntent, true);
+    sendButton.addEventListener("touchend", onSendIntent, true);
     domCleanup.push(() => {
-      sendButton.removeEventListener('click', onSendIntent, true);
-      sendButton.removeEventListener('pointerup', onSendIntent, true);
-      sendButton.removeEventListener('touchend', onSendIntent, true);
+      sendButton.removeEventListener("click", onSendIntent, true);
+      sendButton.removeEventListener("pointerup", onSendIntent, true);
+      sendButton.removeEventListener("touchend", onSendIntent, true);
     });
   }
 
-  const sendTextarea = doc.getElementById('send_textarea');
+  const sendTextarea = doc.getElementById("send_textarea");
   if (sendTextarea) {
     const onKeyDown = (event: Event) => {
       const keyboardEvent = event as KeyboardEvent;
-      if ((keyboardEvent.key === 'Enter' || keyboardEvent.key === 'NumpadEnter') && !keyboardEvent.shiftKey) {
+      if (
+        (keyboardEvent.key === "Enter" ||
+          keyboardEvent.key === "NumpadEnter") &&
+        !keyboardEvent.shiftKey
+      ) {
         recordUserSendIntent(getSendTextareaValue());
       }
     };
-    sendTextarea.addEventListener('keydown', onKeyDown, true);
-    domCleanup.push(() => sendTextarea.removeEventListener('keydown', onKeyDown, true));
+    sendTextarea.addEventListener("keydown", onKeyDown, true);
+    domCleanup.push(() =>
+      sendTextarea.removeEventListener("keydown", onKeyDown, true),
+    );
   }
 
   if (!sendButton || !sendTextarea) {
@@ -193,9 +235,12 @@ function stopGenerationNow() {
   }
 }
 
-function formatReasonForDisplay(reason: string | undefined, maxLen = 160): string {
-  const text = String(reason ?? 'unknown')
-    .replace(/\s+/g, ' ')
+function formatReasonForDisplay(
+  reason: string | undefined,
+  maxLen = 160,
+): string {
+  const text = String(reason ?? "unknown")
+    .replace(/\s+/g, " ")
     .trim();
   if (text.length <= maxLen) {
     return text;
@@ -203,42 +248,54 @@ function formatReasonForDisplay(reason: string | undefined, maxLen = 160): strin
   return `${text.slice(0, maxLen)}...`;
 }
 
-function normalizeFloorWorkflowExecutionState(raw: unknown): FloorWorkflowExecutionState | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+function normalizeFloorWorkflowExecutionState(
+  raw: unknown,
+): FloorWorkflowExecutionState | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
 
   const obj = raw as Record<string, unknown>;
   const successfulResults = Array.isArray(obj.successful_results)
     ? obj.successful_results
-        .filter(item => item && typeof item === 'object' && !Array.isArray(item))
-        .map(item => {
+        .filter(
+          (item) => item && typeof item === "object" && !Array.isArray(item),
+        )
+        .map((item) => {
           const result = item as Record<string, unknown>;
           return {
-            flow_id: String(result.flow_id ?? '').trim(),
+            flow_id: String(result.flow_id ?? "").trim(),
             response:
-              result.response && typeof result.response === 'object' ? (result.response as Record<string, any>) : {},
+              result.response && typeof result.response === "object"
+                ? (result.response as Record<string, any>)
+                : {},
           };
         })
-        .filter(item => item.flow_id)
+        .filter((item) => item.flow_id)
     : [];
 
   const failedFlowIds = Array.isArray(obj.failed_flow_ids)
-    ? obj.failed_flow_ids.map(value => String(value ?? '').trim()).filter(Boolean)
+    ? obj.failed_flow_ids
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
     : [];
 
   return {
     at: Number(obj.at ?? 0),
-    request_id: String(obj.request_id ?? '').trim(),
+    request_id: String(obj.request_id ?? "").trim(),
     successful_results: successfulResults,
     failed_flow_ids: _.uniq(failedFlowIds),
   };
 }
 
-function readFloorWorkflowExecution(messageId: number): FloorWorkflowExecutionState | null {
+function readFloorWorkflowExecution(
+  messageId: number,
+): FloorWorkflowExecutionState | null {
   try {
     const message = getChatMessages(messageId)[0];
-    return normalizeFloorWorkflowExecutionState(message?.data?.[EW_FLOOR_WORKFLOW_EXECUTION_KEY]);
+    return normalizeFloorWorkflowExecutionState(
+      message?.data?.[EW_FLOOR_WORKFLOW_EXECUTION_KEY],
+    );
   } catch {
     return null;
   }
@@ -263,21 +320,27 @@ async function writeFloorWorkflowExecution(
     delete nextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY];
   }
 
-  await setChatMessages([{ message_id: messageId, data: nextData }], { refresh: 'none' });
+  await setChatMessages([{ message_id: messageId, data: nextData }], {
+    refresh: "none",
+  });
 }
 
 function buildFloorWorkflowExecutionState(
   requestId: string,
-  attempts: Array<{ flow: { id: string }; ok: boolean; response?: Record<string, any> }>,
+  attempts: Array<{
+    flow: { id: string };
+    ok: boolean;
+    response?: Record<string, any>;
+  }>,
   preservedResults: FloorWorkflowStoredResult[] = [],
 ): FloorWorkflowExecutionState {
   const successfulResults = new Map<string, FloorWorkflowStoredResult>(
-    preservedResults.map(result => [result.flow_id, result]),
+    preservedResults.map((result) => [result.flow_id, result]),
   );
   const failedFlowIds = new Set<string>();
 
   for (const attempt of attempts) {
-    const flowId = String(attempt.flow.id ?? '').trim();
+    const flowId = String(attempt.flow.id ?? "").trim();
     if (!flowId) {
       continue;
     }
@@ -311,11 +374,13 @@ async function buildPreservedDispatchResults(
   }
 
   const effectiveFlows = await getEffectiveFlows(settings);
-  const flowOrderById = new Map(effectiveFlows.map((flow, index) => [flow.id, index]));
-  const flowById = new Map(effectiveFlows.map(flow => [flow.id, flow]));
+  const flowOrderById = new Map(
+    effectiveFlows.map((flow, index) => [flow.id, index]),
+  );
+  const flowById = new Map(effectiveFlows.map((flow) => [flow.id, flow]));
 
   return preservedResults
-    .map(result => {
+    .map((result) => {
       const flow = flowById.get(result.flow_id);
       if (!flow) {
         return null;
@@ -332,16 +397,16 @@ async function buildPreservedDispatchResults(
 
 function createProcessingReminder(onAbort: () => void) {
   let state: EwWorkflowNoticeInput = {
-    title: 'Evolution World',
-    message: '正在读取上下文并处理本轮工作流，请稍后…',
-    level: 'info',
+    title: "Evolution World",
+    message: "正在读取上下文并处理本轮工作流，请稍后…",
+    level: "info",
     persist: true,
     busy: true,
     collapse_after_ms: WORKFLOW_NOTICE_COLLAPSE_MS,
     island: {},
     action: {
-      label: '终止处理',
-      kind: 'danger',
+      label: "终止处理",
+      kind: "danger",
       onClick: onAbort,
     },
   };
@@ -379,10 +444,10 @@ type ExecuteWorkflowOptions = {
   userInput?: string;
   injectReply: boolean;
   flowIds?: string[];
-  timingFilter?: 'before_reply' | 'after_reply';
+  timingFilter?: "before_reply" | "after_reply";
   preservedResults?: FloorWorkflowStoredResult[];
   trigger: {
-    timing: 'before_reply' | 'after_reply' | 'manual';
+    timing: "before_reply" | "after_reply" | "manual";
     source: string;
     generation_type: string;
     user_message_id?: number;
@@ -393,22 +458,31 @@ type ExecuteWorkflowOptions = {
 };
 
 function setSendTextareaValue(text: string): void {
-  const textarea = getChatDocument().getElementById('send_textarea') as HTMLTextAreaElement | null;
+  const textarea = getChatDocument().getElementById(
+    "send_textarea",
+  ) as HTMLTextAreaElement | null;
   if (!textarea) {
     return;
   }
 
   textarea.value = text;
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function restoreOriginalGenerateInput(options: Record<string, any>, userInput: string): void {
-  if (Array.isArray(options.injects) && options.injects[0] && typeof options.injects[0] === 'object') {
+function restoreOriginalGenerateInput(
+  options: Record<string, any>,
+  userInput: string,
+): void {
+  if (
+    Array.isArray(options.injects) &&
+    options.injects[0] &&
+    typeof options.injects[0] === "object"
+  ) {
     options.injects[0].content = userInput;
     return;
   }
 
-  if (typeof options.prompt === 'string') {
+  if (typeof options.prompt === "string") {
     options.prompt = userInput;
     return;
   }
@@ -416,16 +490,19 @@ function restoreOriginalGenerateInput(options: Record<string, any>, userInput: s
   options.user_input = userInput;
 }
 
-function shouldReleaseInterceptedMessage(settings: EwSettings, outcome: WorkflowExecutionOutcome): boolean {
+function shouldReleaseInterceptedMessage(
+  settings: EwSettings,
+  outcome: WorkflowExecutionOutcome,
+): boolean {
   if (outcome.abortedByUser) {
     return false;
   }
 
-  const policy = settings.intercept_release_policy ?? 'success_only';
-  if (policy === 'never') {
+  const policy = settings.intercept_release_policy ?? "success_only";
+  if (policy === "never") {
     return false;
   }
-  if (policy === 'always') {
+  if (policy === "always") {
     return true;
   }
 
@@ -439,11 +516,15 @@ function shouldReleaseInterceptedMessage(settings: EwSettings, outcome: Workflow
 // the pipeline's timing_filter after getEffectiveFlows().
 // ---------------------------------------------------------------------------
 
-function hasFlowsForTiming(settings: EwSettings, timing: 'before_reply' | 'after_reply'): boolean {
+function hasFlowsForTiming(
+  settings: EwSettings,
+  timing: "before_reply" | "after_reply",
+): boolean {
   // Fast path: any global flow explicitly or effectively matches
-  const globalMatch = settings.flows.some(f => {
+  const globalMatch = settings.flows.some((f) => {
     if (!f.enabled) return false;
-    const effective = f.timing === 'default' ? settings.workflow_timing : f.timing;
+    const effective =
+      f.timing === "default" ? settings.workflow_timing : f.timing;
     return effective === timing;
   });
   if (globalMatch) return true;
@@ -468,21 +549,24 @@ async function executeWorkflowWithPolicy(
   try {
     runIncrementalHideCheck(settings.hide_settings);
   } catch (e) {
-    console.warn('[Evolution World] Hide check failed:', e);
+    console.warn("[Evolution World] Hide check failed:", e);
   }
 
   const workflowAbortController = new AbortController();
   let abortedByUser = false;
 
-  const buildAbortableReminder = (message: string, level: 'info' | 'warning' = 'info') => ({
-    title: 'Evolution World',
+  const buildAbortableReminder = (
+    message: string,
+    level: "info" | "warning" = "info",
+  ) => ({
+    title: "Evolution World",
     message,
     level,
     persist: true,
     busy: true,
     action: {
-      label: '终止处理',
-      kind: 'danger' as const,
+      label: "终止处理",
+      kind: "danger" as const,
       onClick: cancelWorkflow,
     },
   });
@@ -495,9 +579,9 @@ async function executeWorkflowWithPolicy(
     workflowAbortController.abort();
     stopGenerationNow();
     processingReminder.update({
-      title: 'Evolution World',
-      message: '正在终止本轮处理，请稍后…',
-      level: 'warning',
+      title: "Evolution World",
+      message: "正在终止本轮处理，请稍后…",
+      level: "warning",
       persist: true,
       busy: true,
       action: undefined,
@@ -508,11 +592,14 @@ async function executeWorkflowWithPolicy(
   processingReminder.update(buildAbortableReminder(options.reminderMessage));
   let reminderSettled = false;
   let currentPreservedStoredResults = [...(options.preservedResults ?? [])];
-  let currentPreservedDispatchResults = await buildPreservedDispatchResults(settings, currentPreservedStoredResults);
+  let currentPreservedDispatchResults = await buildPreservedDispatchResults(
+    settings,
+    currentPreservedStoredResults,
+  );
 
   const trimPreview = (text: string | undefined, maxLength: number) => {
-    const normalized = String(text ?? '')
-      .replace(/\s+/g, ' ')
+    const normalized = String(text ?? "")
+      .replace(/\s+/g, " ")
       .trim();
     if (normalized.length <= maxLength) {
       return normalized;
@@ -521,15 +608,26 @@ async function executeWorkflowWithPolicy(
   };
 
   // D: multi-flow tracking
-  type FlowIslandData = { flow_id: string; entry_name?: string; content?: string; flow_order: number };
+  type FlowIslandData = {
+    flow_id: string;
+    entry_name?: string;
+    content?: string;
+    flow_order: number;
+  };
   const activeFlows = new Map<string, FlowIslandData>();
   let carouselIndex = 0;
   let carouselTimer: ReturnType<typeof setInterval> | null = null;
   let totalFlowCount = 0;
   let completedFlowCount = 0;
 
-  const getRotatedIsland = (): { entry_name?: string; content?: string; extra_count: number } => {
-    const flows = [...activeFlows.values()].sort((a, b) => a.flow_order - b.flow_order);
+  const getRotatedIsland = (): {
+    entry_name?: string;
+    content?: string;
+    extra_count: number;
+  } => {
+    const flows = [...activeFlows.values()].sort(
+      (a, b) => a.flow_order - b.flow_order,
+    );
     if (flows.length === 0) {
       return { extra_count: 0 };
     }
@@ -567,15 +665,15 @@ async function executeWorkflowWithPolicy(
     }
 
     switch (update.phase) {
-      case 'preparing':
+      case "preparing":
         processingReminder.update({
           message: update.message ?? options.reminderMessage,
-          level: 'info',
+          level: "info",
           persist: true,
           busy: true,
         });
         break;
-      case 'dispatching':
+      case "dispatching":
         // extract total flow count from message (e.g. "已装载 3 条工作流")
         {
           const match = update.message?.match(/装载\s*(\d+)\s*条/);
@@ -585,29 +683,35 @@ async function executeWorkflowWithPolicy(
         }
         processingReminder.update({
           message: update.message ?? options.reminderMessage,
-          level: 'info',
+          level: "info",
           persist: true,
           busy: true,
-          flow_progress: totalFlowCount > 0 ? { completed: completedFlowCount, total: totalFlowCount } : undefined,
+          flow_progress:
+            totalFlowCount > 0
+              ? { completed: completedFlowCount, total: totalFlowCount }
+              : undefined,
         });
         break;
-      case 'merging':
-      case 'committing':
+      case "merging":
+      case "committing":
         // All flows complete — clear active flows
         completedFlowCount = activeFlows.size;
         activeFlows.clear();
         stopCarousel();
         processingReminder.update({
           message: update.message ?? options.reminderMessage,
-          level: 'info',
+          level: "info",
           persist: true,
           busy: true,
           island: { extra_count: 0 },
-          flow_progress: totalFlowCount > 0 ? { completed: completedFlowCount, total: totalFlowCount } : undefined,
+          flow_progress:
+            totalFlowCount > 0
+              ? { completed: completedFlowCount, total: totalFlowCount }
+              : undefined,
         });
         break;
-      case 'flow_started': {
-        const flowId = update.flow_id ?? '';
+      case "flow_started": {
+        const flowId = update.flow_id ?? "";
         if (flowId) {
           activeFlows.set(flowId, {
             flow_id: flowId,
@@ -623,15 +727,18 @@ async function executeWorkflowWithPolicy(
           message: update.message ?? options.reminderMessage,
           persist: true,
           busy: true,
-          level: 'info',
+          level: "info",
           island: getRotatedIsland(),
           workflow_name: update.flow_name?.trim() || undefined,
-          flow_progress: totalFlowCount > 0 ? { completed: completedFlowCount, total: totalFlowCount } : undefined,
+          flow_progress:
+            totalFlowCount > 0
+              ? { completed: completedFlowCount, total: totalFlowCount }
+              : undefined,
         });
         break;
       }
-      case 'streaming': {
-        const flowId = update.flow_id ?? '';
+      case "streaming": {
+        const flowId = update.flow_id ?? "";
         const previewName = trimPreview(update.stream_preview?.entry_name, 28);
         const previewContent = trimPreview(update.stream_preview?.content, 54);
 
@@ -643,36 +750,42 @@ async function executeWorkflowWithPolicy(
         }
 
         processingReminder.update({
-          message: update.flow_name?.trim() ? `正在流式读取「${update.flow_name}」输出…` : '正在流式读取工作流输出…',
+          message: update.flow_name?.trim()
+            ? `正在流式读取「${update.flow_name}」输出…`
+            : "正在流式读取工作流输出…",
           persist: true,
           busy: true,
-          level: 'info',
+          level: "info",
           island: getRotatedIsland(),
           workflow_name: update.flow_name?.trim() || undefined,
-          flow_progress: totalFlowCount > 0 ? { completed: completedFlowCount, total: totalFlowCount } : undefined,
+          flow_progress:
+            totalFlowCount > 0
+              ? { completed: completedFlowCount, total: totalFlowCount }
+              : undefined,
         });
         break;
       }
-      case 'completed':
-      case 'failed':
+      case "completed":
+      case "failed":
       default:
         break;
     }
   };
 
   const finalizeUserAbort = () => {
+    clearReplyInstruction();
     reminderSettled = true;
     stopCarousel();
     processingReminder.update({
-      title: 'Evolution World',
-      message: '已终止本轮处理。',
-      level: 'warning',
+      title: "Evolution World",
+      message: "已终止本轮处理。",
+      level: "warning",
       persist: false,
       busy: false,
       action: undefined,
       island: {
-        entry_name: '',
-        content: '',
+        entry_name: "",
+        content: "",
         extra_count: 0,
       },
       collapse_after_ms: 0,
@@ -691,7 +804,7 @@ async function executeWorkflowWithPolicy(
       message_id: options.messageId,
       user_input: options.userInput,
       trigger: options.trigger,
-      mode: 'auto',
+      mode: "auto",
       inject_reply: options.injectReply,
       flow_ids: options.flowIds,
       timing_filter: options.timingFilter,
@@ -712,8 +825,9 @@ async function executeWorkflowWithPolicy(
     return finalizeUserAbort();
   }
 
-  if (options.trigger.timing === 'after_reply') {
-    const assistantMessageId = options.trigger.assistant_message_id ?? options.messageId;
+  if (options.trigger.timing === "after_reply") {
+    const assistantMessageId =
+      options.trigger.assistant_message_id ?? options.messageId;
     const executionState = buildFloorWorkflowExecutionState(
       result.request_id,
       result.attempts,
@@ -721,23 +835,34 @@ async function executeWorkflowWithPolicy(
     );
     await writeFloorWorkflowExecution(assistantMessageId, executionState);
     currentPreservedStoredResults = executionState.successful_results;
-    currentPreservedDispatchResults = await buildPreservedDispatchResults(settings, currentPreservedStoredResults);
+    currentPreservedDispatchResults = await buildPreservedDispatchResults(
+      settings,
+      currentPreservedStoredResults,
+    );
   }
 
   if (!result.ok) {
-    const policy = settings.failure_policy ?? 'stop_generation';
+    const policy = settings.failure_policy ?? "stop_generation";
 
-    if (policy === 'retry_once') {
-      console.warn('[EW] retry_once: first attempt failed — retrying.');
+    if (policy === "retry_once") {
+      console.warn("[EW] retry_once: first attempt failed — retrying.");
       const retryReason = formatReasonForDisplay(result.reason, 120);
-      processingReminder.update(buildAbortableReminder(`首次处理失败，正在重试… ${retryReason}`, 'warning'));
-      toastr.warning(`工作流首次失败，正在重试… (${retryReason})`, 'Evolution World');
+      processingReminder.update(
+        buildAbortableReminder(
+          `首次处理失败，正在重试… ${retryReason}`,
+          "warning",
+        ),
+      );
+      toastr.warning(
+        `工作流首次失败，正在重试… (${retryReason})`,
+        "Evolution World",
+      );
       try {
         result = await runWorkflow({
           message_id: options.messageId,
           user_input: options.userInput,
           trigger: options.trigger,
-          mode: 'auto',
+          mode: "auto",
           inject_reply: options.injectReply,
           flow_ids: options.flowIds,
           timing_filter: options.timingFilter,
@@ -758,8 +883,9 @@ async function executeWorkflowWithPolicy(
         return finalizeUserAbort();
       }
 
-      if (options.trigger.timing === 'after_reply') {
-        const assistantMessageId = options.trigger.assistant_message_id ?? options.messageId;
+      if (options.trigger.timing === "after_reply") {
+        const assistantMessageId =
+          options.trigger.assistant_message_id ?? options.messageId;
         const executionState = buildFloorWorkflowExecutionState(
           result.request_id,
           result.attempts,
@@ -767,53 +893,60 @@ async function executeWorkflowWithPolicy(
         );
         await writeFloorWorkflowExecution(assistantMessageId, executionState);
         currentPreservedStoredResults = executionState.successful_results;
-        currentPreservedDispatchResults = await buildPreservedDispatchResults(settings, currentPreservedStoredResults);
+        currentPreservedDispatchResults = await buildPreservedDispatchResults(
+          settings,
+          currentPreservedStoredResults,
+        );
       }
     }
 
     if (!result.ok) {
       const displayReason = formatReasonForDisplay(result.reason);
       switch (policy) {
-        case 'continue_generation':
+        case "continue_generation":
           reminderSettled = true;
           stopCarousel();
           processingReminder.update({
-            title: 'Evolution World',
+            title: "Evolution World",
             message: `工作流失败：${displayReason}。原消息是否继续发送取决于放行策略。`,
-            level: 'warning',
+            level: "warning",
             persist: false,
             busy: false,
             action: undefined,
             collapse_after_ms: 0,
             duration_ms: 5500,
           });
-          toastr.warning(`工作流失败，原消息是否继续发送取决于放行策略: ${displayReason}`, 'Evolution World');
+          toastr.warning(
+            `工作流失败，原消息是否继续发送取决于放行策略: ${displayReason}`,
+            "Evolution World",
+          );
           break;
-        case 'allow_partial_success':
-        case 'notify_only':
+        case "allow_partial_success":
+        case "notify_only":
           reminderSettled = true;
           stopCarousel();
           processingReminder.update({
-            title: 'Evolution World',
+            title: "Evolution World",
             message: `工作流失败：${displayReason}`,
-            level: 'warning',
+            level: "warning",
             persist: false,
             busy: false,
             action: undefined,
             collapse_after_ms: 0,
             duration_ms: 5500,
           });
-          toastr.info(`工作流失败: ${displayReason}`, 'Evolution World');
+          toastr.info(`工作流失败: ${displayReason}`, "Evolution World");
           break;
-        case 'stop_generation':
-        case 'retry_once':
+        case "stop_generation":
+        case "retry_once":
         default:
+          clearReplyInstruction();
           reminderSettled = true;
           stopCarousel();
           processingReminder.update({
-            title: 'Evolution World',
+            title: "Evolution World",
             message: `动态世界流程失败，本轮已中止：${displayReason}`,
-            level: 'error',
+            level: "error",
             persist: false,
             busy: false,
             action: undefined,
@@ -821,7 +954,10 @@ async function executeWorkflowWithPolicy(
             duration_ms: 5500,
           });
           stopGenerationNow();
-          toastr.error(`动态世界流程失败，本轮已中止: ${displayReason}`, 'Evolution World');
+          toastr.error(
+            `动态世界流程失败，本轮已中止: ${displayReason}`,
+            "Evolution World",
+          );
           return {
             shouldAbortGeneration: true,
             workflowSucceeded: false,
@@ -840,9 +976,9 @@ async function executeWorkflowWithPolicy(
   reminderSettled = true;
   stopCarousel();
   processingReminder.update({
-    title: 'Evolution World',
+    title: "Evolution World",
     message: options.successMessage,
-    level: 'success',
+    level: "success",
     persist: false,
     busy: false,
     action: undefined,
@@ -856,9 +992,120 @@ async function executeWorkflowWithPolicy(
   };
 }
 
-// TavernHelper.generate hook 已移除 — ST 扩展使用 GENERATION_AFTER_COMMANDS 作为主要路径
+type GenerationInterceptorAbort = (immediately: boolean) => void;
 
+function hasPrimaryGenerateInterceptor(): boolean {
+  return (
+    typeof (globalThis as Record<string, unknown>)[
+      EW_GENERATE_INTERCEPTOR_KEY
+    ] === "function"
+  );
+}
 
+async function runPrimaryBeforeReplyIntercept(
+  _chat: any[],
+  _contextSize: number,
+  abort: GenerationInterceptorAbort,
+  generationType: string,
+): Promise<void> {
+  const settings = getSettings();
+  if (
+    !settings.enabled ||
+    getRuntimeState().is_processing ||
+    !hasFlowsForTiming(settings, "before_reply")
+  ) {
+    return;
+  }
+
+  const allowedTypes = new Set(["normal", "continue", "regenerate", "swipe"]);
+  if (
+    !allowedTypes.has(generationType) ||
+    isQuietLike(generationType, undefined)
+  ) {
+    return;
+  }
+
+  const textareaValue = getSendTextareaValue();
+  if (!textareaValue.trim()) {
+    const decision = shouldHandleGenerationAfter(
+      generationType,
+      undefined,
+      false,
+      settings,
+    );
+    if (!decision.ok) {
+      return;
+    }
+  }
+
+  const userInput = resolvePrimaryWorkflowUserInput(generationType);
+  const isNonSendType = NON_SEND_GENERATION_TYPES.has(generationType);
+  if (!userInput.trim() && !isNonSendType) {
+    return;
+  }
+
+  const messageId =
+    getRuntimeState().last_send?.message_id ?? getLastMessageId();
+
+  let workflowOutcome: WorkflowExecutionOutcome = {
+    shouldAbortGeneration: false,
+    workflowSucceeded: false,
+    abortedByUser: false,
+  };
+
+  setProcessing(true);
+  try {
+    workflowOutcome = await executeWorkflowWithPolicy(settings, {
+      messageId,
+      userInput,
+      injectReply: true,
+      timingFilter: "before_reply",
+      trigger: {
+        timing: "before_reply",
+        source: "generate_interceptor",
+        generation_type: generationType,
+        user_message_id: getRuntimeState().last_send?.message_id,
+      },
+      reminderMessage: "正在读取上下文并处理本轮工作流，请稍后…",
+      successMessage: "动态世界流程处理完成，已更新本轮上下文。",
+    });
+  } catch (error) {
+    console.error("[Evolution World] Error in generate interceptor:", error);
+    clearReplyInstruction();
+  } finally {
+    setProcessing(false);
+    clearSendContext();
+  }
+
+  if (workflowOutcome.shouldAbortGeneration) {
+    setSendTextareaValue(userInput);
+    clearReplyInstruction();
+    abort(true);
+    return;
+  }
+
+  if (!shouldReleaseInterceptedMessage(settings, workflowOutcome)) {
+    setSendTextareaValue(userInput);
+    clearReplyInstruction();
+    console.debug(
+      "[Evolution World] Original intercepted message was not released due to intercept_release_policy",
+    );
+    abort(true);
+    return;
+  }
+
+  setSendTextareaValue(userInput);
+  recordUserSendIntent(userInput);
+}
+
+function installPrimaryGenerateInterceptor(): void {
+  (globalThis as Record<string, unknown>)[EW_GENERATE_INTERCEPTOR_KEY] =
+    runPrimaryBeforeReplyIntercept;
+}
+
+function uninstallPrimaryGenerateInterceptor(): void {
+  delete (globalThis as Record<string, unknown>)[EW_GENERATE_INTERCEPTOR_KEY];
+}
 
 // ---------------------------------------------------------------------------
 // Fallback path: GENERATION_AFTER_COMMANDS event
@@ -874,14 +1121,20 @@ async function onGenerationAfterCommands(
   },
   dryRun: boolean,
 ) {
+  if (hasPrimaryGenerateInterceptor()) {
+    return;
+  }
+
   // Dedup check 1: already handled by TavernHelper hook
   if (params?._ew_processed) {
-    console.debug('[Evolution World] GENERATION_AFTER_COMMANDS skipped: already processed by TavernHelper hook');
+    console.debug(
+      "[Evolution World] GENERATION_AFTER_COMMANDS skipped: already processed by TavernHelper hook",
+    );
     return;
   }
 
   const settings = getSettings();
-  if (!hasFlowsForTiming(settings, 'before_reply')) {
+  if (!hasFlowsForTiming(settings, "before_reply")) {
     return;
   }
   const decision = shouldHandleGenerationAfter(type, params, dryRun, settings);
@@ -889,28 +1142,31 @@ async function onGenerationAfterCommands(
     return;
   }
 
-  const messageId = getRuntimeState().last_send?.message_id ?? getLastMessageId();
-  const genType = getRuntimeState().last_generation?.type ?? '';
+  const messageId =
+    getRuntimeState().last_send?.message_id ?? getLastMessageId();
+  const genType = getRuntimeState().last_generation?.type ?? "";
   const userInput = resolveFallbackWorkflowUserInput(genType);
   const isNonSendType = NON_SEND_GENERATION_TYPES.has(genType);
 
   // Only block on empty input for normal send — continue/regen/swipe can proceed without it
   if (!userInput.trim() && !isNonSendType) {
-    console.debug('[Evolution World] skipped workflow: user input is empty');
+    console.debug("[Evolution World] skipped workflow: user input is empty");
     return;
   }
 
   // Dedup check 2: hash-based guard against recent TavernHelper interception
   if (wasRecentlyIntercepted(userInput)) {
     console.debug(
-      '[Evolution World] GENERATION_AFTER_COMMANDS skipped: recently intercepted by TavernHelper hook (hash match)',
+      "[Evolution World] GENERATION_AFTER_COMMANDS skipped: recently intercepted by TavernHelper hook (hash match)",
     );
     return;
   }
 
   clearSendContext();
 
-  console.debug('[Evolution World] GENERATION_AFTER_COMMANDS executing workflow (fallback path)');
+  console.debug(
+    "[Evolution World] GENERATION_AFTER_COMMANDS executing workflow (fallback path)",
+  );
   setProcessing(true);
   try {
     // Return value (shouldAbort) is only relevant for the primary path;
@@ -920,15 +1176,15 @@ async function onGenerationAfterCommands(
       messageId,
       userInput,
       injectReply: true,
-      timingFilter: 'before_reply',
+      timingFilter: "before_reply",
       trigger: {
-        timing: 'before_reply',
-        source: 'generation_after_commands',
+        timing: "before_reply",
+        source: "generation_after_commands",
         generation_type: genType || type,
         user_message_id: getRuntimeState().last_send?.message_id,
       },
-      reminderMessage: '正在读取上下文并处理本轮工作流，请稍后…',
-      successMessage: '动态世界流程处理完成，已更新本轮上下文。',
+      reminderMessage: "正在读取上下文并处理本轮工作流，请稍后…",
+      successMessage: "动态世界流程处理完成，已更新本轮上下文。",
     });
   } finally {
     setProcessing(false);
@@ -938,24 +1194,28 @@ async function onGenerationAfterCommands(
 function getMessageText(messageId: number): string {
   try {
     const message = getChatMessages(messageId)[0];
-    return String(message?.message ?? '');
+    return String(message?.message ?? "");
   } catch {
-    return '';
+    return "";
   }
 }
 
 function isAssistantMessage(messageId: number): boolean {
   try {
     const message = getChatMessages(messageId)[0];
-    return message?.role === 'assistant';
+    return message?.role === "assistant";
   } catch {
     return false;
   }
 }
 
-async function onAfterReplyMessage(messageId: number, type: string, source: 'message_received' | 'generation_ended') {
+async function onAfterReplyMessage(
+  messageId: number,
+  type: string,
+  source: "message_received" | "generation_ended",
+) {
   const settings = getSettings();
-  if (!hasFlowsForTiming(settings, 'after_reply')) {
+  if (!hasFlowsForTiming(settings, "after_reply")) {
     return;
   }
 
@@ -974,7 +1234,10 @@ async function onAfterReplyMessage(messageId: number, type: string, source: 'mes
   }
 
   const runtimeState = getRuntimeState();
-  const generationType = runtimeState.after_reply.pending_generation_type || runtimeState.last_generation?.type || type;
+  const generationType =
+    runtimeState.after_reply.pending_generation_type ||
+    runtimeState.last_generation?.type ||
+    type;
   const userInput = resolveAfterReplyUserInput();
 
   setProcessing(true);
@@ -983,16 +1246,18 @@ async function onAfterReplyMessage(messageId: number, type: string, source: 'mes
       messageId,
       userInput,
       injectReply: false,
-      timingFilter: 'after_reply',
+      timingFilter: "after_reply",
       trigger: {
-        timing: 'after_reply',
+        timing: "after_reply",
         source,
         generation_type: generationType,
-        user_message_id: runtimeState.after_reply.pending_user_message_id ?? runtimeState.last_send?.message_id,
+        user_message_id:
+          runtimeState.after_reply.pending_user_message_id ??
+          runtimeState.last_send?.message_id,
         assistant_message_id: messageId,
       },
-      reminderMessage: '正在根据最新回复更新动态世界，请稍后…',
-      successMessage: '动态世界已根据最新回复完成更新。',
+      reminderMessage: "正在根据最新回复更新动态世界，请稍后…",
+      successMessage: "动态世界已根据最新回复完成更新。",
     });
     markAfterReplyHandled(messageId, messageText);
   } finally {
@@ -1002,55 +1267,62 @@ async function onAfterReplyMessage(messageId: number, type: string, source: 'mes
   }
 }
 
-export async function rerollCurrentAfterReplyWorkflow(): Promise<{ ok: boolean; reason?: string }> {
+export async function rerollCurrentAfterReplyWorkflow(): Promise<{
+  ok: boolean;
+  reason?: string;
+}> {
   const settings = getSettings();
-  if (!hasFlowsForTiming(settings, 'after_reply')) {
-    return { ok: false, reason: 'no flows configured for after_reply timing' };
+  if (!hasFlowsForTiming(settings, "after_reply")) {
+    return { ok: false, reason: "no flows configured for after_reply timing" };
   }
   if (!settings.enabled) {
-    return { ok: false, reason: 'workflow disabled' };
+    return { ok: false, reason: "workflow disabled" };
   }
   if (getRuntimeState().is_processing) {
-    return { ok: false, reason: 'workflow already processing' };
+    return { ok: false, reason: "workflow already processing" };
   }
 
   const messageId = getLastMessageId();
   if (!Number.isFinite(messageId) || messageId < 0) {
-    return { ok: false, reason: 'no current floor found' };
+    return { ok: false, reason: "no current floor found" };
   }
   if (!isAssistantMessage(messageId)) {
-    return { ok: false, reason: 'current floor is not an assistant reply' };
+    return { ok: false, reason: "current floor is not an assistant reply" };
   }
 
   const messageText = getMessageText(messageId);
   if (!messageText.trim()) {
-    return { ok: false, reason: 'current assistant reply is empty' };
+    return { ok: false, reason: "current assistant reply is empty" };
   }
 
   const runtimeState = getRuntimeState();
-  const generationType = runtimeState.last_generation?.type || 'manual';
+  const generationType = runtimeState.last_generation?.type || "manual";
   const userInput = resolveAfterReplyUserInput();
-  const rerollScope = settings.reroll_scope ?? 'all';
+  const rerollScope = settings.reroll_scope ?? "all";
 
   let flowIds: string[] | undefined;
   let preservedResults: FloorWorkflowStoredResult[] = [];
 
-  if (rerollScope === 'failed_only') {
+  if (rerollScope === "failed_only") {
     const executionState = readFloorWorkflowExecution(messageId);
     if (executionState?.failed_flow_ids.length) {
       const effectiveFlows = await getEffectiveFlows(settings);
-      const flowMap = new Map(effectiveFlows.map(flow => [flow.id, flow]));
+      const flowMap = new Map(effectiveFlows.map((flow) => [flow.id, flow]));
 
-      flowIds = executionState.failed_flow_ids.filter(flowId => flowMap.has(flowId));
-      preservedResults = executionState.successful_results.filter(result => {
-        return flowMap.has(result.flow_id) && !flowIds?.includes(result.flow_id);
+      flowIds = executionState.failed_flow_ids.filter((flowId) =>
+        flowMap.has(flowId),
+      );
+      preservedResults = executionState.successful_results.filter((result) => {
+        return (
+          flowMap.has(result.flow_id) && !flowIds?.includes(result.flow_id)
+        );
       });
 
       if (flowIds.length === 0) {
-        return { ok: false, reason: '当前楼记录中的失败工作流已被禁用或删除' };
+        return { ok: false, reason: "当前楼记录中的失败工作流已被禁用或删除" };
       }
     } else if (executionState && executionState.failed_flow_ids.length === 0) {
-      return { ok: false, reason: '当前楼没有失败的工作流可供重跑' };
+      return { ok: false, reason: "当前楼没有失败的工作流可供重跑" };
     }
   }
 
@@ -1065,23 +1337,25 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{ ok: boolean; 
       userInput,
       injectReply: false,
       flowIds,
-      timingFilter: 'after_reply',
+      timingFilter: "after_reply",
       preservedResults,
       trigger: {
-        timing: 'after_reply',
-        source: 'fab_double_click',
+        timing: "after_reply",
+        source: "fab_double_click",
         generation_type: generationType,
-        user_message_id: runtimeState.after_reply.pending_user_message_id ?? runtimeState.last_send?.message_id,
+        user_message_id:
+          runtimeState.after_reply.pending_user_message_id ??
+          runtimeState.last_send?.message_id,
         assistant_message_id: messageId,
       },
       reminderMessage:
-        rerollScope === 'failed_only' && flowIds?.length
+        rerollScope === "failed_only" && flowIds?.length
           ? `正在重跑当前楼失败的 ${flowIds.length} 条工作流，请稍后…`
-          : '正在重跑当前楼的回复后工作流，请稍后…',
+          : "正在重跑当前楼的回复后工作流，请稍后…",
       successMessage:
-        rerollScope === 'failed_only' && flowIds?.length
-          ? '当前楼失败的工作流已重跑完成。'
-          : '当前楼的动态世界工作流已重跑完成。',
+        rerollScope === "failed_only" && flowIds?.length
+          ? "当前楼失败的工作流已重跑完成。"
+          : "当前楼的动态世界工作流已重跑完成。",
     });
 
     if (outcome.workflowSucceeded) {
@@ -1090,12 +1364,15 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{ ok: boolean; 
     }
 
     if (outcome.abortedByUser) {
-      return { ok: false, reason: 'workflow cancelled by user' };
+      return { ok: false, reason: "workflow cancelled by user" };
     }
 
-    return { ok: false, reason: 'workflow failed' };
+    return { ok: false, reason: "workflow failed" };
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     setProcessing(false);
   }
@@ -1104,34 +1381,41 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{ ok: boolean; 
 export function initRuntimeEvents() {
   const eventTypes = getEventTypes();
 
+  installPrimaryGenerateInterceptor();
   installSendIntentHooks();
 
   listenerStops.push(
     onSTEvent(eventTypes.MESSAGE_SENT, (messageId: number) => {
       const msg = getChatMessages(messageId)[0];
-      if (!msg || msg.role !== 'user') {
+      if (!msg || msg.role !== "user") {
         return;
       }
-      recordUserSend(messageId, msg.message ?? '');
+      recordUserSend(messageId, msg.message ?? "");
     }),
   );
 
   listenerStops.push(
-    onSTEvent(eventTypes.GENERATION_STARTED, (type: string, params: Record<string, any>, dryRun: boolean) => {
-      recordGeneration(type, params ?? {}, dryRun);
-    }),
+    onSTEvent(
+      eventTypes.GENERATION_STARTED,
+      (type: string, params: Record<string, any>, dryRun: boolean) => {
+        recordGeneration(type, params ?? {}, dryRun);
+      },
+    ),
   );
 
   listenerStops.push(
-    onSTEvent(eventTypes.MESSAGE_RECEIVED, async (messageId: number, type: string) => {
-      await onAfterReplyMessage(messageId, type, 'message_received');
-    }),
+    onSTEvent(
+      eventTypes.MESSAGE_RECEIVED,
+      async (messageId: number, type: string) => {
+        await onAfterReplyMessage(messageId, type, "message_received");
+      },
+    ),
   );
 
   listenerStops.push(
     onSTEvent(eventTypes.GENERATION_ENDED, async (messageId: number) => {
-      const type = getRuntimeState().last_generation?.type ?? 'normal';
-      await onAfterReplyMessage(messageId, type, 'generation_ended');
+      const type = getRuntimeState().last_generation?.type ?? "normal";
+      await onAfterReplyMessage(messageId, type, "generation_ended");
     }),
   );
 
@@ -1167,6 +1451,7 @@ export function disposeRuntimeEvents() {
     clearTimeout(sendIntentRetryTimer);
     sendIntentRetryTimer = null;
   }
+  uninstallPrimaryGenerateInterceptor();
   resetInterceptGuard();
   disposeFloorBindingEvents();
 }

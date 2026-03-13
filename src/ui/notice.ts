@@ -1,9 +1,9 @@
-export type EwNoticeLevel = 'success' | 'error' | 'info' | 'warning';
+export type EwNoticeLevel = "success" | "error" | "info" | "warning";
 
 type EwNoticeAction = {
   label: string;
   onClick: () => void;
-  kind?: 'neutral' | 'danger';
+  kind?: "neutral" | "danger";
 };
 
 export type EwNoticeInput = {
@@ -39,23 +39,13 @@ export type EwWorkflowNoticeHandle = {
   expand: () => void;
 };
 
-const STYLE_ID = 'ew-floating-notice-style';
-const HOST_ID = 'ew-floating-notice-host';
-const WORKFLOW_STYLE_ID = 'ew-workflow-notice-style';
-const WORKFLOW_HOST_ID = 'ew-workflow-notice-host';
+const STYLE_ID = "ew-floating-notice-style";
+const HOST_ID = "ew-floating-notice-host";
+const WORKFLOW_STYLE_ID = "ew-workflow-notice-style";
+const WORKFLOW_HOST_ID = "ew-workflow-notice-host";
 
 function resolveNoticeDocument(): Document {
-  const runtime = globalThis as Record<string, any>;
-  const chatDocument = runtime.SillyTavern?.Chat?.document;
-  if (chatDocument && typeof chatDocument.querySelector === 'function') {
-    return chatDocument as Document;
-  }
-
-  try {
-    return (window.parent && window.parent !== window ? window.parent : window).document;
-  } catch {
-    return document;
-  }
+  return document;
 }
 
 function ensureStyle(doc: Document) {
@@ -63,7 +53,7 @@ function ensureStyle(doc: Document) {
     return;
   }
 
-  const style = doc.createElement('style');
+  const style = doc.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
     #${HOST_ID} {
@@ -308,10 +298,10 @@ function ensureHost(doc: Document): HTMLElement {
     return host;
   }
 
-  host = doc.createElement('div');
+  host = doc.createElement("div");
   host.id = HOST_ID;
-  host.setAttribute('aria-live', 'polite');
-  host.setAttribute('aria-atomic', 'false');
+  host.setAttribute("aria-live", "polite");
+  host.setAttribute("aria-atomic", "false");
   (doc.body || doc.documentElement).appendChild(host);
   return host;
 }
@@ -321,7 +311,7 @@ function ensureWorkflowStyle(doc: Document) {
     return;
   }
 
-  const style = doc.createElement('style');
+  const style = doc.createElement("style");
   style.id = WORKFLOW_STYLE_ID;
   style.textContent = `
     #${WORKFLOW_HOST_ID} {
@@ -766,70 +756,78 @@ function ensureWorkflowHost(doc: Document): HTMLElement {
     return host;
   }
 
-  host = doc.createElement('div');
+  host = doc.createElement("div");
   host.id = WORKFLOW_HOST_ID;
-  host.setAttribute('aria-live', 'polite');
-  host.setAttribute('aria-atomic', 'false');
+  host.setAttribute("aria-live", "polite");
+  host.setAttribute("aria-atomic", "false");
   (doc.body || doc.documentElement).appendChild(host);
   return host;
 }
 
 function getIcon(level: EwNoticeLevel): string {
   switch (level) {
-    case 'success':
-      return '✓';
-    case 'error':
-      return '!';
-    case 'warning':
-      return '?';
+    case "success":
+      return "✓";
+    case "error":
+      return "!";
+    case "warning":
+      return "?";
     default:
-      return 'i';
+      return "i";
   }
 }
 
-function applyNoticeState(item: HTMLElement, input: EwNoticeInput, progress: HTMLElement) {
-  const level = input.level ?? 'info';
+function applyNoticeState(
+  item: HTMLElement,
+  input: EwNoticeInput,
+  progress: HTMLElement,
+) {
+  const level = input.level ?? "info";
 
   item.dataset.level = level;
-  item.dataset.busy = input.busy ? 'true' : 'false';
+  item.dataset.busy = input.busy ? "true" : "false";
 
-  const icon = item.querySelector('.ew-floating-notice__icon');
+  const icon = item.querySelector(".ew-floating-notice__icon");
   if (icon) {
-    icon.textContent = input.busy ? '◌' : getIcon(level);
+    icon.textContent = input.busy ? "◌" : getIcon(level);
   }
 
-  const title = item.querySelector('.ew-floating-notice__title');
+  const title = item.querySelector(".ew-floating-notice__title");
   if (title) {
     title.textContent = input.title;
   }
 
-  const message = item.querySelector('.ew-floating-notice__message');
+  const message = item.querySelector(".ew-floating-notice__message");
   if (message) {
     message.textContent = input.message;
   }
 
-  const actionButton = item.querySelector('.ew-floating-notice__action') as HTMLButtonElement | null;
-  const actionWrap = item.querySelector('.ew-floating-notice__actions') as HTMLElement | null;
+  const actionButton = item.querySelector(
+    ".ew-floating-notice__action",
+  ) as HTMLButtonElement | null;
+  const actionWrap = item.querySelector(
+    ".ew-floating-notice__actions",
+  ) as HTMLElement | null;
   if (actionButton && actionWrap) {
     if (input.action) {
-      actionWrap.style.display = '';
-      actionButton.style.display = '';
+      actionWrap.style.display = "";
+      actionButton.style.display = "";
       actionButton.textContent = input.action.label;
-      actionButton.dataset.kind = input.action.kind ?? 'neutral';
+      actionButton.dataset.kind = input.action.kind ?? "neutral";
     } else {
-      actionWrap.style.display = 'none';
-      actionButton.style.display = 'none';
-      actionButton.textContent = '';
-      actionButton.dataset.kind = 'neutral';
+      actionWrap.style.display = "none";
+      actionButton.style.display = "none";
+      actionButton.textContent = "";
+      actionButton.dataset.kind = "neutral";
     }
   }
 
   if (input.persist) {
-    progress.style.display = 'none';
-    progress.style.animationDuration = '';
+    progress.style.display = "none";
+    progress.style.animationDuration = "";
   } else {
     const duration = Math.max(1400, input.duration_ms ?? 3200);
-    progress.style.display = '';
+    progress.style.display = "";
     progress.style.animationDuration = `${duration}ms`;
   }
 }
@@ -841,40 +839,40 @@ export function showManagedEwNotice(input: EwNoticeInput): EwNoticeHandle {
   ensureStyle(doc);
   const host = ensureHost(doc);
 
-  const item = doc.createElement('article');
-  item.className = 'ew-floating-notice';
+  const item = doc.createElement("article");
+  item.className = "ew-floating-notice";
 
-  const icon = doc.createElement('span');
-  icon.className = 'ew-floating-notice__icon';
+  const icon = doc.createElement("span");
+  icon.className = "ew-floating-notice__icon";
 
-  const content = doc.createElement('div');
-  content.className = 'ew-floating-notice__content';
+  const content = doc.createElement("div");
+  content.className = "ew-floating-notice__content";
 
-  const title = doc.createElement('h4');
-  title.className = 'ew-floating-notice__title';
+  const title = doc.createElement("h4");
+  title.className = "ew-floating-notice__title";
   title.textContent = input.title;
 
-  const message = doc.createElement('p');
-  message.className = 'ew-floating-notice__message';
+  const message = doc.createElement("p");
+  message.className = "ew-floating-notice__message";
   message.textContent = input.message;
 
-  const actions = doc.createElement('div');
-  actions.className = 'ew-floating-notice__actions';
+  const actions = doc.createElement("div");
+  actions.className = "ew-floating-notice__actions";
 
-  const actionButton = doc.createElement('button');
-  actionButton.className = 'ew-floating-notice__action';
-  actionButton.type = 'button';
-  actionButton.style.display = 'none';
-  actionButton.dataset.kind = 'neutral';
+  const actionButton = doc.createElement("button");
+  actionButton.className = "ew-floating-notice__action";
+  actionButton.type = "button";
+  actionButton.style.display = "none";
+  actionButton.dataset.kind = "neutral";
 
-  const closeButton = doc.createElement('button');
-  closeButton.className = 'ew-floating-notice__close';
-  closeButton.type = 'button';
-  closeButton.setAttribute('aria-label', '关闭提示');
-  closeButton.textContent = '×';
+  const closeButton = doc.createElement("button");
+  closeButton.className = "ew-floating-notice__close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "关闭提示");
+  closeButton.textContent = "×";
 
-  const progress = doc.createElement('div');
-  progress.className = 'ew-floating-notice__progress';
+  const progress = doc.createElement("div");
+  progress.className = "ew-floating-notice__progress";
 
   content.appendChild(title);
   content.appendChild(message);
@@ -904,7 +902,7 @@ export function showManagedEwNotice(input: EwNoticeInput): EwNoticeHandle {
     }
     clearCloseTimer();
     closed = true;
-    item.classList.add('ew-floating-notice--out');
+    item.classList.add("ew-floating-notice--out");
     setTimeout(() => {
       item.remove();
       if (!host.childElementCount) {
@@ -933,12 +931,12 @@ export function showManagedEwNotice(input: EwNoticeInput): EwNoticeHandle {
     scheduleAutoClose(nextInput);
   };
 
-  actionButton.addEventListener('click', event => {
+  actionButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     currentAction?.();
   });
-  closeButton.addEventListener('click', close);
+  closeButton.addEventListener("click", close);
   scheduleAutoClose(input);
 
   host.appendChild(item);
@@ -953,60 +951,74 @@ export function showEwNotice(input: EwNoticeInput) {
   showManagedEwNotice(input);
 }
 
-function applyWorkflowNoticeState(item: HTMLElement, input: EwWorkflowNoticeInput, progress: HTMLElement) {
-  const level = input.level ?? 'info';
+function applyWorkflowNoticeState(
+  item: HTMLElement,
+  input: EwWorkflowNoticeInput,
+  progress: HTMLElement,
+) {
+  const level = input.level ?? "info";
   const hasPreview = Boolean(input.island?.content?.trim());
 
   item.dataset.level = level;
-  item.dataset.busy = input.busy ? 'true' : 'false';
-  item.dataset.hasPreview = hasPreview ? 'true' : 'false';
+  item.dataset.busy = input.busy ? "true" : "false";
+  item.dataset.hasPreview = hasPreview ? "true" : "false";
 
-  const icon = item.querySelector('.ew-workflow-notice__icon');
+  const icon = item.querySelector(".ew-workflow-notice__icon");
   if (icon) {
-    icon.textContent = input.busy ? '◌' : getIcon(level);
+    icon.textContent = input.busy ? "◌" : getIcon(level);
   }
 
-  const title = item.querySelector('.ew-workflow-notice__title');
+  const title = item.querySelector(".ew-workflow-notice__title");
   if (title) {
     title.textContent = input.title;
   }
 
   // H: expanded view shows workflow name + flow progress
-  const message = item.querySelector('.ew-workflow-notice__message');
+  const message = item.querySelector(".ew-workflow-notice__message");
   if (message) {
     let text = input.message;
     if (input.flow_progress && input.flow_progress.total > 0) {
-      const wfName = input.workflow_name?.trim() || '工作流';
+      const wfName = input.workflow_name?.trim() || "工作流";
       text += `\n━━━ ${wfName}  ·  ${input.flow_progress.completed}/${input.flow_progress.total} 流已完成`;
     }
     message.textContent = text;
   }
 
-  const actionButton = item.querySelector('.ew-workflow-notice__action') as HTMLButtonElement | null;
-  const actionWrap = item.querySelector('.ew-workflow-notice__actions') as HTMLElement | null;
+  const actionButton = item.querySelector(
+    ".ew-workflow-notice__action",
+  ) as HTMLButtonElement | null;
+  const actionWrap = item.querySelector(
+    ".ew-workflow-notice__actions",
+  ) as HTMLElement | null;
   if (actionButton && actionWrap) {
     if (input.action) {
-      actionWrap.style.display = '';
-      actionButton.style.display = '';
+      actionWrap.style.display = "";
+      actionButton.style.display = "";
       actionButton.textContent = input.action.label;
-      actionButton.dataset.kind = input.action.kind ?? 'neutral';
+      actionButton.dataset.kind = input.action.kind ?? "neutral";
     } else {
-      actionWrap.style.display = 'none';
-      actionButton.style.display = 'none';
-      actionButton.textContent = '';
-      actionButton.dataset.kind = 'neutral';
+      actionWrap.style.display = "none";
+      actionButton.style.display = "none";
+      actionButton.textContent = "";
+      actionButton.dataset.kind = "neutral";
     }
   }
 
-  const islandName = item.querySelector('.ew-workflow-notice__island-slot--name');
+  const islandName = item.querySelector(
+    ".ew-workflow-notice__island-slot--name",
+  );
   if (islandName) {
-    islandName.textContent = input.island?.entry_name?.trim() || '';
+    islandName.textContent = input.island?.entry_name?.trim() || "";
   }
 
-  const islandContent = item.querySelector('.ew-workflow-notice__island-slot--content') as HTMLElement | null;
+  const islandContent = item.querySelector(
+    ".ew-workflow-notice__island-slot--content",
+  ) as HTMLElement | null;
   if (islandContent) {
-    const contentText = input.island?.content?.trim() || '';
-    const textSpan = islandContent.querySelector('.ew-workflow-notice__island-text') as HTMLElement | null;
+    const contentText = input.island?.content?.trim() || "";
+    const textSpan = islandContent.querySelector(
+      ".ew-workflow-notice__island-text",
+    ) as HTMLElement | null;
     if (textSpan) {
       textSpan.textContent = contentText;
     } else {
@@ -1017,116 +1029,124 @@ function applyWorkflowNoticeState(item: HTMLElement, input: EwWorkflowNoticeInpu
     requestAnimationFrame(() => {
       const inner = textSpan ?? islandContent;
       const overflows = inner.scrollWidth > islandContent.clientWidth + 4;
-      islandContent.dataset.overflow = overflows ? 'true' : 'false';
+      islandContent.dataset.overflow = overflows ? "true" : "false";
       if (overflows && textSpan) {
         const dist = inner.scrollWidth - islandContent.clientWidth;
-        textSpan.style.setProperty('--ew-scroll-dist', `-${dist}px`);
+        textSpan.style.setProperty("--ew-scroll-dist", `-${dist}px`);
       }
     });
   }
 
   // B: moon state for success/fail
-  const orb = item.querySelector('.ew-workflow-notice__island-orb') as HTMLElement | null;
+  const orb = item.querySelector(
+    ".ew-workflow-notice__island-orb",
+  ) as HTMLElement | null;
   if (orb) {
-    if (level === 'success' && !input.busy) {
-      orb.dataset.moon = 'full';
-    } else if (level === 'error' && !input.busy) {
-      orb.dataset.moon = 'blood';
+    if (level === "success" && !input.busy) {
+      orb.dataset.moon = "full";
+    } else if (level === "error" && !input.busy) {
+      orb.dataset.moon = "blood";
     } else {
       delete orb.dataset.moon;
     }
   }
 
   // D: badge — ×N (total) when no preview, +N (remaining) when streaming
-  const extraBadge = item.querySelector('.ew-workflow-notice__island-extra') as HTMLElement | null;
+  const extraBadge = item.querySelector(
+    ".ew-workflow-notice__island-extra",
+  ) as HTMLElement | null;
   if (extraBadge) {
     const count = input.island?.extra_count ?? 0;
     if (hasPreview && count > 0) {
       // streaming visible: show "+N" (other flows besides the one displayed)
       extraBadge.textContent = `+${count}`;
-      extraBadge.style.display = '';
+      extraBadge.style.display = "";
     } else if (!hasPreview && count > 0) {
       // no streaming yet: show "×N" (total active flows = extra_count + 1)
       extraBadge.textContent = `×${count + 1}`;
-      extraBadge.style.display = '';
+      extraBadge.style.display = "";
     } else {
-      extraBadge.textContent = '';
-      extraBadge.style.display = 'none';
+      extraBadge.textContent = "";
+      extraBadge.style.display = "none";
     }
   }
 
   if (input.persist) {
-    progress.style.display = 'none';
-    progress.style.animationDuration = '';
+    progress.style.display = "none";
+    progress.style.animationDuration = "";
   } else {
     const duration = Math.max(1400, input.duration_ms ?? 3200);
-    progress.style.display = '';
+    progress.style.display = "";
     progress.style.animationDuration = `${duration}ms`;
   }
 }
 
-export function showManagedWorkflowNotice(input: EwWorkflowNoticeInput): EwWorkflowNoticeHandle {
+export function showManagedWorkflowNotice(
+  input: EwWorkflowNoticeInput,
+): EwWorkflowNoticeHandle {
   const initialDuration = Math.max(1400, input.duration_ms ?? 3200);
   const doc = resolveNoticeDocument();
   ensureWorkflowStyle(doc);
   const host = ensureWorkflowHost(doc);
 
-  const item = doc.createElement('article');
-  item.className = 'ew-workflow-notice';
-  item.dataset.collapsed = 'false';
+  const item = doc.createElement("article");
+  item.className = "ew-workflow-notice";
+  item.dataset.collapsed = "false";
 
-  const card = doc.createElement('div');
-  card.className = 'ew-workflow-notice__card';
+  const card = doc.createElement("div");
+  card.className = "ew-workflow-notice__card";
 
-  const icon = doc.createElement('span');
-  icon.className = 'ew-workflow-notice__icon';
+  const icon = doc.createElement("span");
+  icon.className = "ew-workflow-notice__icon";
 
-  const content = doc.createElement('div');
-  content.className = 'ew-workflow-notice__content';
+  const content = doc.createElement("div");
+  content.className = "ew-workflow-notice__content";
 
-  const title = doc.createElement('h4');
-  title.className = 'ew-workflow-notice__title';
+  const title = doc.createElement("h4");
+  title.className = "ew-workflow-notice__title";
 
-  const message = doc.createElement('p');
-  message.className = 'ew-workflow-notice__message';
+  const message = doc.createElement("p");
+  message.className = "ew-workflow-notice__message";
 
-  const actions = doc.createElement('div');
-  actions.className = 'ew-workflow-notice__actions';
+  const actions = doc.createElement("div");
+  actions.className = "ew-workflow-notice__actions";
 
-  const actionButton = doc.createElement('button');
-  actionButton.className = 'ew-workflow-notice__action';
-  actionButton.type = 'button';
-  actionButton.style.display = 'none';
-  actionButton.dataset.kind = 'neutral';
+  const actionButton = doc.createElement("button");
+  actionButton.className = "ew-workflow-notice__action";
+  actionButton.type = "button";
+  actionButton.style.display = "none";
+  actionButton.dataset.kind = "neutral";
 
-  const closeButton = doc.createElement('button');
-  closeButton.className = 'ew-workflow-notice__close';
-  closeButton.type = 'button';
-  closeButton.setAttribute('aria-label', '关闭提示');
-  closeButton.textContent = '×';
+  const closeButton = doc.createElement("button");
+  closeButton.className = "ew-workflow-notice__close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "关闭提示");
+  closeButton.textContent = "×";
 
-  const island = doc.createElement('div');
-  island.className = 'ew-workflow-notice__island';
+  const island = doc.createElement("div");
+  island.className = "ew-workflow-notice__island";
 
-  const islandName = doc.createElement('span');
-  islandName.className = 'ew-workflow-notice__island-slot ew-workflow-notice__island-slot--name';
+  const islandName = doc.createElement("span");
+  islandName.className =
+    "ew-workflow-notice__island-slot ew-workflow-notice__island-slot--name";
 
-  const islandOrb = doc.createElement('span');
-  islandOrb.className = 'ew-workflow-notice__island-orb';
+  const islandOrb = doc.createElement("span");
+  islandOrb.className = "ew-workflow-notice__island-orb";
 
-  const islandContent = doc.createElement('span');
-  islandContent.className = 'ew-workflow-notice__island-slot ew-workflow-notice__island-slot--content';
+  const islandContent = doc.createElement("span");
+  islandContent.className =
+    "ew-workflow-notice__island-slot ew-workflow-notice__island-slot--content";
 
-  const islandContentText = doc.createElement('span');
-  islandContentText.className = 'ew-workflow-notice__island-text';
+  const islandContentText = doc.createElement("span");
+  islandContentText.className = "ew-workflow-notice__island-text";
   islandContent.appendChild(islandContentText);
 
-  const islandExtra = doc.createElement('span');
-  islandExtra.className = 'ew-workflow-notice__island-extra';
-  islandExtra.style.display = 'none';
+  const islandExtra = doc.createElement("span");
+  islandExtra.className = "ew-workflow-notice__island-extra";
+  islandExtra.style.display = "none";
 
-  const progress = doc.createElement('div');
-  progress.className = 'ew-workflow-notice__progress';
+  const progress = doc.createElement("div");
+  progress.className = "ew-workflow-notice__progress";
 
   content.appendChild(title);
   content.appendChild(message);
@@ -1168,14 +1188,14 @@ export function showManagedWorkflowNotice(input: EwWorkflowNoticeInput): EwWorkf
       return;
     }
     clearCollapseTimer();
-    item.dataset.collapsed = 'true';
+    item.dataset.collapsed = "true";
   };
 
   const expand = () => {
     if (closed) {
       return;
     }
-    item.dataset.collapsed = 'false';
+    item.dataset.collapsed = "false";
     scheduleCollapse(currentInput);
   };
 
@@ -1186,7 +1206,7 @@ export function showManagedWorkflowNotice(input: EwWorkflowNoticeInput): EwWorkf
     clearCloseTimer();
     clearCollapseTimer();
     closed = true;
-    item.classList.add('ew-workflow-notice--out');
+    item.classList.add("ew-workflow-notice--out");
     setTimeout(() => {
       item.remove();
       if (!host.childElementCount) {
@@ -1206,7 +1226,7 @@ export function showManagedWorkflowNotice(input: EwWorkflowNoticeInput): EwWorkf
   };
 
   const scheduleCollapse = (nextInput: EwWorkflowNoticeInput) => {
-    if (item.dataset.collapsed === 'true') {
+    if (item.dataset.collapsed === "true") {
       return;
     }
 
@@ -1240,19 +1260,19 @@ export function showManagedWorkflowNotice(input: EwWorkflowNoticeInput): EwWorkf
   scheduleAutoClose(input);
   scheduleCollapse(input);
 
-  actionButton.addEventListener('click', event => {
+  actionButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     currentAction?.();
   });
-  closeButton.addEventListener('click', event => {
+  closeButton.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
     close();
   });
-  item.addEventListener('click', event => {
+  item.addEventListener("click", (event) => {
     event.preventDefault();
-    if (item.dataset.collapsed === 'true') {
+    if (item.dataset.collapsed === "true") {
       expand();
       return;
     }

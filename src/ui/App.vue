@@ -20,14 +20,29 @@
           :title="store.settings.theme_moon ? '关闭月相主题' : '开启月相主题'"
           @click="store.settings.theme_moon = !store.settings.theme_moon"
         >
-          <span class="ew-moon-toggle__moon" :class="{ 'is-full': store.settings.theme_moon }">
+          <span
+            class="ew-moon-toggle__moon"
+            :class="{ 'is-full': store.settings.theme_moon }"
+          >
             <span class="ew-moon-toggle__shadow" />
           </span>
         </button>
-        <button type="button" class="ew-btn" @click="store.validateConfig">校验配置</button>
-        <button type="button" class="ew-btn" @click="openImportFilePicker">导入配置</button>
-        <button type="button" class="ew-btn" @click="store.exportConfig">导出配置</button>
-        <button type="button" class="ew-btn ew-btn--danger" @click="store.closePanel">关闭</button>
+        <button type="button" class="ew-btn" @click="store.validateConfig">
+          校验配置
+        </button>
+        <button type="button" class="ew-btn" @click="openImportFilePicker">
+          导入配置
+        </button>
+        <button type="button" class="ew-btn" @click="store.exportConfig">
+          导出配置
+        </button>
+        <button
+          type="button"
+          class="ew-btn ew-btn--danger"
+          @click="store.closePanel"
+        >
+          关闭
+        </button>
         <input
           ref="importFileInputRef"
           type="file"
@@ -51,10 +66,15 @@
                       :aria-checked="store.settings.enabled ? 'true' : 'false'"
                       @click="store.settings.enabled = !store.settings.enabled"
                     >
-                      <span class="ew-switch__track" :data-enabled="store.settings.enabled ? '1' : '0'">
+                      <span
+                        class="ew-switch__track"
+                        :data-enabled="store.settings.enabled ? '1' : '0'"
+                      >
                         <span class="ew-switch__thumb" />
                       </span>
-                      <span class="ew-switch__text">{{ store.settings.enabled ? '已开启' : '已关闭' }}</span>
+                      <span class="ew-switch__text">{{
+                        store.settings.enabled ? "已开启" : "已关闭"
+                      }}</span>
                     </button>
                     <button
                       type="button"
@@ -75,15 +95,28 @@
                   </select>
                 </EwFieldRow>
                 <EwFieldRow label="总超时(ms)" :help="help('total_timeout_ms')">
-                  <input v-model.number="store.settings.total_timeout_ms" type="number" min="1000" step="500" />
+                  <input
+                    v-model.number="store.settings.total_timeout_ms"
+                    type="number"
+                    min="1000"
+                    step="500"
+                  />
                 </EwFieldRow>
                 <EwFieldRow label="门控时效(ms)" :help="help('gate_ttl_ms')">
-                  <input v-model.number="store.settings.gate_ttl_ms" type="number" min="1000" step="500" />
+                  <input
+                    v-model.number="store.settings.gate_ttl_ms"
+                    type="number"
+                    min="1000"
+                    step="500"
+                  />
                 </EwFieldRow>
               </div>
             </EwSectionCard>
 
-            <EwSectionCard title="运行摘要" subtitle="当前配置规模和关键参数一览。">
+            <EwSectionCard
+              title="运行摘要"
+              subtitle="当前配置规模和关键参数一览。"
+            >
               <div class="ew-summary-grid">
                 <article class="ew-summary-card">
                   <h4>工作流数量</h4>
@@ -104,10 +137,16 @@
                   <h4>环境检查</h4>
                   <strong>{{ environmentStatus.overallLabel }}</strong>
                   <div class="ew-summary-badges">
-                    <span class="ew-status-pill" :data-tone="environmentStatus.promptTemplateTone">
+                    <span
+                      class="ew-status-pill"
+                      :data-tone="environmentStatus.promptTemplateTone"
+                    >
                       模板 {{ environmentStatus.promptTemplateLabel }}
                     </span>
-                    <span class="ew-status-pill" :data-tone="environmentStatus.ewEjsTone">
+                    <span
+                      class="ew-status-pill"
+                      :data-tone="environmentStatus.ewEjsTone"
+                    >
                       EW EJS {{ environmentStatus.ewEjsLabel }}
                     </span>
                   </div>
@@ -118,16 +157,29 @@
           </template>
 
           <template v-else-if="store.activeTab === 'api'">
-            <EwSectionCard title="API配置" subtitle="统一管理外部接口预设，供工作流复用。">
+            <EwSectionCard
+              title="API配置"
+              subtitle="统一管理外部接口预设，供工作流复用。"
+            >
               <template #actions>
-                <button type="button" class="ew-btn" @click="store.addApiPreset">新增API配置</button>
+                <button
+                  type="button"
+                  class="ew-btn"
+                  @click="store.addApiPreset"
+                >
+                  新增API配置
+                </button>
               </template>
 
               <transition-group name="ew-list" tag="div" class="ew-api-list">
                 <EwApiPresetCard
                   v-for="(preset, index) in store.settings.api_presets"
                   :key="preset.id"
-                  v-memo="[preset, store.expandedApiPresetId === preset.id, bindCountByPresetId[preset.id] ?? 0]"
+                  v-memo="[
+                    preset,
+                    store.expandedApiPresetId === preset.id,
+                    bindCountByPresetId[preset.id] ?? 0,
+                  ]"
                   :index="index"
                   :model-value="preset"
                   :expanded="store.expandedApiPresetId === preset.id"
@@ -135,63 +187,105 @@
                   @toggle-expand="store.toggleApiPresetExpanded(preset.id)"
                   @duplicate="store.duplicateApiPreset(preset.id)"
                   @remove="store.removeApiPreset(preset.id)"
-                  @update:model-value="value => updateApiPreset(index, value)"
+                  @update:model-value="(value) => updateApiPreset(index, value)"
                 />
               </transition-group>
             </EwSectionCard>
           </template>
 
           <template v-else-if="store.activeTab === 'global'">
-            <EwSectionCard title="基础配置" subtitle="世界书命名与楼层绑定控制。">
+            <EwSectionCard
+              title="基础配置"
+              subtitle="世界书命名与楼层绑定控制。"
+            >
               <div class="ew-grid two">
-                <EwFieldRow label="动态条目前缀" :help="help('dynamic_entry_prefix')">
+                <EwFieldRow
+                  label="动态条目前缀"
+                  :help="help('dynamic_entry_prefix')"
+                >
                   <input
                     v-model="store.settings.dynamic_entry_prefix"
                     type="text"
                     :placeholder="help('dynamic_entry_prefix')?.placeholder"
                   />
                 </EwFieldRow>
-                <EwFieldRow label="控制器条目前缀" :help="help('controller_entry_prefix')">
+                <EwFieldRow
+                  label="控制器条目前缀"
+                  :help="help('controller_entry_prefix')"
+                >
                   <input
                     v-model="store.settings.controller_entry_prefix"
                     type="text"
                     :placeholder="help('controller_entry_prefix')?.placeholder"
                   />
                 </EwFieldRow>
-                <EwFieldRow label="楼层绑定" :help="help('floor_binding_enabled')">
+                <EwFieldRow
+                  label="楼层绑定"
+                  :help="help('floor_binding_enabled')"
+                >
                   <button
                     type="button"
                     class="ew-switch"
                     role="switch"
-                    :aria-checked="store.settings.floor_binding_enabled ? 'true' : 'false'"
-                    @click="store.settings.floor_binding_enabled = !store.settings.floor_binding_enabled"
+                    :aria-checked="
+                      store.settings.floor_binding_enabled ? 'true' : 'false'
+                    "
+                    @click="
+                      store.settings.floor_binding_enabled =
+                        !store.settings.floor_binding_enabled
+                    "
                   >
-                    <span class="ew-switch__track" :data-enabled="store.settings.floor_binding_enabled ? '1' : '0'">
+                    <span
+                      class="ew-switch__track"
+                      :data-enabled="
+                        store.settings.floor_binding_enabled ? '1' : '0'
+                      "
+                    >
                       <span class="ew-switch__thumb" />
                     </span>
                     <span class="ew-switch__text">{{
-                      store.settings.floor_binding_enabled ? '已开启' : '已关闭'
+                      store.settings.floor_binding_enabled ? "已开启" : "已关闭"
                     }}</span>
                   </button>
                 </EwFieldRow>
-                <EwFieldRow label="自动清理孤儿条目" :help="help('auto_cleanup_orphans')">
+                <EwFieldRow
+                  label="自动清理孤儿条目"
+                  :help="help('auto_cleanup_orphans')"
+                >
                   <button
                     type="button"
                     class="ew-switch"
                     role="switch"
-                    :aria-checked="store.settings.auto_cleanup_orphans ? 'true' : 'false'"
-                    @click="store.settings.auto_cleanup_orphans = !store.settings.auto_cleanup_orphans"
+                    :aria-checked="
+                      store.settings.auto_cleanup_orphans ? 'true' : 'false'
+                    "
+                    @click="
+                      store.settings.auto_cleanup_orphans =
+                        !store.settings.auto_cleanup_orphans
+                    "
                   >
-                    <span class="ew-switch__track" :data-enabled="store.settings.auto_cleanup_orphans ? '1' : '0'">
+                    <span
+                      class="ew-switch__track"
+                      :data-enabled="
+                        store.settings.auto_cleanup_orphans ? '1' : '0'
+                      "
+                    >
                       <span class="ew-switch__thumb" />
                     </span>
-                    <span class="ew-switch__text">{{ store.settings.auto_cleanup_orphans ? '已开启' : '已关闭' }}</span>
+                    <span class="ew-switch__text">{{
+                      store.settings.auto_cleanup_orphans ? "已开启" : "已关闭"
+                    }}</span>
                   </button>
                 </EwFieldRow>
               </div>
             </EwSectionCard>
 
-            <EwSectionCard v-model="store.globalAdvancedOpen" title="高级配置" subtitle="" collapsible>
+            <EwSectionCard
+              v-model="store.globalAdvancedOpen"
+              title="高级配置"
+              subtitle=""
+              collapsible
+            >
               <div class="ew-grid two">
                 <EwFieldRow label="执行时机" :help="help('workflow_timing')">
                   <select v-model="store.settings.workflow_timing">
@@ -213,16 +307,27 @@
                     <option value="failed_only">仅失败工作流</option>
                   </select>
                 </EwFieldRow>
-                <EwFieldRow label="原消息放行策略" :help="help('intercept_release_policy')">
+                <EwFieldRow
+                  label="原消息放行策略"
+                  :help="help('intercept_release_policy')"
+                >
                   <select v-model="store.settings.intercept_release_policy">
-                    <option value="success_only">仅工作流成功时发送原消息</option>
+                    <option value="success_only">
+                      仅工作流成功时发送原消息
+                    </option>
                     <option value="always">无论成功失败都发送原消息</option>
                     <option value="never">永不自动发送原消息</option>
                   </select>
                 </EwFieldRow>
-                <EwFieldRow label="快照存储方式" :help="help('snapshot_storage')">
+                <EwFieldRow
+                  label="快照存储方式"
+                  :help="help('snapshot_storage')"
+                >
                   <div style="display: flex; gap: 8px; align-items: center">
-                    <select v-model="store.settings.snapshot_storage" style="flex: 1">
+                    <select
+                      v-model="store.settings.snapshot_storage"
+                      style="flex: 1"
+                    >
                       <option value="message_data">消息数据（默认）</option>
                       <option value="file">服务器文件</option>
                     </select>
@@ -232,34 +337,58 @@
                       :disabled="migratingSnapshots"
                       @click="onMigrateSnapshots"
                     >
-                      {{ migratingSnapshots ? '同步中…' : '同步快照' }}
+                      {{ migratingSnapshots ? "同步中…" : "同步快照" }}
                     </button>
                   </div>
                 </EwFieldRow>
                 <EwFieldRow label="悬浮球">
-                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer">
-                    <input v-model="store.settings.show_fab" type="checkbox" @change="emitFabChanged" />
+                  <label
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 8px;
+                      cursor: pointer;
+                    "
+                  >
+                    <input
+                      v-model="store.settings.show_fab"
+                      type="checkbox"
+                      @change="emitFabChanged"
+                    />
                     显示悬浮球入口
                   </label>
                 </EwFieldRow>
               </div>
             </EwSectionCard>
 
-            <EwSectionCard title="隐藏设置" subtitle="批量隐藏旧楼层（节省 tokens）或限制界面渲染数量（提升流畅度）。">
+            <EwSectionCard
+              title="隐藏设置"
+              subtitle="批量隐藏旧楼层（节省 tokens）或限制界面渲染数量（提升流畅度）。"
+            >
               <div class="ew-grid two">
                 <EwFieldRow label="隐藏楼层">
                   <button
                     type="button"
                     class="ew-switch"
                     role="switch"
-                    :aria-checked="store.settings.hide_settings.enabled ? 'true' : 'false'"
-                    @click="store.settings.hide_settings.enabled = !store.settings.hide_settings.enabled"
+                    :aria-checked="
+                      store.settings.hide_settings.enabled ? 'true' : 'false'
+                    "
+                    @click="
+                      store.settings.hide_settings.enabled =
+                        !store.settings.hide_settings.enabled
+                    "
                   >
-                    <span class="ew-switch__track" :data-enabled="store.settings.hide_settings.enabled ? '1' : '0'">
+                    <span
+                      class="ew-switch__track"
+                      :data-enabled="
+                        store.settings.hide_settings.enabled ? '1' : '0'
+                      "
+                    >
                       <span class="ew-switch__thumb" />
                     </span>
                     <span class="ew-switch__text">{{
-                      store.settings.hide_settings.enabled ? '已开启' : '已关闭'
+                      store.settings.hide_settings.enabled ? "已开启" : "已关闭"
                     }}</span>
                   </button>
                 </EwFieldRow>
@@ -278,19 +407,28 @@
                     type="button"
                     class="ew-switch"
                     role="switch"
-                    :aria-checked="store.settings.hide_settings.limiter_enabled ? 'true' : 'false'"
+                    :aria-checked="
+                      store.settings.hide_settings.limiter_enabled
+                        ? 'true'
+                        : 'false'
+                    "
                     @click="
-                      store.settings.hide_settings.limiter_enabled = !store.settings.hide_settings.limiter_enabled
+                      store.settings.hide_settings.limiter_enabled =
+                        !store.settings.hide_settings.limiter_enabled
                     "
                   >
                     <span
                       class="ew-switch__track"
-                      :data-enabled="store.settings.hide_settings.limiter_enabled ? '1' : '0'"
+                      :data-enabled="
+                        store.settings.hide_settings.limiter_enabled ? '1' : '0'
+                      "
                     >
                       <span class="ew-switch__thumb" />
                     </span>
                     <span class="ew-switch__text">{{
-                      store.settings.hide_settings.limiter_enabled ? '已开启' : '已关闭'
+                      store.settings.hide_settings.limiter_enabled
+                        ? "已开启"
+                        : "已关闭"
                     }}</span>
                   </button>
                 </EwFieldRow>
@@ -306,8 +444,16 @@
                 </EwFieldRow>
               </div>
               <div class="ew-actions-wrap" style="margin-top: 0.75rem">
-                <button type="button" class="ew-btn" @click="onApplyHide">立即应用隐藏</button>
-                <button type="button" class="ew-btn ew-btn--danger" @click="onUnhideAll">取消全部隐藏</button>
+                <button type="button" class="ew-btn" @click="onApplyHide">
+                  立即应用隐藏
+                </button>
+                <button
+                  type="button"
+                  class="ew-btn ew-btn--danger"
+                  @click="onUnhideAll"
+                >
+                  取消全部隐藏
+                </button>
               </div>
             </EwSectionCard>
           </template>
@@ -318,7 +464,9 @@
               <button
                 type="button"
                 class="ew-flow-scope-tab"
-                :class="{ 'ew-flow-scope-tab--active': store.flowScope === 'global' }"
+                :class="{
+                  'ew-flow-scope-tab--active': store.flowScope === 'global',
+                }"
                 @click="store.setFlowScope('global')"
               >
                 🌐 全局
@@ -326,20 +474,41 @@
               <button
                 type="button"
                 class="ew-flow-scope-tab"
-                :class="{ 'ew-flow-scope-tab--active': store.flowScope === 'character' }"
+                :class="{
+                  'ew-flow-scope-tab--active': store.flowScope === 'character',
+                }"
                 @click="store.setFlowScope('character')"
               >
-                🎭 当前角色卡{{ store.activeCharName ? `: ${store.activeCharName}` : '' }}
+                🎭 当前角色卡{{
+                  store.activeCharName ? `: ${store.activeCharName}` : ""
+                }}
               </button>
             </div>
 
             <!-- ── 全局工作流 ── -->
             <template v-if="store.flowScope === 'global'">
-              <EwSectionCard title="全局工作流" subtitle="所有角色卡共享的工作流，优先级较低。">
+              <EwSectionCard
+                title="全局工作流"
+                subtitle="所有角色卡共享的工作流，优先级较低。"
+              >
                 <template #actions>
-                  <button type="button" class="ew-btn" @click="store.addFlow">新增工作流</button>
-                  <button type="button" class="ew-btn" @click="openFlowImportPicker">导入工作流</button>
-                  <button type="button" class="ew-btn" @click="store.exportAllFlows">导出全部工作流</button>
+                  <button type="button" class="ew-btn" @click="store.addFlow">
+                    新增工作流
+                  </button>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="openFlowImportPicker"
+                  >
+                    导入工作流
+                  </button>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="store.exportAllFlows"
+                  >
+                    导出全部工作流
+                  </button>
                   <input
                     ref="flowImportRef"
                     type="file"
@@ -353,7 +522,11 @@
                   <EwFlowCard
                     v-for="(flow, index) in store.settings.flows"
                     :key="flow.id"
-                    v-memo="[flow, store.expandedFlowId === flow.id, store.settings.api_presets]"
+                    v-memo="[
+                      flow,
+                      store.expandedFlowId === flow.id,
+                      store.settings.api_presets,
+                    ]"
                     :index="index"
                     :model-value="flow"
                     :api-presets="store.settings.api_presets"
@@ -362,7 +535,7 @@
                     @duplicate="store.duplicateFlow(flow.id)"
                     @remove="store.removeFlow(flow.id)"
                     @export="store.exportSingleFlow(flow.id)"
-                    @update:model-value="value => updateFlow(index, value)"
+                    @update:model-value="(value) => updateFlow(index, value)"
                   />
                 </transition-group>
               </EwSectionCard>
@@ -371,22 +544,54 @@
             <!-- ── 角色卡绑定工作流 ── -->
             <template v-else>
               <EwSectionCard
-                :title="'角色卡工作流' + (store.activeCharName ? ` — ${store.activeCharName}` : '')"
+                :title="
+                  '角色卡工作流' +
+                  (store.activeCharName ? ` — ${store.activeCharName}` : '')
+                "
                 subtitle="仅在当前角色卡生效的工作流，随角色卡导出/导入。优先级高于全局。"
               >
                 <template #actions>
-                  <button type="button" class="ew-btn" @click="store.addCharFlow">新增工作流</button>
-                  <button type="button" class="ew-btn" @click="store.saveCharFlows">💾 保存到世界书</button>
-                  <button type="button" class="ew-btn" @click="store.loadCharFlows">刷新</button>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="store.addCharFlow"
+                  >
+                    新增工作流
+                  </button>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="store.saveCharFlows"
+                  >
+                    💾 保存到世界书
+                  </button>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="store.loadCharFlows"
+                  >
+                    刷新
+                  </button>
                 </template>
 
-                <div v-if="store.charFlowsLoading" class="ew-flow-loading">加载角色卡工作流中...</div>
+                <div v-if="store.charFlowsLoading" class="ew-flow-loading">
+                  加载角色卡工作流中...
+                </div>
 
-                <transition-group v-else name="ew-list" tag="div" class="ew-flow-list">
+                <transition-group
+                  v-else
+                  name="ew-list"
+                  tag="div"
+                  class="ew-flow-list"
+                >
                   <EwFlowCard
                     v-for="(flow, index) in store.charFlows"
                     :key="flow.id"
-                    v-memo="[flow, store.expandedFlowId === flow.id, store.settings.api_presets]"
+                    v-memo="[
+                      flow,
+                      store.expandedFlowId === flow.id,
+                      store.settings.api_presets,
+                    ]"
                     :index="index"
                     :model-value="flow"
                     :api-presets="store.settings.api_presets"
@@ -394,11 +599,16 @@
                     @toggle-expand="store.toggleFlowExpanded(flow.id)"
                     @duplicate="store.duplicateCharFlow(flow.id)"
                     @remove="store.removeCharFlow(flow.id)"
-                    @update:model-value="value => updateCharFlow(index, value)"
+                    @update:model-value="
+                      (value) => updateCharFlow(index, value)
+                    "
                   />
                 </transition-group>
 
-                <div v-if="!store.charFlowsLoading && store.charFlows.length === 0" class="ew-flow-empty">
+                <div
+                  v-if="!store.charFlowsLoading && store.charFlows.length === 0"
+                  class="ew-flow-empty"
+                >
                   当前角色卡还没有绑定工作流。点击「新增工作流」来创建。
                 </div>
               </EwSectionCard>
@@ -407,7 +617,7 @@
 
           <template v-else-if="store.activeTab === 'graph'">
             <EwSectionCard title="图编辑器">
-              <p style="opacity: 0.5; padding: 12px;">图编辑器开发中…</p>
+              <p style="opacity: 0.5; padding: 12px">图编辑器开发中…</p>
             </EwSectionCard>
           </template>
 
@@ -425,24 +635,29 @@
 </template>
 
 <script setup lang="ts">
-import { checkEjsSyntax, renderEjsContent } from '../runtime/ejs-internal';
-import { migrateSnapshots } from '../runtime/floor-binding';
-import { resolveControllerEntryNameMap } from '../runtime/helpers';
-import { applyFloorLimit, runFullHideCheck, unhideAll } from '../runtime/hide-engine';
-import { patchSettings } from '../runtime/settings';
-import type { EwApiPreset, EwFlowConfig } from '../runtime/types';
-import EwApiPresetCard from './components/EwApiPresetCard.vue';
-import EwDebugPanel from './components/EwDebugPanel.vue';
-import EwFieldRow from './components/EwFieldRow.vue';
-import EwFlowCard from './components/EwFlowCard.vue';
-import EwHistoryPanel from './components/EwHistoryPanel.vue';
-import EwPanelShell from './components/EwPanelShell.vue';
-import EwSectionCard from './components/EwSectionCard.vue';
-import { getFieldHelp, PANEL_TABS } from './help-meta';
+import { checkEjsSyntax, renderEjsContent } from "../runtime/ejs-internal";
+import { migrateSnapshots } from "../runtime/floor-binding";
+import { resolveControllerEntryNameMap } from "../runtime/helpers";
+import {
+  applyFloorLimit,
+  runFullHideCheck,
+  unhideAll,
+} from "../runtime/hide-engine";
+import { patchSettings } from "../runtime/settings";
+import type { EwApiPreset, EwFlowConfig } from "../runtime/types";
+import { getSTContext } from "../st-adapter";
+import EwApiPresetCard from "./components/EwApiPresetCard.vue";
+import EwDebugPanel from "./components/EwDebugPanel.vue";
+import EwFieldRow from "./components/EwFieldRow.vue";
+import EwFlowCard from "./components/EwFlowCard.vue";
+import EwHistoryPanel from "./components/EwHistoryPanel.vue";
+import EwPanelShell from "./components/EwPanelShell.vue";
+import EwSectionCard from "./components/EwSectionCard.vue";
+import { getFieldHelp, PANEL_TABS } from "./help-meta";
 // Graph editor deferred — will be custom-built later
-import { showEwNotice } from './notice';
-import { useEwStore } from './store';
-import { replaceWorldbook } from '../runtime/compat/worldbook';
+import { replaceWorldbook } from "../runtime/compat/worldbook";
+import { showEwNotice } from "./notice";
+import { useEwStore } from "./store";
 
 const store = useEwStore();
 
@@ -450,7 +665,7 @@ const importFileInputRef = ref<HTMLInputElement | null>(null);
 const flowImportRef = ref<HTMLInputElement | null>(null);
 const migratingSnapshots = ref(false);
 
-type StatusTone = 'good' | 'warn' | 'bad' | 'muted';
+type StatusTone = "good" | "warn" | "bad" | "muted";
 
 interface EnvironmentStatus {
   overallLabel: string;
@@ -462,100 +677,102 @@ interface EnvironmentStatus {
 }
 
 const environmentStatus = ref<EnvironmentStatus>({
-  overallLabel: '检查中',
-  overallDetail: '正在读取宿主提示词模板和 EW 内置 EJS 状态。',
-  promptTemplateLabel: '检查中',
-  promptTemplateTone: 'muted',
-  ewEjsLabel: '检查中',
-  ewEjsTone: 'muted',
+  overallLabel: "检查中",
+  overallDetail: "正在读取宿主提示词模板和 EW 内置 EJS 状态。",
+  promptTemplateLabel: "检查中",
+  promptTemplateTone: "muted",
+  ewEjsLabel: "检查中",
+  ewEjsTone: "muted",
 });
 
 function getHostWindowForEnv(): Record<string, any> {
-  try {
-    if (window.parent && window.parent !== window) {
-      return window.parent as unknown as Record<string, any>;
-    }
-  } catch {
-    // Fall back to current window if parent access is blocked.
-  }
-
   return window as unknown as Record<string, any>;
 }
 
 async function refreshEnvironmentStatus() {
   environmentStatus.value = {
-    overallLabel: '检查中',
-    overallDetail: '正在读取宿主提示词模板和 EW 内置 EJS 状态。',
-    promptTemplateLabel: '检查中',
-    promptTemplateTone: 'muted',
-    ewEjsLabel: '检查中',
-    ewEjsTone: 'muted',
+    overallLabel: "检查中",
+    overallDetail: "正在读取宿主提示词模板和 EW 内置 EJS 状态。",
+    promptTemplateLabel: "检查中",
+    promptTemplateTone: "muted",
+    ewEjsLabel: "检查中",
+    ewEjsTone: "muted",
   };
 
   const host = getHostWindowForEnv();
-  const extensionSettings =
-    host.extension_settings ??
-    host.SillyTavern?.getContext?.()?.extensionSettings ??
-    host.SillyTavern?.extensionSettings;
+  let ctx: Record<string, any> | undefined;
+  try {
+    ctx = getSTContext() as Record<string, any>;
+  } catch {
+    ctx = undefined;
+  }
+  const extensionSettings = host.extension_settings ?? ctx?.extensionSettings;
   const promptTemplateSettings = extensionSettings?.EjsTemplate;
   const promptTemplateApi = host.EjsTemplate;
 
-  const hasPromptTemplate = Boolean(promptTemplateSettings || promptTemplateApi);
+  const hasPromptTemplate = Boolean(
+    promptTemplateSettings || promptTemplateApi,
+  );
   const promptTemplateEnabled =
-    typeof promptTemplateSettings?.enabled === 'boolean' ? promptTemplateSettings.enabled : hasPromptTemplate;
+    typeof promptTemplateSettings?.enabled === "boolean"
+      ? promptTemplateSettings.enabled
+      : hasPromptTemplate;
   const promptTemplateReady =
-    typeof promptTemplateApi?.evalTemplate === 'function' && typeof promptTemplateApi?.prepareContext === 'function';
+    typeof promptTemplateApi?.evalTemplate === "function" &&
+    typeof promptTemplateApi?.prepareContext === "function";
 
-  let promptTemplateLabel = '未检测到';
-  let promptTemplateTone: StatusTone = 'bad';
-  let promptTemplateDetail = '未发现 ST-Prompt-Template 的宿主设置或运行时接口。';
+  let promptTemplateLabel = "未检测到";
+  let promptTemplateTone: StatusTone = "bad";
+  let promptTemplateDetail =
+    "未发现 ST-Prompt-Template 的宿主设置或运行时接口。";
 
   if (hasPromptTemplate && !promptTemplateEnabled) {
-    promptTemplateLabel = '已关闭';
-    promptTemplateTone = 'warn';
-    promptTemplateDetail = '已检测到提示词模板扩展，但当前总开关处于关闭状态。';
+    promptTemplateLabel = "已关闭";
+    promptTemplateTone = "warn";
+    promptTemplateDetail = "已检测到提示词模板扩展，但当前总开关处于关闭状态。";
   } else if (hasPromptTemplate && !promptTemplateReady) {
-    promptTemplateLabel = '未就绪';
-    promptTemplateTone = 'warn';
-    promptTemplateDetail = '已检测到提示词模板扩展，但 EjsTemplate 接口尚未完全挂载。';
+    promptTemplateLabel = "未就绪";
+    promptTemplateTone = "warn";
+    promptTemplateDetail =
+      "已检测到提示词模板扩展，但 EjsTemplate 接口尚未完全挂载。";
   } else if (hasPromptTemplate) {
-    promptTemplateLabel = '已开启';
-    promptTemplateTone = 'good';
-    promptTemplateDetail = '宿主提示词模板扩展已启用，EjsTemplate 接口可调用。';
+    promptTemplateLabel = "已开启";
+    promptTemplateTone = "good";
+    promptTemplateDetail = "宿主提示词模板扩展已启用，EjsTemplate 接口可调用。";
   }
 
-  let ewEjsLabel = '异常';
-  let ewEjsTone: StatusTone = 'bad';
-  let ewEjsDetail = 'EW 内置 EJS 自检失败。';
+  let ewEjsLabel = "异常";
+  let ewEjsTone: StatusTone = "bad";
+  let ewEjsDetail = "EW 内置 EJS 自检失败。";
 
   try {
-    const syntaxError = checkEjsSyntax('EW::<%= 1 + 1 %>');
+    const syntaxError = checkEjsSyntax("EW::<%= 1 + 1 %>");
     if (syntaxError) {
       throw new Error(syntaxError);
     }
 
-    const rendered = await renderEjsContent('EW::<%= 1 + 1 %>');
-    if (rendered.trim() !== 'EW::2') {
+    const rendered = await renderEjsContent("EW::<%= 1 + 1 %>");
+    if (rendered.trim() !== "EW::2") {
       throw new Error(`unexpected render result: ${rendered}`);
     }
 
-    ewEjsLabel = '正常';
-    ewEjsTone = 'good';
-    ewEjsDetail = 'EW 内置 EJS 引擎可正常编译并执行最小模板。';
+    ewEjsLabel = "正常";
+    ewEjsTone = "good";
+    ewEjsDetail = "EW 内置 EJS 引擎可正常编译并执行最小模板。";
   } catch (error) {
-    ewEjsLabel = '异常';
-    ewEjsTone = 'bad';
+    ewEjsLabel = "异常";
+    ewEjsTone = "bad";
     ewEjsDetail = error instanceof Error ? error.message : String(error);
   }
 
-  let overallLabel = '需检查';
+  let overallLabel = "需检查";
   let overallDetail = `${promptTemplateDetail} ${ewEjsDetail}`;
 
-  if (promptTemplateTone === 'good' && ewEjsTone === 'good') {
-    overallLabel = '环境正常';
-    overallDetail = '宿主提示词模板已开启，EW 内置 EJS 也可正常使用。';
-  } else if (ewEjsTone === 'good') {
-    overallLabel = '可降级运行';
+  if (promptTemplateTone === "good" && ewEjsTone === "good") {
+    overallLabel = "环境正常";
+    overallDetail = "宿主提示词模板已开启，EW 内置 EJS 也可正常使用。";
+  } else if (ewEjsTone === "good") {
+    overallLabel = "可降级运行";
     overallDetail = `${promptTemplateDetail} 但 EW 内置 EJS 自检正常，当前扩展仍可继续运行。`;
   }
 
@@ -573,27 +790,33 @@ function emitFabChanged() {
   const visible = store.settings.show_fab;
   patchSettings({ show_fab: visible });
   if (!visible) {
-    document.getElementById('ew-assistant-fab')?.remove();
+    document.getElementById("ew-assistant-fab")?.remove();
   }
 }
 
-const enabledFlowCount = computed(() => store.settings.flows.filter(flow => flow.enabled).length);
+const enabledFlowCount = computed(
+  () => store.settings.flows.filter((flow) => flow.enabled).length,
+);
 const canRerollCurrentFloor = computed(() => {
-  return store.settings.enabled && store.settings.workflow_timing === 'after_reply' && !store.busy;
+  return (
+    store.settings.enabled &&
+    store.settings.workflow_timing === "after_reply" &&
+    !store.busy
+  );
 });
 const rerollButtonTitle = computed(() => {
   if (store.busy) {
-    return '当前有任务正在执行';
+    return "当前有任务正在执行";
   }
   if (!store.settings.enabled) {
-    return '请先开启 Evolution World';
+    return "请先开启 Evolution World";
   }
-  if (store.settings.workflow_timing !== 'after_reply') {
-    return '仅在“回复后更新”模式下可用';
+  if (store.settings.workflow_timing !== "after_reply") {
+    return "仅在“回复后更新”模式下可用";
   }
-  return store.settings.reroll_scope === 'failed_only'
-    ? '仅重跑当前楼上次失败的回复后工作流'
-    : '重跑当前楼的全部回复后工作流';
+  return store.settings.reroll_scope === "failed_only"
+    ? "仅重跑当前楼上次失败的回复后工作流"
+    : "重跑当前楼的全部回复后工作流";
 });
 const bindCountByPresetId = computed<Record<string, number>>(() => {
   const counts: Record<string, number> = {};
@@ -607,12 +830,23 @@ async function onMigrateSnapshots() {
   if (migratingSnapshots.value) return;
   migratingSnapshots.value = true;
   try {
-    const direction = store.settings.snapshot_storage === 'file' ? ('to_file' as const) : ('to_message_data' as const);
+    const direction =
+      store.settings.snapshot_storage === "file"
+        ? ("to_file" as const)
+        : ("to_message_data" as const);
     const { migrated } = await migrateSnapshots(direction);
-    showEwNotice({ title: '快照同步', message: `已处理 ${migrated} 条消息`, level: 'success' });
+    showEwNotice({
+      title: "快照同步",
+      message: `已处理 ${migrated} 条消息`,
+      level: "success",
+    });
   } catch (e) {
-    console.error('[Evolution World] Migration failed:', e);
-    showEwNotice({ title: '快照同步失败', message: '请检查控制台', level: 'error' });
+    console.error("[Evolution World] Migration failed:", e);
+    showEwNotice({
+      title: "快照同步失败",
+      message: "请检查控制台",
+      level: "error",
+    });
   } finally {
     migratingSnapshots.value = false;
   }
@@ -621,9 +855,9 @@ async function onMigrateSnapshots() {
 async function onRerollCurrentFloor() {
   if (!canRerollCurrentFloor.value) {
     showEwNotice({
-      title: 'Evolution World',
+      title: "Evolution World",
       message: rerollButtonTitle.value,
-      level: 'warning',
+      level: "warning",
     });
     return;
   }
@@ -631,9 +865,9 @@ async function onRerollCurrentFloor() {
   const api = window.EvolutionWorldAPI;
   if (!api?.rerollCurrentAfterReply) {
     showEwNotice({
-      title: 'Evolution World',
-      message: '运行时尚未就绪，暂时无法重跑当前楼。',
-      level: 'warning',
+      title: "Evolution World",
+      message: "运行时尚未就绪，暂时无法重跑当前楼。",
+      level: "warning",
     });
     return;
   }
@@ -641,17 +875,17 @@ async function onRerollCurrentFloor() {
   const result = await api.rerollCurrentAfterReply();
   if (result.ok) {
     showEwNotice({
-      title: 'Evolution World',
-      message: '当前楼的回复后工作流已重跑完成。',
-      level: 'success',
+      title: "Evolution World",
+      message: "当前楼的回复后工作流已重跑完成。",
+      level: "success",
     });
     return;
   }
 
   showEwNotice({
-    title: 'Evolution World',
-    message: `重跑当前楼失败: ${result.reason ?? 'unknown error'}`,
-    level: 'warning',
+    title: "Evolution World",
+    message: `重跑当前楼失败: ${result.reason ?? "unknown error"}`,
+    level: "warning",
   });
 }
 
@@ -663,21 +897,27 @@ function collectControllerFlowIdentities(
   globalFlows: EwFlowConfig[],
   charFlows: EwFlowConfig[],
 ): Array<{ flow_id: string; flow_name: string }> {
-  return [...globalFlows, ...charFlows].map(flow => ({
+  return [...globalFlows, ...charFlows].map((flow) => ({
     flow_id: flow.id,
     flow_name: flow.name?.trim() || flow.id,
   }));
 }
 
-let pendingControllerRenamePrevious: Array<{ flow_id: string; flow_name: string }> | null = null;
-let pendingControllerRenamePrefix = '';
+let pendingControllerRenamePrevious: Array<{
+  flow_id: string;
+  flow_name: string;
+}> | null = null;
+let pendingControllerRenamePrefix = "";
 
 function updateFlow(index: number, nextFlow: EwFlowConfig) {
   const previousFlow = store.settings.flows[index];
   const previousId = previousFlow?.id;
   const oldName = previousFlow?.name?.trim();
   const newName = nextFlow.name?.trim();
-  const previousDescriptors = collectControllerFlowIdentities(store.settings.flows, store.charFlows);
+  const previousDescriptors = collectControllerFlowIdentities(
+    store.settings.flows,
+    store.charFlows,
+  );
 
   store.settings.flows.splice(index, 1, nextFlow);
   if (store.expandedFlowId === previousId && previousId !== nextFlow.id) {
@@ -685,7 +925,10 @@ function updateFlow(index: number, nextFlow: EwFlowConfig) {
   }
 
   if (oldName && newName && oldName !== newName) {
-    scheduleControllerEntryRename(previousDescriptors, store.settings.controller_entry_prefix);
+    scheduleControllerEntryRename(
+      previousDescriptors,
+      store.settings.controller_entry_prefix,
+    );
   }
 }
 
@@ -694,7 +937,10 @@ function updateCharFlow(index: number, nextFlow: EwFlowConfig) {
   const previousId = previousFlow?.id;
   const oldName = previousFlow?.name?.trim();
   const newName = nextFlow.name?.trim();
-  const previousDescriptors = collectControllerFlowIdentities(store.settings.flows, store.charFlows);
+  const previousDescriptors = collectControllerFlowIdentities(
+    store.settings.flows,
+    store.charFlows,
+  );
 
   store.charFlows.splice(index, 1, nextFlow);
   if (store.expandedFlowId === previousId && previousId !== nextFlow.id) {
@@ -702,7 +948,10 @@ function updateCharFlow(index: number, nextFlow: EwFlowConfig) {
   }
 
   if (oldName && newName && oldName !== newName) {
-    scheduleControllerEntryRename(previousDescriptors, store.settings.controller_entry_prefix);
+    scheduleControllerEntryRename(
+      previousDescriptors,
+      store.settings.controller_entry_prefix,
+    );
   }
 }
 
@@ -723,22 +972,40 @@ function scheduleControllerEntryRename(
   controllerRenameTimer = setTimeout(async () => {
     controllerRenameTimer = null;
     try {
-      const previousFlowDescriptors = pendingControllerRenamePrevious ?? previousDescriptors;
+      const previousFlowDescriptors =
+        pendingControllerRenamePrevious ?? previousDescriptors;
       const previousPrefix = pendingControllerRenamePrefix || prefix;
       pendingControllerRenamePrevious = null;
-      pendingControllerRenamePrefix = '';
+      pendingControllerRenamePrefix = "";
 
-      const nextFlowDescriptors = collectControllerFlowIdentities(store.settings.flows, store.charFlows);
-      const previousNameMap = resolveControllerEntryNameMap(previousPrefix, previousFlowDescriptors);
-      const nextNameMap = resolveControllerEntryNameMap(store.settings.controller_entry_prefix, nextFlowDescriptors);
+      const nextFlowDescriptors = collectControllerFlowIdentities(
+        store.settings.flows,
+        store.charFlows,
+      );
+      const previousNameMap = resolveControllerEntryNameMap(
+        previousPrefix,
+        previousFlowDescriptors,
+      );
+      const nextNameMap = resolveControllerEntryNameMap(
+        store.settings.controller_entry_prefix,
+        nextFlowDescriptors,
+      );
 
-      const allFlowIds = new Set<string>([...previousNameMap.keys(), ...nextNameMap.keys()]);
+      const allFlowIds = new Set<string>([
+        ...previousNameMap.keys(),
+        ...nextNameMap.keys(),
+      ]);
       const renamePairs = [...allFlowIds]
-        .map(flowId => ({
+        .map((flowId) => ({
           oldEntryName: previousNameMap.get(flowId),
           newEntryName: nextNameMap.get(flowId),
         }))
-        .filter(pair => pair.oldEntryName && pair.newEntryName && pair.oldEntryName !== pair.newEntryName) as Array<{
+        .filter(
+          (pair) =>
+            pair.oldEntryName &&
+            pair.newEntryName &&
+            pair.oldEntryName !== pair.newEntryName,
+        ) as Array<{
         oldEntryName: string;
         newEntryName: string;
       }>;
@@ -747,7 +1014,8 @@ function scheduleControllerEntryRename(
         return;
       }
 
-      const { resolveTargetWorldbook } = await import('../runtime/worldbook-runtime');
+      const { resolveTargetWorldbook } =
+        await import("../runtime/worldbook-runtime");
       const target = await resolveTargetWorldbook(store.settings);
       const entries = klona(target.entries);
       const entriesByOriginalName = new Map<string, any>();
@@ -765,14 +1033,18 @@ function scheduleControllerEntryRename(
         }
         ctrl.name = pair.newEntryName;
         changed = true;
-        console.info(`[EW] Controller entry renamed: ${pair.oldEntryName} → ${pair.newEntryName}`);
+        console.info(
+          `[EW] Controller entry renamed: ${pair.oldEntryName} → ${pair.newEntryName}`,
+        );
       }
 
       if (changed) {
-        await replaceWorldbook(target.worldbook_name, entries, { render: 'debounced' });
+        await replaceWorldbook(target.worldbook_name, entries, {
+          render: "debounced",
+        });
       }
     } catch (e) {
-      console.warn('[EW] Controller rename failed:', e);
+      console.warn("[EW] Controller rename failed:", e);
     }
   }, 800);
 }
@@ -780,7 +1052,10 @@ function scheduleControllerEntryRename(
 function updateApiPreset(index: number, nextPreset: EwApiPreset) {
   const previousId = store.settings.api_presets[index]?.id;
   store.settings.api_presets.splice(index, 1, nextPreset);
-  if (store.expandedApiPresetId === previousId && previousId !== nextPreset.id) {
+  if (
+    store.expandedApiPresetId === previousId &&
+    previousId !== nextPreset.id
+  ) {
     store.setExpandedApiPreset(nextPreset.id);
   }
 }
@@ -788,13 +1063,17 @@ function updateApiPreset(index: number, nextPreset: EwApiPreset) {
 function onApplyHide() {
   runFullHideCheck(store.settings.hide_settings);
   applyFloorLimit(store.settings.hide_settings);
-  showEwNotice({ title: '隐藏助手', message: '隐藏设置已应用', level: 'success' });
+  showEwNotice({
+    title: "隐藏助手",
+    message: "隐藏设置已应用",
+    level: "success",
+  });
 }
 
 function onUnhideAll() {
   store.settings.hide_settings.hide_last_n = 0;
   unhideAll();
-  showEwNotice({ title: '隐藏助手', message: '已取消全部隐藏', level: 'info' });
+  showEwNotice({ title: "隐藏助手", message: "已取消全部隐藏", level: "info" });
 }
 
 function openImportFilePicker() {
@@ -814,21 +1093,21 @@ async function onImportFileChange(event: Event) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     showEwNotice({
-      title: '文件读取失败',
+      title: "文件读取失败",
       message,
-      level: 'error',
+      level: "error",
       duration_ms: 4600,
     });
-    toastr.error(`导入失败: ${message}`, 'Evolution World');
+    toastr.error(`导入失败: ${message}`, "Evolution World");
   } finally {
     if (input) {
-      input.value = '';
+      input.value = "";
     }
   }
 }
 
 function onEsc(event: KeyboardEvent) {
-  if (event.key !== 'Escape') {
+  if (event.key !== "Escape") {
     return;
   }
   if (!store.settings.ui_open) {
@@ -851,21 +1130,21 @@ async function onFlowImportChange(event: Event) {
     store.importFlowsFromText(text, file.name);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    toastr.error(`文件读取失败: ${message}`, 'Evolution World');
+    toastr.error(`文件读取失败: ${message}`, "Evolution World");
   } finally {
-    if (input) input.value = '';
+    if (input) input.value = "";
   }
 }
 
 onMounted(() => {
-  window.addEventListener('keydown', onEsc);
+  window.addEventListener("keydown", onEsc);
   void refreshEnvironmentStatus();
 });
 
 watch(
   () => [store.settings.ui_open, store.activeTab] as const,
   ([uiOpen, activeTab]) => {
-    if (uiOpen && activeTab === 'overview') {
+    if (uiOpen && activeTab === "overview") {
       void refreshEnvironmentStatus();
     }
   },
@@ -886,7 +1165,7 @@ watch(
 );
 
 onUnmounted(() => {
-  window.removeEventListener('keydown', onEsc);
+  window.removeEventListener("keydown", onEsc);
 });
 </script>
 
@@ -935,7 +1214,8 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 1rem;
   min-width: 0; /* Prevent flex child overflow from compressing the layout */
-  font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei UI', sans-serif;
+  font-family:
+    "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
 }
 
 .ew-grid {
@@ -955,8 +1235,13 @@ onUnmounted(() => {
 
 .ew-summary-card {
   border-radius: 1rem;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 10%, rgba(0, 0, 0, 0.2));
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 10%,
+    rgba(0, 0, 0, 0.2)
+  );
   padding: 0.8rem 0.9rem;
   display: flex;
   flex-direction: column;
@@ -968,7 +1253,11 @@ onUnmounted(() => {
   margin: 0;
   font-size: 0.77rem;
   font-weight: 500;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 65%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 65%,
+    transparent
+  );
   letter-spacing: 0.02em;
 }
 
@@ -976,12 +1265,20 @@ onUnmounted(() => {
   font-size: 1.4rem;
   line-height: 1;
   font-weight: 700;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 95%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 95%,
+    transparent
+  );
 }
 
 .ew-summary-card small {
   font-size: 0.72rem;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 55%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 55%,
+    transparent
+  );
 }
 
 .ew-summary-card--env {
@@ -1006,28 +1303,40 @@ onUnmounted(() => {
   border: 1px solid transparent;
 }
 
-.ew-status-pill[data-tone='good'] {
+.ew-status-pill[data-tone="good"] {
   color: #d1fae5;
   background: rgba(16, 185, 129, 0.18);
   border-color: rgba(16, 185, 129, 0.35);
 }
 
-.ew-status-pill[data-tone='warn'] {
+.ew-status-pill[data-tone="warn"] {
   color: #fef3c7;
   background: rgba(245, 158, 11, 0.18);
   border-color: rgba(245, 158, 11, 0.35);
 }
 
-.ew-status-pill[data-tone='bad'] {
+.ew-status-pill[data-tone="bad"] {
   color: #fee2e2;
   background: rgba(239, 68, 68, 0.18);
   border-color: rgba(239, 68, 68, 0.35);
 }
 
-.ew-status-pill[data-tone='muted'] {
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 70%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 14%, transparent);
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 26%, transparent);
+.ew-status-pill[data-tone="muted"] {
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 70%,
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 14%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 26%,
+    transparent
+  );
 }
 
 .ew-flow-list,
@@ -1053,8 +1362,13 @@ onUnmounted(() => {
 
 .ew-btn {
   border-radius: 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 45%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 45%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 20%,
+    transparent
+  );
   color: var(--SmartThemeBodyColor, #edf2f9);
   font-size: 0.8rem;
   font-weight: 600;
@@ -1110,7 +1424,8 @@ onUnmounted(() => {
   width: 2.8rem;
   height: 1.6rem;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
   background: rgba(0, 0, 0, 0.3);
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
   display: inline-flex;
@@ -1119,7 +1434,7 @@ onUnmounted(() => {
   transition: all 0.3s ease;
 }
 
-.ew-switch__track[data-enabled='1'] {
+.ew-switch__track[data-enabled="1"] {
   border-color: color-mix(in srgb, var(--ew-success) 45%, transparent);
   background: color-mix(in srgb, var(--ew-success) 35%, rgba(7, 10, 15, 0.4));
   box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.2);
@@ -1129,7 +1444,11 @@ onUnmounted(() => {
   width: 1.25rem;
   height: 1.25rem;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--SmartThemeBodyColor, #eef3f9) 95%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #eef3f9) 95%,
+    transparent
+  );
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
   transform: translateX(0);
   transition:
@@ -1137,7 +1456,7 @@ onUnmounted(() => {
     background 0.3s ease;
 }
 
-.ew-switch__track[data-enabled='1'] .ew-switch__thumb {
+.ew-switch__track[data-enabled="1"] .ew-switch__thumb {
   transform: translateX(1.15rem);
   background: #ffffff;
 }
@@ -1145,7 +1464,11 @@ onUnmounted(() => {
 .ew-switch__text {
   font-size: 0.82rem;
   font-weight: 500;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 85%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 85%,
+    transparent
+  );
   transition: color 0.2s ease;
 }
 
@@ -1166,8 +1489,13 @@ onUnmounted(() => {
 
 .ew-pre-box {
   border-radius: 1rem;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 8%, rgba(0, 0, 0, 0.25));
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 8%,
+    rgba(0, 0, 0, 0.25)
+  );
   padding: 0.8rem;
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.2);
 }
@@ -1175,7 +1503,11 @@ onUnmounted(() => {
 .ew-pre-box strong {
   font-size: 0.82rem;
   font-weight: 600;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 90%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 90%,
+    transparent
+  );
 }
 
 .ew-pre-box pre {
@@ -1186,15 +1518,23 @@ onUnmounted(() => {
   word-break: break-word;
   font-size: 0.75rem;
   line-height: 1.5;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 75%, transparent);
-  font-family: 'Fira Code', 'Consolas', monospace;
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 75%,
+    transparent
+  );
+  font-family: "Fira Code", "Consolas", monospace;
 }
 .ew-pre-box pre::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 .ew-pre-box pre::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 40%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 40%,
+    transparent
+  );
   border-radius: 4px;
 }
 
@@ -1259,7 +1599,7 @@ onUnmounted(() => {
   .ew-section-card__title::before,
   .ew-flow-card__title::before,
   .ew-api-card__title::before,
-  .theme-moon-phase .ew-panel__tab[data-active='1']::after {
+  .theme-moon-phase .ew-panel__tab[data-active="1"]::after {
     animation: none !important;
     transition: none !important;
   }
@@ -1410,7 +1750,7 @@ onUnmounted(() => {
 /* ── Phase 0.5: 星空揭晓动画 (Clip-path Reveal) ── */
 /* 将星场大背景放到一个底层伪元素上，默认隐藏 (clip-path从左向右压缩到了最左侧边缘) */
 .ew-panel::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
@@ -1425,17 +1765,58 @@ onUnmounted(() => {
   contain: strict;
   background:
     /* 密集繁星 — 每层不同 tile 尺寸避免网格感，大量平铺 */
-    radial-gradient(1px 1px at 12% 15%, rgba(251, 191, 36, 0.45) 50%, transparent),
-    radial-gradient(1px 1px at 60% 70%, rgba(203, 213, 225, 0.4) 50%, transparent),
-    radial-gradient(1.2px 1.2px at 35% 40%, rgba(251, 191, 36, 0.35) 50%, transparent),
-    radial-gradient(1px 1px at 80% 25%, rgba(203, 213, 225, 0.45) 50%, transparent),
-    radial-gradient(1px 1px at 20% 80%, rgba(251, 191, 36, 0.3) 50%, transparent),
-    radial-gradient(1.5px 1.5px at 55% 50%, rgba(253, 224, 71, 0.35) 50%, transparent),
-    radial-gradient(1px 1px at 90% 60%, rgba(203, 213, 225, 0.35) 50%, transparent),
-    radial-gradient(1px 1px at 45% 90%, rgba(251, 191, 36, 0.3) 50%, transparent),
-    radial-gradient(1.2px 1.2px at 70% 15%, rgba(203, 213, 225, 0.4) 50%, transparent),
-    radial-gradient(1px 1px at 5% 55%, rgba(251, 191, 36, 0.25) 50%, transparent),
-    /* 底层深空渐变 */ linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%) !important;
+    radial-gradient(
+      1px 1px at 12% 15%,
+      rgba(251, 191, 36, 0.45) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 60% 70%,
+      rgba(203, 213, 225, 0.4) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1.2px 1.2px at 35% 40%,
+      rgba(251, 191, 36, 0.35) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 80% 25%,
+      rgba(203, 213, 225, 0.45) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 20% 80%,
+      rgba(251, 191, 36, 0.3) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1.5px 1.5px at 55% 50%,
+      rgba(253, 224, 71, 0.35) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 90% 60%,
+      rgba(203, 213, 225, 0.35) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 45% 90%,
+      rgba(251, 191, 36, 0.3) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1.2px 1.2px at 70% 15%,
+      rgba(203, 213, 225, 0.4) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 5% 55%,
+      rgba(251, 191, 36, 0.25) 50%,
+      transparent
+    ),
+    /* 底层深空渐变 */
+    linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%) !important;
   background-size:
     97px 103px,
     130px 141px,
@@ -1458,12 +1839,21 @@ onUnmounted(() => {
 /* 遮罩层夜空色调 */
 .theme-moon-phase.ew-overlay {
   background:
-    radial-gradient(circle at 20% 10%, rgba(251, 191, 36, 0.08), transparent 45%), rgba(2, 6, 15, 0.78) !important;
+    radial-gradient(
+      circle at 20% 10%,
+      rgba(251, 191, 36, 0.08),
+      transparent 45%
+    ),
+    rgba(2, 6, 15, 0.78) !important;
 }
 
 /* 头部背景融入夜色 */
 .theme-moon-phase .ew-panel__header {
-  background: color-mix(in srgb, #0f172a 40%, rgba(15, 23, 42, 0.85)) !important;
+  background: color-mix(
+    in srgb,
+    #0f172a 40%,
+    rgba(15, 23, 42, 0.85)
+  ) !important;
   border-bottom-color: rgba(148, 163, 184, 0.2) !important;
 }
 
@@ -1488,7 +1878,7 @@ onUnmounted(() => {
 
 /* 🌙 新月图标 — 始终渲染，默认不可见 */
 .ew-panel__title::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -1513,7 +1903,7 @@ onUnmounted(() => {
 
 /* ⭐ 星盘图标 — 始终渲染，默认不可见 */
 .ew-section-card__title::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -1537,7 +1927,7 @@ onUnmounted(() => {
 /* 📄 卷轴图标 — 始终渲染，默认不可见 */
 .ew-flow-card__title::before,
 .ew-api-card__title::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 50%;
@@ -1560,7 +1950,12 @@ onUnmounted(() => {
 
 /* ── 主题激活时：入场动画 ── */
 .theme-moon-phase .ew-panel__title {
-  background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 50%, #94a3b8 100%) !important;
+  background: linear-gradient(
+    135deg,
+    #ffffff 0%,
+    #cbd5e1 50%,
+    #94a3b8 100%
+  ) !important;
   -webkit-background-clip: text !important;
   background-clip: text !important;
   -webkit-text-fill-color: transparent !important;
@@ -1598,7 +1993,7 @@ onUnmounted(() => {
 }
 
 /* ── Phase 3: 激活标签 + 流光扫光效果 ── */
-.theme-moon-phase .ew-panel__tab[data-active='1'] {
+.theme-moon-phase .ew-panel__tab[data-active="1"] {
   border-color: rgba(148, 163, 184, 0.5) !important;
   background: rgba(251, 191, 36, 0.12) !important;
   color: #f8fafc !important;
@@ -1606,8 +2001,8 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
 }
-.theme-moon-phase .ew-panel__tab[data-active='1']::after {
-  content: '';
+.theme-moon-phase .ew-panel__tab[data-active="1"]::after {
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
@@ -1625,7 +2020,7 @@ onUnmounted(() => {
   animation: ew-starlight-sweep 3s ease-in-out infinite;
   pointer-events: none;
 }
-.theme-moon-phase .ew-panel__tab:hover:not([data-active='1']) {
+.theme-moon-phase .ew-panel__tab:hover:not([data-active="1"]) {
   background: rgba(251, 191, 36, 0.05) !important;
   color: #e2e8f0 !important;
 }
@@ -1663,19 +2058,43 @@ onUnmounted(() => {
 
 /* 底层：密集 1px 像素星场 (4 层径向渐变) */
 .theme-moon-phase .ew-section-card::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   background-image:
-    radial-gradient(1px 1px at 15% 25%, rgba(251, 191, 36, 0.4) 50%, transparent),
-    radial-gradient(1px 1px at 72% 55%, rgba(203, 213, 225, 0.35) 50%, transparent),
-    radial-gradient(1px 1px at 42% 78%, rgba(251, 191, 36, 0.3) 50%, transparent),
-    radial-gradient(1px 1px at 88% 18%, rgba(203, 213, 225, 0.35) 50%, transparent),
-    radial-gradient(1.2px 1.2px at 30% 50%, rgba(251, 191, 36, 0.25) 50%, transparent),
-    radial-gradient(1px 1px at 60% 35%, rgba(203, 213, 225, 0.3) 50%, transparent);
+    radial-gradient(
+      1px 1px at 15% 25%,
+      rgba(251, 191, 36, 0.4) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 72% 55%,
+      rgba(203, 213, 225, 0.35) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 42% 78%,
+      rgba(251, 191, 36, 0.3) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 88% 18%,
+      rgba(203, 213, 225, 0.35) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1.2px 1.2px at 30% 50%,
+      rgba(251, 191, 36, 0.25) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 60% 35%,
+      rgba(203, 213, 225, 0.3) 50%,
+      transparent
+    );
   background-size:
     83px 89px,
     127px 137px,
@@ -1690,15 +2109,23 @@ onUnmounted(() => {
 
 /* 中层：柔和星云弥散 (呼吸光晕) */
 .theme-moon-phase .ew-section-card::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   background:
-    radial-gradient(ellipse at 25% 40%, rgba(251, 191, 36, 0.06) 0%, transparent 55%),
-    radial-gradient(ellipse at 75% 60%, rgba(123, 164, 235, 0.04) 0%, transparent 55%);
+    radial-gradient(
+      ellipse at 25% 40%,
+      rgba(251, 191, 36, 0.06) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 75% 60%,
+      rgba(123, 164, 235, 0.04) 0%,
+      transparent 55%
+    );
   animation: ew-nebula-pulse 8s ease-in-out infinite;
   pointer-events: none;
   z-index: -1;
@@ -1872,7 +2299,7 @@ onUnmounted(() => {
   position: relative;
 }
 .theme-moon-phase .ew-panel__body::before {
-  content: '';
+  content: "";
   position: absolute;
   top: 0;
   left: 0;
@@ -1893,12 +2320,12 @@ onUnmounted(() => {
    Preserved base styles: switches, buttons, inputs, etc.
    ═══════════════════════════════════════════════════════════════════ */
 
-.theme-moon-phase .ew-switch__track[data-enabled='1'] {
+.theme-moon-phase .ew-switch__track[data-enabled="1"] {
   border-color: rgba(251, 191, 36, 0.5) !important;
   background: rgba(251, 191, 36, 0.25) !important;
 }
 
-.theme-moon-phase .ew-panel__status[data-enabled='1'] {
+.theme-moon-phase .ew-panel__status[data-enabled="1"] {
   border-color: rgba(52, 211, 153, 0.4) !important;
   background: rgba(52, 211, 153, 0.15) !important;
   box-shadow: 0 0 12px rgba(52, 211, 153, 0.15) !important;
@@ -1968,8 +2395,8 @@ onUnmounted(() => {
 }
 
 /* 展开态：三重浮雕阴影爆发 (对齐正则美化选项卡效果) */
-.theme-moon-phase .ew-flow-card[data-expanded='1'],
-.theme-moon-phase .ew-api-card[data-expanded='1'] {
+.theme-moon-phase .ew-flow-card[data-expanded="1"],
+.theme-moon-phase .ew-api-card[data-expanded="1"] {
   border-color: rgba(251, 191, 36, 0.4) !important;
   box-shadow:
     0 8px 40px rgba(251, 191, 36, 0.2),
@@ -1996,11 +2423,32 @@ onUnmounted(() => {
 body:has(.theme-moon-phase) #toast-container > div {
   background:
     /* 微型星点 — 让提示框也有星空感 */
-    radial-gradient(1px 1px at 15% 20%, rgba(251, 191, 36, 0.4) 50%, transparent),
-    radial-gradient(1px 1px at 65% 40%, rgba(203, 213, 225, 0.3) 50%, transparent),
-    radial-gradient(1px 1px at 85% 75%, rgba(251, 191, 36, 0.3) 50%, transparent),
-    radial-gradient(1px 1px at 35% 85%, rgba(203, 213, 225, 0.25) 50%, transparent),
-    /* 底色 */ linear-gradient(135deg, rgba(15, 23, 42, 0.97) 0%, rgba(30, 41, 59, 0.95) 100%) !important;
+    radial-gradient(
+      1px 1px at 15% 20%,
+      rgba(251, 191, 36, 0.4) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 65% 40%,
+      rgba(203, 213, 225, 0.3) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 85% 75%,
+      rgba(251, 191, 36, 0.3) 50%,
+      transparent
+    ),
+    radial-gradient(
+      1px 1px at 35% 85%,
+      rgba(203, 213, 225, 0.25) 50%,
+      transparent
+    ),
+    /* 底色 */
+    linear-gradient(
+        135deg,
+        rgba(15, 23, 42, 0.97) 0%,
+        rgba(30, 41, 59, 0.95) 100%
+      ) !important;
   background-size:
     67px 71px,
     97px 103px,
@@ -2038,7 +2486,7 @@ body:has(.theme-moon-phase) #toast-container > .toast-success {
     inset 0 1px 0 rgba(251, 191, 36, 0.15) !important;
 }
 body:has(.theme-moon-phase) #toast-container > .toast-success::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 14px;
   top: 50%;
@@ -2066,7 +2514,7 @@ body:has(.theme-moon-phase) #toast-container > .toast-error {
     inset 0 1px 0 rgba(251, 191, 36, 0.15) !important;
 }
 body:has(.theme-moon-phase) #toast-container > .toast-error::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 14px;
   top: 50%;

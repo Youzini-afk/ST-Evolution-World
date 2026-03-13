@@ -23,8 +23,28 @@ export interface STContext {
   eventSource: STEventSource;
   event_types: Record<string, string>;
   getRequestHeaders: () => Record<string, string>;
+  getCurrentChatId?: () => string;
+  saveChat?: () => Promise<void>;
+  saveChatConditional?: () => Promise<void>;
+  deleteLastMessage?: () => Promise<void>;
+  setExtensionPrompt?: (
+    key: string,
+    value: string,
+    position: number,
+    depth?: number,
+    scan?: boolean,
+    role?: number,
+    filter?: unknown,
+  ) => void;
   /** 发送一次 quiet generation */
-  generateQuietPrompt: (prompt: string, quietToLoud?: boolean, skipWIAN?: boolean, quietImage?: string | null, quietName?: string | null, responseLength?: number) => Promise<string>;
+  generateQuietPrompt: (
+    prompt: string,
+    quietToLoud?: boolean,
+    skipWIAN?: boolean,
+    quietImage?: string | null,
+    quietName?: string | null,
+    responseLength?: number,
+  ) => Promise<string>;
 }
 
 export interface STEventSource {
@@ -47,8 +67,10 @@ export interface STEventSource {
  */
 export function getSTContext(): STContext {
   const st = (window as any).SillyTavern;
-  if (!st || typeof st.getContext !== 'function') {
-    throw new Error('[Evolution World] SillyTavern.getContext() 不可用 — 确保在 jQuery ready 后调用');
+  if (!st || typeof st.getContext !== "function") {
+    throw new Error(
+      "[Evolution World] SillyTavern.getContext() 不可用 — 确保在 jQuery ready 后调用",
+    );
   }
 
   return st.getContext() as STContext;
@@ -59,7 +81,7 @@ export function getSTContext(): STContext {
  */
 export function isSTReady(): boolean {
   const st = (window as any).SillyTavern;
-  return !!(st && typeof st.getContext === 'function');
+  return !!(st && typeof st.getContext === "function");
 }
 
 /**
@@ -80,7 +102,7 @@ export function getEventTypes(): Record<string, string> {
 
 // ── Settings 适配 ─────────────────────────────────────
 
-const EW_SETTINGS_KEY = 'evolution_world';
+const EW_SETTINGS_KEY = "evolution_world";
 
 /**
  * 读取扩展 settings。
@@ -112,7 +134,10 @@ type StopFn = () => void;
  * 注册事件监听器。返回取消订阅函数。
  * 替代 `eventOn(tavern_events.XXX, handler)` 返回的 EventOnReturn。
  */
-export function onSTEvent(eventName: string, handler: (...args: any[]) => void): StopFn {
+export function onSTEvent(
+  eventName: string,
+  handler: (...args: any[]) => void,
+): StopFn {
   const es = getEventSource();
   es.on(eventName, handler);
   return () => es.removeListener(eventName, handler);
@@ -122,9 +147,12 @@ export function onSTEvent(eventName: string, handler: (...args: any[]) => void):
  * 注册高优先级事件监听器（在其他监听器之前执行）。
  * 替代 `eventMakeFirst`。
  */
-export function onSTEventFirst(eventName: string, handler: (...args: any[]) => void): StopFn {
+export function onSTEventFirst(
+  eventName: string,
+  handler: (...args: any[]) => void,
+): StopFn {
   const es = getEventSource();
-  if (typeof es.makeFirst === 'function') {
+  if (typeof es.makeFirst === "function") {
     es.makeFirst(eventName, handler);
   } else {
     es.on(eventName, handler);

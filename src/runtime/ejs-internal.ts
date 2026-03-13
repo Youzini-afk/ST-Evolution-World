@@ -11,12 +11,21 @@
 
 // The EJS library is a UMD bundle that self-registers on globalThis.
 // We side-import it so webpack bundles it, then access the global it creates.
-import '../libs/ejs';
-import { getRuntimeState } from './state';
+import "../libs/ejs";
+import { getSTContext } from "../st-adapter";
+import { getChatMessages } from "./compat/character";
+import { getRuntimeState } from "./state";
 
 const ejs = (globalThis as any).ejs as {
-  compile(template: string, opts?: Record<string, any>): (...args: any[]) => any;
-  render(template: string, data?: Record<string, any>, opts?: Record<string, any>): string;
+  compile(
+    template: string,
+    opts?: Record<string, any>,
+  ): (...args: any[]) => any;
+  render(
+    template: string,
+    data?: Record<string, any>,
+    opts?: Record<string, any>,
+  ): string;
 };
 
 // ---------------------------------------------------------------------------
@@ -25,11 +34,25 @@ const ejs = (globalThis as any).ejs as {
 
 export interface EjsRenderContext {
   /** Flat entry list used for exact worldbook-aware lookup. */
-  entries: Array<{ name: string; comment?: string; content: string; worldbook: string }>;
+  entries: Array<{
+    name: string;
+    comment?: string;
+    content: string;
+    worldbook: string;
+  }>;
   /** First-match lookup across all entries, keyed by name/comment alias. */
-  allEntries: Map<string, { name: string; comment?: string; content: string; worldbook: string }>;
+  allEntries: Map<
+    string,
+    { name: string; comment?: string; content: string; worldbook: string }
+  >;
   /** Exact lookup inside a specific worldbook, keyed by name/comment alias. */
-  entriesByWorldbook: Map<string, Map<string, { name: string; comment?: string; content: string; worldbook: string }>>;
+  entriesByWorldbook: Map<
+    string,
+    Map<
+      string,
+      { name: string; comment?: string; content: string; worldbook: string }
+    >
+  >;
   /** Already-rendered entries to prevent infinite recursion */
   renderStack: Set<string>;
   /** Maximum recursion depth for getwi calls */
@@ -42,20 +65,20 @@ export interface EjsRenderContext {
     cacheVars: Record<string, any>;
   };
   /** Entries activated during the current render pass. */
-  activatedEntries: Map<string, { name: string; comment?: string; content: string; worldbook: string }>;
+  activatedEntries: Map<
+    string,
+    { name: string; comment?: string; content: string; worldbook: string }
+  >;
   /** Entries pulled via getwi during the current render pass, in first-seen order. */
-  pulledEntries: Map<string, { name: string; comment?: string; content: string; worldbook: string }>;
+  pulledEntries: Map<
+    string,
+    { name: string; comment?: string; content: string; worldbook: string }
+  >;
 }
-
-// ---------------------------------------------------------------------------
-// ST Runtime Accessors
-// ---------------------------------------------------------------------------
-
-declare const SillyTavern: { getContext(): Record<string, any> } | undefined;
 
 function getStContext(): Record<string, any> {
   try {
-    return SillyTavern?.getContext?.() ?? {};
+    return (getSTContext() as Record<string, any>) ?? {};
   } catch {
     return {};
   }
@@ -101,7 +124,7 @@ function getCurrentWorkflowUserInput(): string {
     ];
 
     for (const candidate of candidates) {
-      if (typeof candidate === 'string' && candidate.trim()) {
+      if (typeof candidate === "string" && candidate.trim()) {
         return candidate;
       }
     }
@@ -112,13 +135,13 @@ function getCurrentWorkflowUserInput(): string {
   try {
     const chat = getStChat();
     const lastUserMessage = chat.findLast((msg: any) => msg.is_user)?.mes;
-    return typeof lastUserMessage === 'string' ? lastUserMessage : '';
+    return typeof lastUserMessage === "string" ? lastUserMessage : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
-function createVariableState(): EjsRenderContext['variableState'] {
+function createVariableState(): EjsRenderContext["variableState"] {
   const globalVars = _.cloneDeep(getGlobalVariables());
   const localVars = _.cloneDeep(getChatMetadataVariables());
   const messageVars = _.cloneDeep(getCurrentMessageVariables());
@@ -134,7 +157,7 @@ function createVariableState(): EjsRenderContext['variableState'] {
   };
 }
 
-function rebuildVariableCache(state: EjsRenderContext['variableState']): void {
+function rebuildVariableCache(state: EjsRenderContext["variableState"]): void {
   state.cacheVars = {
     ...state.globalVars,
     ...state.localVars,
@@ -150,12 +173,17 @@ function rebuildVariableCache(state: EjsRenderContext['variableState']): void {
  * Replace common ST macros in text before rendering.
  * Mirrors SillyTavern's `substituteParams()` for the most common macros.
  */
-function buildPromptTemplateContext(templateContext: Record<string, any> = {}): Record<string, any> {
+function buildPromptTemplateContext(
+  templateContext: Record<string, any> = {},
+): Record<string, any> {
   const ctx = getStContext();
-  const userName = ctx.name1 ?? '';
-  const charName = ctx.name2 ?? '';
-  const personaDescription = ctx.persona ?? '';
-  const providedUserInput = typeof templateContext.user_input === 'string' ? templateContext.user_input : undefined;
+  const userName = ctx.name1 ?? "";
+  const charName = ctx.name2 ?? "";
+  const personaDescription = ctx.persona ?? "";
+  const providedUserInput =
+    typeof templateContext.user_input === "string"
+      ? templateContext.user_input
+      : undefined;
   const workflowUserInput = providedUserInput ?? getCurrentWorkflowUserInput();
 
   return _.merge(
@@ -167,19 +195,22 @@ function buildPromptTemplateContext(templateContext: Record<string, any> = {}): 
       last_user_message: workflowUserInput,
       userInput: workflowUserInput,
       user_input: workflowUserInput,
-      original: '',
-      input: '',
-      lastMessage: '',
-      lastMessageId: '',
-      newline: '\n',
-      trim: '',
+      original: "",
+      input: "",
+      lastMessage: "",
+      lastMessageId: "",
+      newline: "\n",
+      trim: "",
     },
     templateContext,
   );
 }
 
-function substituteParams(text: string, templateContext: Record<string, any> = {}): string {
-  if (!text || !text.includes('{{')) return text;
+function substituteParams(
+  text: string,
+  templateContext: Record<string, any> = {},
+): string {
+  if (!text || !text.includes("{{")) return text;
 
   const context = buildPromptTemplateContext(templateContext);
 
@@ -188,7 +219,7 @@ function substituteParams(text: string, templateContext: Record<string, any> = {
     if (_.isPlainObject(value) || Array.isArray(value)) {
       return JSON.stringify(value);
     }
-    return value === undefined ? '' : String(value);
+    return value === undefined ? "" : String(value);
   });
 }
 
@@ -196,18 +227,22 @@ function substituteParams(text: string, templateContext: Record<string, any> = {
 // Variable Access (simplified ST-compatible implementation)
 // ---------------------------------------------------------------------------
 
-function getVariable(state: EjsRenderContext['variableState'], path: string, opts: Record<string, any> = {}): any {
+function getVariable(
+  state: EjsRenderContext["variableState"],
+  path: string,
+  opts: Record<string, any> = {},
+): any {
   const scope = opts.scope;
 
-  if (scope === 'global') {
+  if (scope === "global") {
     return _.get(state.globalVars, path, opts.defaults);
   }
 
-  if (scope === 'message') {
+  if (scope === "message") {
     return _.get(state.messageVars, path, opts.defaults);
   }
 
-  if (scope === 'local') {
+  if (scope === "local") {
     return _.get(state.localVars, path, opts.defaults);
   }
 
@@ -216,13 +251,18 @@ function getVariable(state: EjsRenderContext['variableState'], path: string, opt
 }
 
 function setVariable(
-  state: EjsRenderContext['variableState'],
+  state: EjsRenderContext["variableState"],
   path: string,
   value: unknown,
   opts: Record<string, any> = {},
 ): void {
-  const scope = opts.scope ?? 'message';
-  const target = scope === 'global' ? state.globalVars : scope === 'local' ? state.localVars : state.messageVars;
+  const scope = opts.scope ?? "message";
+  const target =
+    scope === "global"
+      ? state.globalVars
+      : scope === "local"
+        ? state.localVars
+        : state.messageVars;
 
   if (value === undefined) {
     _.unset(target, path);
@@ -236,9 +276,6 @@ function setVariable(
 // ---------------------------------------------------------------------------
 // Chat Message Access (Fix #4)
 // ---------------------------------------------------------------------------
-
-declare function getChatMessages(range: string, opts?: Record<string, any>): any[];
-declare function getLastMessageId(): number;
 
 function getStChat(): any[] {
   try {
@@ -256,21 +293,19 @@ function stGetChatMessage(id: number): any {
 }
 
 function processChatMessage(msg: any): string {
-  return String(msg?.mes ?? msg?.message ?? '');
+  return String(msg?.mes ?? msg?.message ?? "");
 }
 
 function stGetChatMessages(range: string, _opts?: Record<string, any>): any[] {
   try {
-    if (typeof getChatMessages === 'function') {
-      return getChatMessages(range, _opts);
-    }
+    return getChatMessages(range, _opts);
   } catch {
     /* fallback below */
   }
 
   // Simple fallback: parse range "start-end" and slice chat
   const chat = getStChat();
-  const [startStr, endStr] = range.split('-');
+  const [startStr, endStr] = range.split("-");
   const start = parseInt(startStr, 10) || 0;
   const end = endStr !== undefined ? parseInt(endStr, 10) : chat.length - 1;
   return chat.slice(start, end + 1);
@@ -278,28 +313,32 @@ function stGetChatMessages(range: string, _opts?: Record<string, any>): any[] {
 
 function stMatchChatMessages(pattern: string | RegExp): any[] {
   const chat = getStChat();
-  const regex = typeof pattern === 'string' ? new RegExp(pattern, 'i') : pattern;
-  return chat.filter((msg: any) => regex.test(msg.mes ?? ''));
+  const regex =
+    typeof pattern === "string" ? new RegExp(pattern, "i") : pattern;
+  return chat.filter((msg: any) => regex.test(msg.mes ?? ""));
 }
 
-function getChatMessageCompat(index: number, role?: 'user' | 'assistant' | 'system'): string {
+function getChatMessageCompat(
+  index: number,
+  role?: "user" | "assistant" | "system",
+): string {
   const chat = getStChat()
     .filter(
       (msg: any) =>
         !role ||
-        (role === 'user' && msg.is_user) ||
-        (role === 'system' && msg.is_system) ||
-        (role === 'assistant' && !msg.is_user && !msg.is_system),
+        (role === "user" && msg.is_user) ||
+        (role === "system" && msg.is_system) ||
+        (role === "assistant" && !msg.is_user && !msg.is_system),
     )
     .map(processChatMessage);
   const resolvedIndex = index >= 0 ? index : chat.length + index;
-  return chat[resolvedIndex] ?? '';
+  return chat[resolvedIndex] ?? "";
 }
 
 function getChatMessagesCompat(
   startOrCount: number = getStChat().length,
-  endOrRole?: number | 'user' | 'assistant' | 'system',
-  role?: 'user' | 'assistant' | 'system',
+  endOrRole?: number | "user" | "assistant" | "system",
+  role?: "user" | "assistant" | "system",
 ): string[] {
   const all = getStChat().map((msg: any, index: number) => ({
     raw: msg,
@@ -307,36 +346,48 @@ function getChatMessagesCompat(
     text: processChatMessage(msg),
   }));
 
-  const filterRole = (items: typeof all, currentRole?: 'user' | 'assistant' | 'system') =>
+  const filterRole = (
+    items: typeof all,
+    currentRole?: "user" | "assistant" | "system",
+  ) =>
     !currentRole
       ? items
       : items.filter(
-          item =>
-            (currentRole === 'user' && item.raw.is_user) ||
-            (currentRole === 'system' && item.raw.is_system) ||
-            (currentRole === 'assistant' && !item.raw.is_user && !item.raw.is_system),
+          (item) =>
+            (currentRole === "user" && item.raw.is_user) ||
+            (currentRole === "system" && item.raw.is_system) ||
+            (currentRole === "assistant" &&
+              !item.raw.is_user &&
+              !item.raw.is_system),
         );
 
   if (endOrRole == null) {
-    return (startOrCount > 0 ? all.slice(0, startOrCount) : all.slice(startOrCount)).map(item => item.text);
+    return (
+      startOrCount > 0 ? all.slice(0, startOrCount) : all.slice(startOrCount)
+    ).map((item) => item.text);
   }
 
-  if (typeof endOrRole === 'string') {
+  if (typeof endOrRole === "string") {
     const filtered = filterRole(all, endOrRole);
-    return (startOrCount > 0 ? filtered.slice(0, startOrCount) : filtered.slice(startOrCount)).map(item => item.text);
+    return (
+      startOrCount > 0
+        ? filtered.slice(0, startOrCount)
+        : filtered.slice(startOrCount)
+    ).map((item) => item.text);
   }
 
   const filtered = filterRole(all, role);
-  return filtered.slice(startOrCount, endOrRole).map(item => item.text);
+  return filtered.slice(startOrCount, endOrRole).map((item) => item.text);
 }
 
 function matchChatMessagesCompat(pattern: string | RegExp): boolean {
-  const regex = typeof pattern === 'string' ? new RegExp(pattern, 'i') : pattern;
+  const regex =
+    typeof pattern === "string" ? new RegExp(pattern, "i") : pattern;
   return getStChat().some((msg: any) => regex.test(processChatMessage(msg)));
 }
 
 function normalizeEntryKey(value: string | null | undefined): string {
-  return String(value ?? '').trim();
+  return String(value ?? "").trim();
 }
 
 function findEntry(
@@ -344,10 +395,17 @@ function findEntry(
   currentWorldbook: string,
   worldbookOrEntry: string | null,
   entryNameOrData?: string | Record<string, unknown>,
-): { name: string; comment?: string; content: string; worldbook: string } | undefined {
-  const explicitWorldbook = typeof entryNameOrData === 'string' ? normalizeEntryKey(worldbookOrEntry) : '';
+):
+  | { name: string; comment?: string; content: string; worldbook: string }
+  | undefined {
+  const explicitWorldbook =
+    typeof entryNameOrData === "string"
+      ? normalizeEntryKey(worldbookOrEntry)
+      : "";
   const fallbackWorldbook = normalizeEntryKey(currentWorldbook);
-  const identifier = normalizeEntryKey(typeof entryNameOrData === 'string' ? entryNameOrData : worldbookOrEntry);
+  const identifier = normalizeEntryKey(
+    typeof entryNameOrData === "string" ? entryNameOrData : worldbookOrEntry,
+  );
 
   if (!identifier) {
     return undefined;
@@ -358,10 +416,18 @@ function findEntry(
     return ctx.entriesByWorldbook.get(worldbook)?.get(identifier);
   };
 
-  return lookupInWorldbook(explicitWorldbook) ?? lookupInWorldbook(fallbackWorldbook) ?? ctx.allEntries.get(identifier);
+  return (
+    lookupInWorldbook(explicitWorldbook) ??
+    lookupInWorldbook(fallbackWorldbook) ??
+    ctx.allEntries.get(identifier)
+  );
 }
 
-function activationKey(entry: { worldbook: string; name: string; comment?: string }): string {
+function activationKey(entry: {
+  worldbook: string;
+  name: string;
+  comment?: string;
+}): string {
   return `${entry.worldbook}::${entry.comment || entry.name}`;
 }
 
@@ -372,17 +438,24 @@ async function activateWorldInfoInContext(
   entryOrForce?: string | boolean,
   maybeForce?: boolean,
 ): Promise<{ world: string; comment: string; content: string } | null> {
-  const force = typeof entryOrForce === 'boolean' ? entryOrForce : maybeForce;
-  const explicitWorldbook = typeof entryOrForce === 'string' ? world : null;
-  const identifier = typeof entryOrForce === 'string' ? entryOrForce : world;
+  const force = typeof entryOrForce === "boolean" ? entryOrForce : maybeForce;
+  const explicitWorldbook = typeof entryOrForce === "string" ? world : null;
+  const identifier = typeof entryOrForce === "string" ? entryOrForce : world;
   const entry = identifier
-    ? findEntry(ctx, currentWorldbook, explicitWorldbook, normalizeEntryKey(identifier))
+    ? findEntry(
+        ctx,
+        currentWorldbook,
+        explicitWorldbook,
+        normalizeEntryKey(identifier),
+      )
     : undefined;
   if (!entry) {
     return null;
   }
 
-  const normalizedEntry = force ? { ...entry, content: entry.content.replaceAll('@@dont_activate', '') } : entry;
+  const normalizedEntry = force
+    ? { ...entry, content: entry.content.replaceAll("@@dont_activate", "") }
+    : entry;
   ctx.activatedEntries.set(activationKey(normalizedEntry), normalizedEntry);
   return {
     world: normalizedEntry.worldbook,
@@ -401,23 +474,35 @@ async function getwi(
   worldbookOrEntry: string | null,
   entryNameOrData?: string | Record<string, unknown>,
 ): Promise<string> {
-  const entry = findEntry(ctx, currentWorldbook, worldbookOrEntry, entryNameOrData);
+  const entry = findEntry(
+    ctx,
+    currentWorldbook,
+    worldbookOrEntry,
+    entryNameOrData,
+  );
   if (!entry) {
-    const missing = typeof entryNameOrData === 'string' ? entryNameOrData : worldbookOrEntry;
-    console.debug(`[EW EJS Internal] getwi: entry '${String(missing ?? '')}' not found`);
-    return '';
+    const missing =
+      typeof entryNameOrData === "string" ? entryNameOrData : worldbookOrEntry;
+    console.debug(
+      `[EW EJS Internal] getwi: entry '${String(missing ?? "")}' not found`,
+    );
+    return "";
   }
 
   const entryKey = activationKey(entry);
 
   // Recursion guard
   if (ctx.renderStack.has(entryKey)) {
-    console.warn(`[EW EJS Internal] getwi: circular reference detected for '${entry.comment || entry.name}'`);
+    console.warn(
+      `[EW EJS Internal] getwi: circular reference detected for '${entry.comment || entry.name}'`,
+    );
     return substituteParams(entry.content);
   }
 
   if (ctx.renderStack.size >= ctx.maxRecursion) {
-    console.warn(`[EW EJS Internal] getwi: max recursion depth (${ctx.maxRecursion}) reached`);
+    console.warn(
+      `[EW EJS Internal] getwi: max recursion depth (${ctx.maxRecursion}) reached`,
+    );
     return substituteParams(entry.content);
   }
 
@@ -426,11 +511,15 @@ async function getwi(
   let finalContent = processed;
 
   // If content contains EJS, render it recursively
-  if (processed.includes('<%')) {
+  if (processed.includes("<%")) {
     ctx.renderStack.add(entryKey);
     try {
       finalContent = await evalEjsTemplate(processed, ctx, {
-        world_info: { comment: entry.comment || entry.name, name: entry.name, world: entry.worldbook },
+        world_info: {
+          comment: entry.comment || entry.name,
+          name: entry.name,
+          world: entry.worldbook,
+        },
       });
     } finally {
       ctx.renderStack.delete(entryKey);
@@ -464,7 +553,7 @@ export async function evalEjsTemplate(
   renderCtx: EjsRenderContext,
   extraEnv: Record<string, any> = {},
 ): Promise<string> {
-  if (!content.includes('<%')) return content;
+  if (!content.includes("<%")) return content;
 
   const stCtx = getStContext();
   const chat = getStChat();
@@ -479,13 +568,16 @@ export async function evalEjsTemplate(
     console,
 
     // ── Character info ──
-    userName: stCtx.name1 ?? '',
-    charName: stCtx.name2 ?? '',
-    assistantName: stCtx.name2 ?? '',
+    userName: stCtx.name1 ?? "",
+    charName: stCtx.name2 ?? "",
+    assistantName: stCtx.name2 ?? "",
     characterId: stCtx.characterId,
 
     get chatId() {
-      return stCtx.chatId ?? (typeof getCurrentChatId === 'function' ? getCurrentChatId() : '');
+      return (
+        stCtx.chatId ??
+        (typeof getCurrentChatId === "function" ? getCurrentChatId() : "")
+      );
     },
 
     get variables() {
@@ -498,11 +590,17 @@ export async function evalEjsTemplate(
     },
 
     get lastUserMessage() {
-      return workflowUserInput || (chat.findLast((msg: any) => msg.is_user)?.mes ?? '');
+      return (
+        workflowUserInput ||
+        (chat.findLast((msg: any) => msg.is_user)?.mes ?? "")
+      );
     },
 
     get last_user_message() {
-      return workflowUserInput || (chat.findLast((msg: any) => msg.is_user)?.mes ?? '');
+      return (
+        workflowUserInput ||
+        (chat.findLast((msg: any) => msg.is_user)?.mes ?? "")
+      );
     },
 
     get userInput() {
@@ -518,7 +616,9 @@ export async function evalEjsTemplate(
     },
 
     get lastCharMessage() {
-      return chat.findLast((msg: any) => !msg.is_user && !msg.is_system)?.mes ?? '';
+      return (
+        chat.findLast((msg: any) => !msg.is_user && !msg.is_system)?.mes ?? ""
+      );
     },
 
     get lastMessageId() {
@@ -530,25 +630,25 @@ export async function evalEjsTemplate(
       try {
         const chars = stCtx.characters;
         const chid = stCtx.characterId;
-        return chars?.[chid]?.data?.extensions?.world ?? '';
+        return chars?.[chid]?.data?.extensions?.world ?? "";
       } catch {
-        return '';
+        return "";
       }
     },
 
     get userLoreBook() {
       try {
-        return stCtx.extensionSettings?.persona_description_lorebook ?? '';
+        return stCtx.extensionSettings?.persona_description_lorebook ?? "";
       } catch {
-        return '';
+        return "";
       }
     },
 
     get chatLoreBook() {
       try {
-        return stCtx.chatMetadata?.world ?? '';
+        return stCtx.chatMetadata?.world ?? "";
       } catch {
-        return '';
+        return "";
       }
     },
 
@@ -557,13 +657,13 @@ export async function evalEjsTemplate(
       try {
         const chars = stCtx.characters;
         const chid = stCtx.characterId;
-        return chars?.[chid]?.avatar ? `/characters/${chars[chid].avatar}` : '';
+        return chars?.[chid]?.avatar ? `/characters/${chars[chid].avatar}` : "";
       } catch {
-        return '';
+        return "";
       }
     },
 
-    userAvatar: '',
+    userAvatar: "",
 
     // Groups
     groups: stCtx.groups ?? [],
@@ -572,9 +672,9 @@ export async function evalEjsTemplate(
     // Model
     get model() {
       try {
-        return stCtx.onlineStatus ?? '';
+        return stCtx.onlineStatus ?? "";
       } catch {
-        return '';
+        return "";
       }
     },
 
@@ -584,29 +684,67 @@ export async function evalEjsTemplate(
     },
 
     // ── World info functions ──
-    getwi: (worldbookOrEntry: string | null, entryNameOrData?: string | Record<string, unknown>) =>
-      getwi(renderCtx, String(context.world_info?.world ?? ''), worldbookOrEntry, entryNameOrData),
-    getWorldInfo: (worldbookOrEntry: string | null, entryNameOrData?: string | Record<string, unknown>) =>
-      getwi(renderCtx, String(context.world_info?.world ?? ''), worldbookOrEntry, entryNameOrData),
+    getwi: (
+      worldbookOrEntry: string | null,
+      entryNameOrData?: string | Record<string, unknown>,
+    ) =>
+      getwi(
+        renderCtx,
+        String(context.world_info?.world ?? ""),
+        worldbookOrEntry,
+        entryNameOrData,
+      ),
+    getWorldInfo: (
+      worldbookOrEntry: string | null,
+      entryNameOrData?: string | Record<string, unknown>,
+    ) =>
+      getwi(
+        renderCtx,
+        String(context.world_info?.world ?? ""),
+        worldbookOrEntry,
+        entryNameOrData,
+      ),
 
     // ── Variable functions (read-only for workflow assembly) ──
-    getvar: (path: string, opts?: Record<string, any>) => getVariable(renderCtx.variableState, path, opts),
+    getvar: (path: string, opts?: Record<string, any>) =>
+      getVariable(renderCtx.variableState, path, opts),
     getLocalVar: (path: string, opts: Record<string, any> = {}) =>
-      getVariable(renderCtx.variableState, path, { ...opts, scope: 'local' }),
+      getVariable(renderCtx.variableState, path, { ...opts, scope: "local" }),
     getGlobalVar: (path: string, opts: Record<string, any> = {}) =>
-      getVariable(renderCtx.variableState, path, { ...opts, scope: 'global' }),
+      getVariable(renderCtx.variableState, path, { ...opts, scope: "global" }),
     getMessageVar: (path: string, opts: Record<string, any> = {}) =>
-      getVariable(renderCtx.variableState, path, { ...opts, scope: 'message' }),
+      getVariable(renderCtx.variableState, path, { ...opts, scope: "message" }),
 
     // Write functions keep in-memory state for the current render pass.
     setvar: (path: string, value: unknown, opts?: Record<string, any>) =>
       setVariable(renderCtx.variableState, path, value, opts),
-    setLocalVar: (path: string, value: unknown, opts: Record<string, any> = {}) =>
-      setVariable(renderCtx.variableState, path, value, { ...opts, scope: 'local' }),
-    setGlobalVar: (path: string, value: unknown, opts: Record<string, any> = {}) =>
-      setVariable(renderCtx.variableState, path, value, { ...opts, scope: 'global' }),
-    setMessageVar: (path: string, value: unknown, opts: Record<string, any> = {}) =>
-      setVariable(renderCtx.variableState, path, value, { ...opts, scope: 'message' }),
+    setLocalVar: (
+      path: string,
+      value: unknown,
+      opts: Record<string, any> = {},
+    ) =>
+      setVariable(renderCtx.variableState, path, value, {
+        ...opts,
+        scope: "local",
+      }),
+    setGlobalVar: (
+      path: string,
+      value: unknown,
+      opts: Record<string, any> = {},
+    ) =>
+      setVariable(renderCtx.variableState, path, value, {
+        ...opts,
+        scope: "global",
+      }),
+    setMessageVar: (
+      path: string,
+      value: unknown,
+      opts: Record<string, any> = {},
+    ) =>
+      setVariable(renderCtx.variableState, path, value, {
+        ...opts,
+        scope: "message",
+      }),
     incvar: () => undefined,
     decvar: () => undefined,
     delvar: () => undefined,
@@ -620,13 +758,15 @@ export async function evalEjsTemplate(
     patchVariables: () => undefined,
 
     // ── Fix #4: Chat message functions ──
-    getChatMessage: (id: number, role?: 'user' | 'assistant' | 'system') => getChatMessageCompat(id, role),
+    getChatMessage: (id: number, role?: "user" | "assistant" | "system") =>
+      getChatMessageCompat(id, role),
     getChatMessages: (
       startOrCount: number,
-      endOrRole?: number | 'user' | 'assistant' | 'system',
-      role?: 'user' | 'assistant' | 'system',
+      endOrRole?: number | "user" | "assistant" | "system",
+      role?: "user" | "assistant" | "system",
     ) => getChatMessagesCompat(startOrCount, endOrRole, role),
-    matchChatMessages: (pattern: string | RegExp) => matchChatMessagesCompat(pattern),
+    matchChatMessages: (pattern: string | RegExp) =>
+      matchChatMessagesCompat(pattern),
 
     // ── Fix #5: High-level functions (safe stubs for workflow context) ──
 
@@ -636,22 +776,22 @@ export async function evalEjsTemplate(
         const chars = stCtx.characters;
         const chid = stCtx.characterId;
         const char = chars?.[chid];
-        if (!char) return '';
-        return char.data?.description ?? '';
+        if (!char) return "";
+        return char.data?.description ?? "";
       } catch {
-        return '';
+        return "";
       }
     },
     getchar: undefined as any, // aliased below
     getChara: undefined as any,
 
     // getprp / getpreset / getPresetPrompt — stub (workflow doesn't use preset prompts)
-    getprp: async () => '',
-    getpreset: async () => '',
-    getPresetPrompt: async () => '',
+    getprp: async () => "",
+    getpreset: async () => "",
+    getPresetPrompt: async () => "",
 
     // execute (slash command) — no-op in workflow context
-    execute: async (_cmd: string) => '',
+    execute: async (_cmd: string) => "",
 
     // define — no-op (SharedDefines not needed in workflow)
     define: (_name: string, _value: unknown) => undefined,
@@ -662,8 +802,8 @@ export async function evalEjsTemplate(
     },
 
     // getqr / getQuickReply — stub
-    getqr: async () => '',
-    getQuickReply: async () => '',
+    getqr: async () => "",
+    getQuickReply: async () => "",
 
     // findVariables — stub
     findVariables: () => ({}),
@@ -672,31 +812,56 @@ export async function evalEjsTemplate(
     getWorldInfoData: async () => {
       const entries: any[] = [];
       for (const entry of renderCtx.entries) {
-        entries.push({ comment: entry.comment || entry.name, content: entry.content, world: entry.worldbook });
+        entries.push({
+          comment: entry.comment || entry.name,
+          content: entry.content,
+          world: entry.worldbook,
+        });
       }
       return entries;
     },
     getWorldInfoActivatedData: async () =>
-      Array.from(renderCtx.activatedEntries.values()).map(entry => ({
+      Array.from(renderCtx.activatedEntries.values()).map((entry) => ({
         comment: entry.comment || entry.name,
         content: entry.content,
         world: entry.worldbook,
       })),
     getEnabledWorldInfoEntries: async () =>
-      renderCtx.entries.map(entry => ({
+      renderCtx.entries.map((entry) => ({
         comment: entry.comment || entry.name,
         content: entry.content,
         world: entry.worldbook,
       })),
     selectActivatedEntries: () => [],
     activateWorldInfoByKeywords: async () => [],
-    getEnabledLoreBooks: () => Array.from(new Set(renderCtx.entries.map(entry => entry.worldbook))),
+    getEnabledLoreBooks: () =>
+      Array.from(new Set(renderCtx.entries.map((entry) => entry.worldbook))),
 
     // World info activation for controller compatibility.
-    activewi: async (world: string | null, entryOrForce?: string | boolean, maybeForce?: boolean) =>
-      activateWorldInfoInContext(renderCtx, String(context.world_info?.world ?? ''), world, entryOrForce, maybeForce),
-    activateWorldInfo: async (world: string | null, entryOrForce?: string | boolean, maybeForce?: boolean) =>
-      activateWorldInfoInContext(renderCtx, String(context.world_info?.world ?? ''), world, entryOrForce, maybeForce),
+    activewi: async (
+      world: string | null,
+      entryOrForce?: string | boolean,
+      maybeForce?: boolean,
+    ) =>
+      activateWorldInfoInContext(
+        renderCtx,
+        String(context.world_info?.world ?? ""),
+        world,
+        entryOrForce,
+        maybeForce,
+      ),
+    activateWorldInfo: async (
+      world: string | null,
+      entryOrForce?: string | boolean,
+      maybeForce?: boolean,
+    ) =>
+      activateWorldInfoInContext(
+        renderCtx,
+        String(context.world_info?.world ?? ""),
+        world,
+        entryOrForce,
+        maybeForce,
+      ),
 
     // Regex
     activateRegex: () => undefined,
@@ -717,7 +882,8 @@ export async function evalEjsTemplate(
     },
 
     // Print function for EJS
-    print: (...args: any[]) => args.filter(x => x !== undefined && x !== null).join(''),
+    print: (...args: any[]) =>
+      args.filter((x) => x !== undefined && x !== null).join(""),
 
     // Merge any extra environment (e.g., world_info metadata from getwi)
     ...extraEnv,
@@ -730,9 +896,9 @@ export async function evalEjsTemplate(
   try {
     const compiled = ejs.compile(content, {
       async: true,
-      outputFunctionName: 'print',
+      outputFunctionName: "print",
       _with: true,
-      localsName: 'locals',
+      localsName: "locals",
       client: true,
     });
     // Fix #6: rethrow signature matches EJS lib (5 params: err, str, flnm, lineno, esc)
@@ -740,31 +906,37 @@ export async function evalEjsTemplate(
       context,
       context,
       (s: string) => s, // escapeFn (identity, no HTML escaping)
-      () => ({ filename: '', template: '' }), // includer (stub)
+      () => ({ filename: "", template: "" }), // includer (stub)
       rethrow,
     );
-    return result ?? '';
+    return result ?? "";
   } catch (e) {
-    console.warn('[EW EJS Internal] Template render failed:', e);
+    console.warn("[EW EJS Internal] Template render failed:", e);
     // Return raw content on failure rather than breaking the pipeline
     return content;
   }
 }
 
 // Fix #6: rethrow signature matches EJS internal (5 params)
-function rethrow(err: Error, str: string, flnm: string, lineno: number, _esc?: (s: string) => string) {
-  const lines = str.split('\n');
+function rethrow(
+  err: Error,
+  str: string,
+  flnm: string,
+  lineno: number,
+  _esc?: (s: string) => string,
+) {
+  const lines = str.split("\n");
   const start = Math.max(lineno - 3, 0);
   const end = Math.min(lines.length, lineno + 3);
-  const filename = typeof _esc === 'function' ? _esc(flnm) : flnm || 'ejs';
+  const filename = typeof _esc === "function" ? _esc(flnm) : flnm || "ejs";
   const context = lines
     .slice(start, end)
     .map((line, i) => {
       const curr = i + start + 1;
-      return (curr === lineno ? ' >> ' : '    ') + curr + '| ' + line;
+      return (curr === lineno ? " >> " : "    ") + curr + "| " + line;
     })
-    .join('\n');
-  err.message = filename + ':' + lineno + '\n' + context + '\n\n' + err.message;
+    .join("\n");
+  err.message = filename + ":" + lineno + "\n" + context + "\n\n" + err.message;
   throw err;
 }
 
@@ -775,24 +947,43 @@ declare function getCurrentChatId(): string;
  * Create a render context from a flat list of worldbook entries.
  */
 export function createRenderContext(
-  entries: Array<{ name: string; comment?: string; content: string; worldbook: string }>,
+  entries: Array<{
+    name: string;
+    comment?: string;
+    content: string;
+    worldbook: string;
+  }>,
   maxRecursion = 10,
 ): EjsRenderContext {
-  const allEntries = new Map<string, { name: string; comment?: string; content: string; worldbook: string }>();
+  const allEntries = new Map<
+    string,
+    { name: string; comment?: string; content: string; worldbook: string }
+  >();
   const entriesByWorldbook = new Map<
     string,
-    Map<string, { name: string; comment?: string; content: string; worldbook: string }>
+    Map<
+      string,
+      { name: string; comment?: string; content: string; worldbook: string }
+    >
   >();
-  const normalizedEntries = entries.map(entry => ({
+  const normalizedEntries = entries.map((entry) => ({
     ...entry,
     name: normalizeEntryKey(entry.name),
     comment: normalizeEntryKey(entry.comment),
   }));
 
   const registerLookup = (
-    lookup: Map<string, { name: string; comment?: string; content: string; worldbook: string }>,
+    lookup: Map<
+      string,
+      { name: string; comment?: string; content: string; worldbook: string }
+    >,
     key: string,
-    entry: { name: string; comment?: string; content: string; worldbook: string },
+    entry: {
+      name: string;
+      comment?: string;
+      content: string;
+      worldbook: string;
+    },
   ) => {
     if (!key || lookup.has(key)) return;
     lookup.set(key, entry);
@@ -800,7 +991,7 @@ export function createRenderContext(
 
   for (const normalized of normalizedEntries) {
     registerLookup(allEntries, normalized.name, normalized);
-    registerLookup(allEntries, normalized.comment || '', normalized);
+    registerLookup(allEntries, normalized.comment || "", normalized);
 
     let worldbookLookup = entriesByWorldbook.get(normalized.worldbook);
     if (!worldbookLookup) {
@@ -808,7 +999,7 @@ export function createRenderContext(
       entriesByWorldbook.set(normalized.worldbook, worldbookLookup);
     }
     registerLookup(worldbookLookup, normalized.name, normalized);
-    registerLookup(worldbookLookup, normalized.comment || '', normalized);
+    registerLookup(worldbookLookup, normalized.comment || "", normalized);
   }
   return {
     entries: normalizedEntries,
@@ -832,14 +1023,17 @@ export function createRenderContext(
  * Used for user-defined prompt entries that may contain EJS tags
  * but don't need worldbook getwi access.
  */
-export async function renderEjsContent(content: string, templateContext: Record<string, any> = {}): Promise<string> {
+export async function renderEjsContent(
+  content: string,
+  templateContext: Record<string, any> = {},
+): Promise<string> {
   const processed = substituteParams(content, templateContext);
-  if (!processed.includes('<%')) return processed;
+  if (!processed.includes("<%")) return processed;
   const ctx = createRenderContext([]);
   try {
     return await evalEjsTemplate(processed, ctx);
   } catch (e) {
-    console.warn('[EW EJS Internal] renderEjsContent failed:', e);
+    console.warn("[EW EJS Internal] renderEjsContent failed:", e);
     return processed;
   }
 }
@@ -854,13 +1048,13 @@ export async function renderEjsContent(content: string, templateContext: Record<
  * @returns A human-readable error string if syntax is invalid, or `null` if valid.
  */
 export function checkEjsSyntax(content: string): string | null {
-  if (!content.includes('<%')) return null;
+  if (!content.includes("<%")) return null;
   try {
     ejs.compile(content, {
       async: true,
       client: true,
       _with: true,
-      localsName: 'locals',
+      localsName: "locals",
     });
     return null;
   } catch (e) {

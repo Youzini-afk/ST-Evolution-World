@@ -1,6 +1,7 @@
-import { FlowRequestSchema, FlowRequestV1, FlowTriggerV1 } from './contracts';
-import { uuidv4 } from './helpers';
-import { EwFlowConfig, EwSettings } from './types';
+import { getChatId } from "./compat/character";
+import { FlowRequestSchema, FlowRequestV1, FlowTriggerV1 } from "./contracts";
+import { uuidv4 } from "./helpers";
+import { EwFlowConfig, EwSettings } from "./types";
 
 export type BuildRequestInput = {
   settings: EwSettings;
@@ -12,15 +13,14 @@ export type BuildRequestInput = {
   serial_results?: Record<string, any>[];
 };
 
-export async function buildFlowRequest(input: BuildRequestInput): Promise<FlowRequestV1> {
-  const chatId = String(
-    (typeof SillyTavern !== 'undefined' ? (SillyTavern?.getCurrentChatId?.() ?? (SillyTavern as any).chatId) : null) ??
-      'unknown',
-  );
+export async function buildFlowRequest(
+  input: BuildRequestInput,
+): Promise<FlowRequestV1> {
+  const chatId = String(getChatId() ?? "unknown");
   const requestId = input.request_id ?? uuidv4();
 
   const payload = FlowRequestSchema.parse({
-    version: 'ew-flow/v1',
+    version: "ew-flow/v1",
     request_id: requestId,
     chat_id: chatId,
     message_id: input.message_id,
