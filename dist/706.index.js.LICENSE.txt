@@ -1,9 +1,3 @@
-/*!
- * pinia v3.0.4
- * (c) 2025 Eduardo San Martin Morote
- * @license MIT
- */
-
 /**
      * @file Embedded JavaScript templating engine. {@link http://ejs.co}
      * @author Matthew Eernisse <mde@fleegix.org>
@@ -11,15 +5,3 @@
      * @project EJS
      * @license {@link http://www.apache.org/licenses/LICENSE-2.0 Apache License, Version 2.0}
      */
-
-/**
-* @vue/runtime-dom v3.5.30
-* (c) 2018-present Yuxi (Evan) You and Vue contributors
-* @license MIT
-**/
-
-/**
-* @vue/shared v3.5.30
-* (c) 2018-present Yuxi (Evan) You and Vue contributors
-* @license MIT
-**/
