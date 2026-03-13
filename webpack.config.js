@@ -73,6 +73,7 @@ const config = {
         "vue",
         "pinia",
         {
+          klona: ["klona"],
           zod: [["z", "z"]],
           "@vueuse/core": ["useIntervalFn", "watchIgnorable"],
         },
