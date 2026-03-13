@@ -190,6 +190,7 @@ onMounted(() => {
 }
 
 .ew-app .vue-flow__node {
+  display: block !important;
   position: absolute !important;
   pointer-events: all !important;
   transform-origin: 0 0 !important;

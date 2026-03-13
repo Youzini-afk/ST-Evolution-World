@@ -430,21 +430,21 @@
 }
 
 
-.ew-app[data-v-cafed98e] {
+.ew-app[data-v-8459c35c] {
   padding: 12px;
   color: var(--SmartThemeBodyColor, #e2e8f0);
 }
-.ew-app__header[data-v-cafed98e] {
+.ew-app__header[data-v-8459c35c] {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
 }
-.ew-app__header h3[data-v-cafed98e] { margin: 0; font-size: 16px;
+.ew-app__header h3[data-v-8459c35c] { margin: 0; font-size: 16px;
 }
-.ew-app__version[data-v-cafed98e] { font-size: 11px; opacity: 0.5;
+.ew-app__version[data-v-8459c35c] { font-size: 11px; opacity: 0.5;
 }
-.ew-app__graph-test[data-v-cafed98e] {
+.ew-app__graph-test[data-v-8459c35c] {
   width: 100%;
   height: 500px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -507,6 +507,7 @@
   transform-origin: 0 0 !important;
 }
 .ew-app .vue-flow__node {
+  display: block !important;
   position: absolute !important;
   pointer-events: all !important;
   transform-origin: 0 0 !important;
