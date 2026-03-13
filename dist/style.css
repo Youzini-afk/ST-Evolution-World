@@ -430,25 +430,21 @@
 }
 
 
-.ew-app[data-v-4dc9860c] {
+.ew-app[data-v-cfbbe8bc] {
   padding: 12px;
   color: var(--SmartThemeBodyColor, #e2e8f0);
 }
-.ew-app__header[data-v-4dc9860c] {
+.ew-app__header[data-v-cfbbe8bc] {
   display: flex;
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
 }
-.ew-app__header h3[data-v-4dc9860c] {
-  margin: 0;
-  font-size: 16px;
+.ew-app__header h3[data-v-cfbbe8bc] { margin: 0; font-size: 16px;
 }
-.ew-app__version[data-v-4dc9860c] {
-  font-size: 11px;
-  opacity: 0.5;
+.ew-app__version[data-v-cfbbe8bc] { font-size: 11px; opacity: 0.5;
 }
-.ew-app__graph-test[data-v-4dc9860c] {
+.ew-app__graph-test[data-v-cfbbe8bc] {
   width: 100%;
   height: 500px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -458,77 +454,78 @@
 }
 
 
-/* ── 节点暗色主题 ── */
-.ew-app .vue-flow__node {
-  background: rgba(30, 35, 50, 0.95) !important;
-  color: #e2e8f0 !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  border-radius: 8px !important;
-  padding: 8px 16px !important;
-  font-size: 13px !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
-  cursor: grab !important;
+/* ── 节点 ── */
+.ew-app .vue-flow__node-default {
+  background: rgba(30, 35, 50, 0.95);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  min-width: 120px;
+  text-align: center;
 }
-.ew-app .vue-flow__node.selected {
-  border-color: rgba(99, 102, 241, 0.6) !important;
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3), 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+.ew-app .vue-flow__node.selected .vue-flow__node-default {
+  border-color: rgba(99, 102, 241, 0.6);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3), 0 2px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* ── Handle（连接点） ── */
+/* ── Handle ── */
 .ew-app .vue-flow__handle {
-  width: 10px !important;
-  height: 10px !important;
-  background: rgba(99, 102, 241, 0.7) !important;
-  border: 2px solid rgba(255, 255, 255, 0.3) !important;
+  width: 10px;
+  height: 10px;
+  background: rgba(99, 102, 241, 0.8);
+  border: 2px solid rgba(255, 255, 255, 0.4);
 }
 
-/* ── 连线暗色 ── */
+/* ── 连线 ── */
 .ew-app .vue-flow__edge-path {
-  stroke: rgba(255, 255, 255, 0.3) !important;
-  stroke-width: 2 !important;
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 2;
 }
 
-/* ── Controls 修复 ── */
+/* ── Controls ── */
 .ew-app .vue-flow__controls {
-  background: rgba(20, 24, 36, 0.95) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 8px !important;
-  padding: 4px !important;
-  pointer-events: all !important;
-  z-index: 10 !important;
+  background: rgba(20, 24, 36, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 4px;
+  pointer-events: all;
+  z-index: 10;
 }
 .ew-app .vue-flow__controls-button {
-  background: transparent !important;
-  border: none !important;
-  color: rgba(255, 255, 255, 0.6) !important;
-  cursor: pointer !important;
-  pointer-events: all !important;
-  width: 28px !important;
-  height: 28px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  pointer-events: all;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
 }
 .ew-app .vue-flow__controls-button:hover {
-  background: rgba(255, 255, 255, 0.1) !important;
-  color: #fff !important;
-  border-radius: 4px !important;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 .ew-app .vue-flow__controls-button svg {
-  fill: currentColor !important;
-  width: 14px !important;
-  height: 14px !important;
+  fill: currentColor;
+  width: 14px;
+  height: 14px;
 }
 
-/* ── Minimap 暗色 ── */
+/* ── Minimap ── */
 .ew-app .vue-flow__minimap {
-  background: rgba(0, 0, 0, 0.5) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  border-radius: 8px !important;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
 }
 
-/* ── 防止 ST 的全局 CSS 干扰 ── */
+/* ── Panel pointer-events fix ── */
 .ew-app .vue-flow__panel {
-  pointer-events: all !important;
+  pointer-events: all;
 }
 
