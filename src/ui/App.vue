@@ -1,6 +1,7 @@
 <template>
   <transition name="ew-panel">
     <EwPanelShell
+      v-if="store.settings.ui_open"
       :class="{ 'theme-moon-phase': store.settings.theme_moon }"
       :busy="store.busy"
       :enabled="store.settings.enabled"
@@ -235,7 +236,12 @@
                     </button>
                   </div>
                 </EwFieldRow>
-                <!-- FAB 在 ST 扩展中不需要 -->
+                <EwFieldRow label="悬浮球">
+                  <label style="display: flex; align-items: center; gap: 8px; cursor: pointer">
+                    <input v-model="store.settings.show_fab" type="checkbox" @change="emitFabChanged" />
+                    显示悬浮球入口
+                  </label>
+                </EwFieldRow>
               </div>
             </EwSectionCard>
 
@@ -563,7 +569,11 @@ async function refreshEnvironmentStatus() {
 }
 
 function emitFabChanged() {
-  // FAB 在 ST 扩展中不存在，此函数为空操作
+  const visible = store.settings.show_fab;
+  patchSettings({ show_fab: visible });
+  if (!visible) {
+    document.getElementById('ew-assistant-fab')?.remove();
+  }
 }
 
 const enabledFlowCount = computed(() => store.settings.flows.filter(flow => flow.enabled).length);
