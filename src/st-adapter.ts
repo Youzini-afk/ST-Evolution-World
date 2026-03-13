@@ -38,22 +38,28 @@ export interface STEventSource {
 
 // ── 全局 context 获取 ─────────────────────────────────
 
-let _cachedContext: STContext | null = null;
-
 /**
  * 获取 SillyTavern context。
  * ST 扩展通过 `SillyTavern.getContext()` 访问。
+ *
+ * 注意: 不缓存 context — ST 的 getContext() 每次返回最新快照，
+ * chat/settings 等可能随时变化。
  */
 export function getSTContext(): STContext {
-  if (_cachedContext) return _cachedContext;
-
   const st = (window as any).SillyTavern;
   if (!st || typeof st.getContext !== 'function') {
-    throw new Error('[Evolution World] SillyTavern.getContext() 不可用');
+    throw new Error('[Evolution World] SillyTavern.getContext() 不可用 — 确保在 jQuery ready 后调用');
   }
 
-  _cachedContext = st.getContext() as STContext;
-  return _cachedContext;
+  return st.getContext() as STContext;
+}
+
+/**
+ * 检查 SillyTavern context 是否可用（不抛出异常）。
+ */
+export function isSTReady(): boolean {
+  const st = (window as any).SillyTavern;
+  return !!(st && typeof st.getContext === 'function');
 }
 
 /**

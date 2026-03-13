@@ -3,94 +3,55 @@
  *
  * ST 通过 <script type="module"> 加载此文件。
  * jQuery/lodash/toastr 等全局变量由 ST 主页面提供。
+ *
+ * 关键: ST 扩展脚本在页面加载早期执行，此时 SillyTavern.getContext()
+ *       可能尚未可用。所有对 getSTContext() 的调用必须在 jQuery ready
+ *       回调内部进行，不能在模块顶层。
  */
+import { getSTContext, isSTReady } from './st-adapter';
+import { initRuntime } from './runtime/main';
+import { mountUI } from './ui/mount';
 
-// ── 最早的调试日志 ──
-console.log('[Evolution World] ===== ENTRY POINT TOP-LEVEL =====');
+console.log('[Evolution World] 扩展脚本已加载');
 
-let getSTContext: any;
-let initRuntime: any;
-let mountUI: any;
-
-try {
-  console.log('[Evolution World] Importing st-adapter...');
-  const adapter = require('./st-adapter');
-  getSTContext = adapter.getSTContext;
-  console.log('[Evolution World] st-adapter imported OK');
-} catch (err) {
-  console.error('[Evolution World] FAILED to import st-adapter:', err);
-}
-
-try {
-  console.log('[Evolution World] Importing runtime/main...');
-  const main = require('./runtime/main');
-  initRuntime = main.initRuntime;
-  console.log('[Evolution World] runtime/main imported OK');
-} catch (err) {
-  console.error('[Evolution World] FAILED to import runtime/main:', err);
-}
-
-try {
-  console.log('[Evolution World] Importing ui/mount...');
-  const mount = require('./ui/mount');
-  mountUI = mount.mountUI;
-  console.log('[Evolution World] ui/mount imported OK');
-} catch (err) {
-  console.error('[Evolution World] FAILED to import ui/mount:', err);
-}
-
-// ── jQuery ready callback ──
+// 使用 globalThis.jQuery 确保在 module scope 中能找到全局变量
 const jq = (globalThis as any).jQuery || (globalThis as any).$;
-console.log('[Evolution World] jQuery found:', typeof jq);
 
 if (typeof jq === 'function') {
-  jq(() => {
-    console.log('[Evolution World] jQuery ready callback fired');
-    try {
-      if (!getSTContext) throw new Error('getSTContext not imported');
-      const ctx = getSTContext();
-      console.info('[Evolution World] ST context ready, chatId:', ctx.chatId);
+  jq(async () => {
+    console.log('[Evolution World] jQuery ready — 开始初始化');
 
-      if (!initRuntime) throw new Error('initRuntime not imported');
-      initRuntime()
-        .then(() => {
-          console.log('[Evolution World] Runtime init complete, mounting UI...');
-          if (mountUI) {
-            mountUI();
-            (globalThis as any).toastr?.success?.('Evolution World 扩展已加载！', 'EW', { timeOut: 2000 });
-          } else {
-            console.error('[Evolution World] mountUI not available');
-          }
-        })
-        .catch((error: any) => {
-          console.error('[Evolution World] Runtime init failed:', error);
-        });
+    // 等待 ST context 可用 (有些情况下 jQuery ready 触发时 ST 还没初始化完)
+    let retries = 0;
+    while (!isSTReady() && retries < 50) {
+      await new Promise(r => setTimeout(r, 100));
+      retries++;
+    }
+
+    if (!isSTReady()) {
+      console.error('[Evolution World] SillyTavern.getContext() 在 5 秒后仍不可用，放弃初始化');
+      return;
+    }
+
+    try {
+      const ctx = getSTContext();
+      console.info('[Evolution World] ST context 已就绪');
+
+      // 初始化运行时 (settings, events, pipeline)
+      await initRuntime();
+      console.log('[Evolution World] 运行时初始化完成');
+
+      // 挂载 UI (FAB + 魔法棒 + 浮动面板)
+      mountUI();
+      console.log('[Evolution World] UI 挂载完成');
+
+      (globalThis as any).toastr?.success?.('Evolution World 扩展已加载！', 'EW', { timeOut: 2000 });
     } catch (error) {
-      console.error('[Evolution World] Failed in jQuery ready:', error);
+      console.error('[Evolution World] 初始化失败:', error);
+      (globalThis as any).toastr?.error?.(`Evolution World 初始化失败: ${error}`, 'EW');
     }
   });
 } else {
-  console.warn('[Evolution World] jQuery not found, using DOMContentLoaded');
-  document.addEventListener('DOMContentLoaded', () => {
-    console.log('[Evolution World] DOMContentLoaded fired');
-    try {
-      if (!getSTContext) throw new Error('getSTContext not imported');
-      const ctx = getSTContext();
-      console.info('[Evolution World] ST context ready (fallback), chatId:', ctx.chatId);
-
-      if (!initRuntime) throw new Error('initRuntime not imported');
-      initRuntime()
-        .then(() => {
-          console.log('[Evolution World] Runtime init complete (fallback), mounting UI...');
-          if (mountUI) mountUI();
-        })
-        .catch((error: any) => {
-          console.error('[Evolution World] Runtime init failed (fallback):', error);
-        });
-    } catch (error) {
-      console.error('[Evolution World] Failed in DOMContentLoaded:', error);
-    }
-  });
+  // jQuery 尚未加载 — 不应发生，因为 ST 提供 jQuery
+  console.error('[Evolution World] jQuery 未找到，无法初始化');
 }
-
-console.log('[Evolution World] ===== ENTRY POINT SETUP DONE =====');
