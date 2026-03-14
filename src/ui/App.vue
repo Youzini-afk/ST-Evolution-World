@@ -1275,6 +1275,19 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ── CSS Grid Cross-Fade: ensures stacking overlap during tab transitions ── */
+.ew-tab-crossfade {
+  display: grid;
+}
+.ew-tab-crossfade :deep(.ew-tab-fade-enter-active),
+.ew-tab-crossfade :deep(.ew-tab-fade-leave-active) {
+  grid-area: 1 / 1;
+}
+.ew-tab-crossfade :deep(.ew-tab-fade-leave-active) {
+  pointer-events: none;
+  overflow: hidden;
+}
+
 /* ── Panel Open / Close Transition ── */
 .ew-panel-enter-active {
   transition: opacity 0.3s ease;
