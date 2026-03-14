@@ -1446,66 +1446,101 @@ onUnmounted(() => {
 }
 
 /* =====================================================================
- * APP CORE TRANSITIONS — Elegant Seamless Flow (优雅一镜到底)
- * Airy damped curves · Asymmetric timing · Micro-stagger
+ * APP CORE TRANSITIONS — Fluid Spatial Choreography (流体空间编排)
+ * Morphing background, gentle scattering fade-outs, and convergent glides
  * ================================================================== */
 
-/* ── Tab Switching ──
- * Exit: swift & clean (0.15s) — gets out of the way immediately
- * Enter: slow & silky (0.45s) — glides in with airy momentum
+/* ── Container Breathing Morph (容器呼吸形变) ──
+ * Creates a seamless dimension shift while traversing tabs
  */
 .ew-fade-enter-active {
-  transition: opacity 0.45s cubic-bezier(0.2, 0.85, 0.3, 1),
-              transform 0.45s cubic-bezier(0.2, 0.85, 0.3, 1);
+  animation: ew-breathe-morph 0.65s cubic-bezier(0.25, 1, 0.5, 1) both;
 }
 .ew-fade-leave-active {
-  transition: opacity 0.15s cubic-bezier(0.4, 0, 1, 1),
-              transform 0.15s cubic-bezier(0.4, 0, 1, 1);
   position: absolute;
   width: 100%;
   pointer-events: none;
 }
 
-.ew-fade-enter-from {
-  opacity: 0;
-  transform: translateY(12px) scale(0.99);
-}
-.ew-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-6px) scale(0.995);
+@keyframes ew-breathe-morph {
+  0% { transform: scale(0.96); filter: brightness(0.95); border-radius: 20px; }
+  100% { transform: scale(1); filter: brightness(1); border-radius: 12px; }
 }
 
-/* ── Micro-stagger Fluid Cascade (流水浮现) ──
- * Tiny 12px rise + ultra-short 0.03s intervals = ink spreading effect
- */
-@keyframes ew-fluid-cascade {
-  0% {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* ── Outgoing Elements: Gentle Radial Scattering (向四周轻柔溶解漂散) ── */
+.ew-fade-leave-active .ew-section-card,
+.ew-fade-leave-active .ew-field-row,
+.ew-fade-leave-active .ew-flow-card {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+  animation-fill-mode: forwards;
 }
 
+/* Odd elements drift to Top-Left */
+.ew-fade-leave-active .ew-section-card:nth-child(odd),
+.ew-fade-leave-active .ew-field-row:nth-child(odd),
+.ew-fade-leave-active .ew-flow-card:nth-child(odd) {
+  animation-name: glide-out-left;
+}
+/* Even elements drift to Bottom-Right */
+.ew-fade-leave-active .ew-section-card:nth-child(even),
+.ew-fade-leave-active .ew-field-row:nth-child(even),
+.ew-fade-leave-active .ew-flow-card:nth-child(even) {
+  animation-name: glide-out-right;
+}
+
+@keyframes glide-out-left {
+  to { opacity: 0; transform: translate(-30px, -20px) scale(0.98); }
+}
+@keyframes glide-out-right {
+  to { opacity: 0; transform: translate(30px, 20px) scale(0.98); }
+}
+
+
+/* ── Incoming Elements: Gentle Convergent Glide (从远端被引力吸附入场) ── */
 .ew-fade-enter-active .ew-section-card,
 .ew-fade-enter-active .ew-field-row,
 .ew-fade-enter-active .ew-flow-card {
-  animation: ew-fluid-cascade 0.5s cubic-bezier(0.2, 0.85, 0.3, 1) both;
+  opacity: 0;
+  animation-duration: 0.65s;
+  animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+  animation-fill-mode: both;
 }
 
+/* Odd elements glide in from Bottom-Left */
+.ew-fade-enter-active .ew-section-card:nth-child(odd),
+.ew-fade-enter-active .ew-field-row:nth-child(odd),
+.ew-fade-enter-active .ew-flow-card:nth-child(odd) {
+  animation-name: glide-in-left;
+}
+/* Even elements glide in from Top-Right */
+.ew-fade-enter-active .ew-section-card:nth-child(even),
+.ew-fade-enter-active .ew-field-row:nth-child(even),
+.ew-fade-enter-active .ew-flow-card:nth-child(even) {
+  animation-name: glide-in-right;
+}
+
+@keyframes glide-in-left {
+  0% { opacity: 0; transform: translate(-40px, 30px) scale(0.95); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+@keyframes glide-in-right {
+  0% { opacity: 0; transform: translate(40px, -30px) scale(0.95); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+
+/* Asymmetric Micro-staggering to amplify the assembly feel */
 .ew-fade-enter-active .ew-section-card:nth-child(1),
 .ew-fade-enter-active .ew-field-row:nth-child(1),
-.ew-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.03s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.0s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(2),
 .ew-fade-enter-active .ew-field-row:nth-child(2),
-.ew-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.06s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.04s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(3),
 .ew-fade-enter-active .ew-field-row:nth-child(3),
-.ew-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.09s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.08s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(4),
 .ew-fade-enter-active .ew-field-row:nth-child(4),
@@ -1513,46 +1548,46 @@ onUnmounted(() => {
 
 .ew-fade-enter-active .ew-section-card:nth-child(5),
 .ew-fade-enter-active .ew-field-row:nth-child(5),
-.ew-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.15s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.16s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(n+6),
 .ew-fade-enter-active .ew-field-row:nth-child(n+6),
-.ew-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.18s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.20s; }
 
-/* ── Panel Intro ── */
+/* ── Modal & Overall Panel Intro ── */
 .ew-panel-enter-active,
 .ew-panel-leave-active {
-  transition: opacity 0.4s cubic-bezier(0.2, 0.85, 0.3, 1),
-              transform 0.4s cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1),
+              transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
 }
 .ew-panel-enter-from {
   opacity: 0;
-  transform: translateY(16px) scale(0.98);
+  transform: translateY(16px) scale(0.96);
 }
 .ew-panel-leave-to {
   opacity: 0;
-  transform: translateY(10px) scale(0.99);
+  transform: translateY(10px) scale(0.98);
 }
 
 /* ── List Transitions (Adding/Removing/Reordering) ── */
 .ew-list-enter-active,
 .ew-list-leave-active {
-  transition: all 0.45s cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: all 0.5s cubic-bezier(0.25, 1, 0.5, 1);
 }
 .ew-list-enter-from {
   opacity: 0;
-  transform: scale(0.96) translateY(-6px);
+  transform: scale(0.92) translate(-20px, -10px);
 }
 .ew-list-leave-to {
   opacity: 0;
-  transform: scale(0.97) translateY(6px);
+  transform: scale(0.95) translate(20px, 10px);
 }
 .ew-list-leave-active {
   position: absolute;
   width: 100%;
 }
 .ew-list-move {
-  transition: transform 0.5s cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition: transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 /* =====================================================================
