@@ -509,6 +509,13 @@
                   >
                     导出全部工作流
                   </button>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="openWriteToCardModal"
+                  >
+                    写入角色卡
+                  </button>
                   <input
                     ref="flowImportRef"
                     type="file"
@@ -632,6 +639,61 @@
       </transition>
     </EwPanelShell>
   </transition>
+
+  <!-- ── 写入角色卡弹窗 ── -->
+  <transition name="ew-modal">
+    <div v-if="showWriteToCardModal" class="ew-modal-overlay" @click.self="showWriteToCardModal = false">
+      <div class="ew-modal ew-modal--write-card">
+        <header class="ew-modal__header">
+          <h3>选择要写入角色卡的工作流</h3>
+          <button type="button" class="ew-modal__close" @click="showWriteToCardModal = false">✕</button>
+        </header>
+        <div class="ew-modal__body">
+          <p class="ew-modal__hint">
+            同名工作流将更新，新工作流将追加。已有角色卡工作流不受影响。
+          </p>
+          <label class="ew-write-card-item ew-write-card-item--all">
+            <input
+              type="checkbox"
+              :checked="writeToCardSelection.size === store.settings.flows.length"
+              :indeterminate="writeToCardSelection.size > 0 && writeToCardSelection.size < store.settings.flows.length"
+              @change="toggleWriteToCardSelectAll"
+            />
+            <span>全选 / 取消全选</span>
+          </label>
+          <div class="ew-write-card-list">
+            <label
+              v-for="flow in store.settings.flows"
+              :key="flow.id"
+              class="ew-write-card-item"
+            >
+              <input
+                type="checkbox"
+                :checked="writeToCardSelection.has(flow.id)"
+                @change="toggleWriteToCardItem(flow.id)"
+              />
+              <span class="ew-write-card-item__name">{{ flow.name || flow.id }}</span>
+              <span class="ew-write-card-item__badges">
+                <span v-if="flow.enabled" class="ew-status-pill" data-tone="good">启用</span>
+                <span v-else class="ew-status-pill" data-tone="muted">禁用</span>
+              </span>
+            </label>
+          </div>
+          <div class="ew-modal__actions">
+            <button type="button" class="ew-btn" @click="showWriteToCardModal = false">取消</button>
+            <button
+              type="button"
+              class="ew-btn ew-btn--primary"
+              :disabled="writeToCardSelection.size === 0 || writeToCardBusy"
+              @click="confirmWriteToCard"
+            >
+              {{ writeToCardBusy ? '写入中…' : `确认写入 (${writeToCardSelection.size})` }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </transition>
 </template>
 
 <script setup lang="ts">
@@ -664,6 +726,46 @@ const store = useEwStore();
 const importFileInputRef = ref<HTMLInputElement | null>(null);
 const flowImportRef = ref<HTMLInputElement | null>(null);
 const migratingSnapshots = ref(false);
+
+// ── 写入角色卡弹窗 ──
+const showWriteToCardModal = ref(false);
+const writeToCardSelection = ref<Set<string>>(new Set());
+const writeToCardBusy = ref(false);
+
+function openWriteToCardModal() {
+  writeToCardSelection.value = new Set(
+    store.settings.flows.filter(f => f.enabled).map(f => f.id),
+  );
+  showWriteToCardModal.value = true;
+}
+
+function toggleWriteToCardSelectAll() {
+  if (writeToCardSelection.value.size === store.settings.flows.length) {
+    writeToCardSelection.value = new Set();
+  } else {
+    writeToCardSelection.value = new Set(store.settings.flows.map(f => f.id));
+  }
+}
+
+function toggleWriteToCardItem(flowId: string) {
+  const next = new Set(writeToCardSelection.value);
+  if (next.has(flowId)) {
+    next.delete(flowId);
+  } else {
+    next.add(flowId);
+  }
+  writeToCardSelection.value = next;
+}
+
+async function confirmWriteToCard() {
+  writeToCardBusy.value = true;
+  try {
+    await store.mergeFlowsToCard([...writeToCardSelection.value]);
+    showWriteToCardModal.value = false;
+  } finally {
+    writeToCardBusy.value = false;
+  }
+}
 
 type StatusTone = "good" | "warn" | "bad" | "muted";
 
@@ -2607,5 +2709,104 @@ body:has(.theme-moon-phase) .ew-flow-scope-tab--active {
   color: #fde68a;
   background: rgba(251, 191, 36, 0.1);
   border-color: rgba(251, 191, 36, 0.2);
+}
+
+/* ── Write-to-Card Modal ── */
+.ew-modal--write-card {
+  width: min(520px, 90vw);
+  max-height: 80vh;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 8%, rgba(12, 16, 24, 0.95));
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ew-modal__hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 60%, transparent);
+}
+
+.ew-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 12%, transparent);
+}
+
+.ew-write-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0.25rem 0;
+}
+
+.ew-write-card-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 6%, rgba(0, 0, 0, 0.12));
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ew-write-card-item:hover {
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 14%, rgba(0, 0, 0, 0.12));
+  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 35%, transparent);
+}
+
+.ew-write-card-item--all {
+  margin-bottom: 0.35rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 80%, transparent);
+}
+
+.ew-write-card-item__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 92%, transparent);
+}
+
+.ew-write-card-item__badges {
+  display: flex;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.ew-modal-enter-active .ew-modal--write-card,
+.ew-modal-leave-active .ew-modal--write-card {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ew-modal-enter-from .ew-modal--write-card {
+  transform: scale(0.92) translateY(10px);
+}
+.ew-modal-leave-to .ew-modal--write-card {
+  transform: scale(0.96) translateY(5px);
+}
+
+@media (max-width: 640px) {
+  .ew-modal--write-card {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
 }
 </style>

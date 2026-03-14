@@ -544,6 +544,62 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
   }
 
+  async function mergeFlowsToCard(flowIds: string[]) {
+    try {
+      const selected = settings.value.flows.filter(f => flowIds.includes(f.id));
+      if (selected.length === 0) {
+        showEwNotice({ title: 'Evolution World', message: '未选择任何工作流', level: 'warning' });
+        return;
+      }
+
+      const existing = await readCharFlows(settings.value);
+
+      const merged = [...existing];
+      let updatedCount = 0;
+      let appendedCount = 0;
+
+      for (const flow of selected) {
+        const copy = klona(flow);
+        delete (copy as any).api_url;
+        delete (copy as any).api_key;
+        delete (copy as any).headers_json;
+        delete (copy as any).api_preset_id;
+
+        const trimmedName = copy.name.trim();
+        const existingIndex = merged.findIndex(f => f.name.trim() === trimmedName);
+        if (existingIndex >= 0) {
+          copy.id = merged[existingIndex].id;
+          merged[existingIndex] = copy;
+          updatedCount++;
+        } else {
+          copy.id = `${copy.id}_char_${Date.now()}`;
+          merged.push(copy);
+          appendedCount++;
+        }
+      }
+
+      await writeCharFlows(settings.value, merged);
+      charFlows.value = merged;
+      activeCharName.value = getCurrentCharacterName?.() ?? '';
+
+      const parts: string[] = [];
+      if (updatedCount > 0) parts.push(`更新 ${updatedCount} 条`);
+      if (appendedCount > 0) parts.push(`新增 ${appendedCount} 条`);
+      showEwNotice({
+        title: 'Evolution World',
+        message: `已写入角色卡工作流：${parts.join('，')}`,
+        level: 'success',
+      });
+    } catch (e) {
+      console.error('[Evolution World] mergeFlowsToCard failed:', e);
+      showEwNotice({
+        title: 'Evolution World',
+        message: '写入角色卡失败: ' + (e as Error).message,
+        level: 'error',
+      });
+    }
+  }
+
   function addCharFlow() {
     const apiPresets = settings.value.api_presets;
     if (apiPresets.length === 0) {
@@ -699,6 +755,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     closePanel,
     loadCharFlows,
     saveCharFlows,
+    mergeFlowsToCard,
     addCharFlow,
     duplicateCharFlow,
     removeCharFlow,
