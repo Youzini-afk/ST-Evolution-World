@@ -661,7 +661,7 @@
             </template>
 
             <template v-else-if="store.activeTab === 'graph'">
-              <EwGraphEditor />
+              <EwGraphEditor :flows="store.settings.flows" :api-presets="store.settings.api_presets" />
             </template>
 
             <template v-else-if="store.activeTab === 'history'">
