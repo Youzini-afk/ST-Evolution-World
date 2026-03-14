@@ -1446,37 +1446,42 @@ onUnmounted(() => {
 }
 
 /* =====================================================================
- * APP CORE TRANSITIONS (Seamless One-Take Animation)
+ * APP CORE TRANSITIONS — Elegant Seamless Flow (优雅一镜到底)
+ * Airy damped curves · Asymmetric timing · Micro-stagger
  * ================================================================== */
 
-/* ── Tab Switching Fade & Slide ──
- * Creates a spatial "push in" effect rather than just flat opacity
+/* ── Tab Switching ──
+ * Exit: swift & clean (0.15s) — gets out of the way immediately
+ * Enter: slow & silky (0.45s) — glides in with airy momentum
  */
 .ew-fade-enter-active {
-  transition: opacity 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
-              transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: opacity 0.45s cubic-bezier(0.2, 0.85, 0.3, 1),
+              transform 0.45s cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 .ew-fade-leave-active {
-  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1),
-              transform 0.2s cubic-bezier(0.4, 0, 1, 1);
+  transition: opacity 0.15s cubic-bezier(0.4, 0, 1, 1),
+              transform 0.15s cubic-bezier(0.4, 0, 1, 1);
   position: absolute;
   width: 100%;
+  pointer-events: none;
 }
 
 .ew-fade-enter-from {
   opacity: 0;
-  transform: translateY(12px) scale(0.985);
+  transform: translateY(12px) scale(0.99);
 }
 .ew-fade-leave-to {
   opacity: 0;
-  transform: translateY(-8px) scale(0.99);
+  transform: translateY(-6px) scale(0.995);
 }
 
-/* ── Staggered Cascading Animations (瀑布流呼吸感) ── */
-@keyframes ew-slide-up-cascade {
+/* ── Micro-stagger Fluid Cascade (流水浮现) ──
+ * Tiny 12px rise + ultra-short 0.03s intervals = ink spreading effect
+ */
+@keyframes ew-fluid-cascade {
   0% {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(12px);
   }
   100% {
     opacity: 1;
@@ -1484,75 +1489,75 @@ onUnmounted(() => {
   }
 }
 
-/* When a tab enters, its children animate sequentially */
 .ew-fade-enter-active .ew-section-card,
 .ew-fade-enter-active .ew-field-row,
 .ew-fade-enter-active .ew-flow-card {
-  animation: ew-slide-up-cascade 0.45s cubic-bezier(0.2, 0.85, 0.3, 1) both;
+  animation: ew-fluid-cascade 0.5s cubic-bezier(0.2, 0.85, 0.3, 1) both;
 }
 
 .ew-fade-enter-active .ew-section-card:nth-child(1),
 .ew-fade-enter-active .ew-field-row:nth-child(1),
-.ew-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.04s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.03s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(2),
 .ew-fade-enter-active .ew-field-row:nth-child(2),
-.ew-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.08s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.06s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(3),
 .ew-fade-enter-active .ew-field-row:nth-child(3),
-.ew-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.12s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.09s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(4),
 .ew-fade-enter-active .ew-field-row:nth-child(4),
-.ew-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.16s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.12s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(5),
 .ew-fade-enter-active .ew-field-row:nth-child(5),
-.ew-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.2s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.15s; }
 
 .ew-fade-enter-active .ew-section-card:nth-child(n+6),
 .ew-fade-enter-active .ew-field-row:nth-child(n+6),
-.ew-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.24s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.18s; }
 
-/* ── Modal & Overall Panel Intro ── */
+/* ── Panel Intro ── */
 .ew-panel-enter-active,
 .ew-panel-leave-active {
-  transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
-              transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: opacity 0.4s cubic-bezier(0.2, 0.85, 0.3, 1),
+              transform 0.4s cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 .ew-panel-enter-from {
   opacity: 0;
-  transform: translateY(20px) scale(0.97);
+  transform: translateY(16px) scale(0.98);
 }
 .ew-panel-leave-to {
   opacity: 0;
-  transform: translateY(15px) scale(0.98);
+  transform: translateY(10px) scale(0.99);
 }
 
-/* ── Transition Group Lists (Adding/Removing/Reordering) ── */
+/* ── List Transitions (Adding/Removing/Reordering) ── */
 .ew-list-enter-active,
 .ew-list-leave-active {
-  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: all 0.45s cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 .ew-list-enter-from {
   opacity: 0;
-  transform: scale(0.92) translateY(-10px);
+  transform: scale(0.96) translateY(-6px);
 }
 .ew-list-leave-to {
   opacity: 0;
-  transform: scale(0.95) translateY(10px);
+  transform: scale(0.97) translateY(6px);
 }
 .ew-list-leave-active {
   position: absolute;
   width: 100%;
 }
 .ew-list-move {
-  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.5s cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 
 /* =====================================================================
- * BUTTONS & INTERACTIVE ELEMENTS (Micro-interactions)
+ * BUTTONS & INTERACTIVE ELEMENTS — Tactile Comfort (触觉舒适)
+ * Slow color bleeds · Gentle hover lift · Soft press-in
  * ================================================================== */
 
 .ew-icon-btn {
@@ -1567,14 +1572,14 @@ onUnmounted(() => {
   border-radius: 6px;
   color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 60%, transparent);
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: color 0.25s ease, background 0.25s ease, border-color 0.25s ease,
+              transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 
 .ew-icon-btn:hover:not(:disabled) {
   color: var(--SmartThemeBodyColor, #edf2f9);
   background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
   border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
-  transform: scale(1.08); /* Bounce scale for icons */
 }
 
 .ew-icon-btn:active:not(:disabled) {
@@ -1621,7 +1626,9 @@ onUnmounted(() => {
     color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
   border-radius: 0.6rem;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); /* Faster spring */
+  transition: color 0.25s ease, background 0.3s ease, border-color 0.3s ease,
+              transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1),
+              box-shadow 0.3s ease;
   outline: none;
   white-space: nowrap;
   backdrop-filter: blur(4px);
@@ -1631,26 +1638,26 @@ onUnmounted(() => {
 .ew-btn:hover:not(:disabled) {
   background: color-mix(
     in srgb,
-    var(--SmartThemeQuoteColor, #7f92ab) 45%,
+    var(--SmartThemeQuoteColor, #7f92ab) 42%,
     transparent
   );
   border-color: color-mix(
     in srgb,
-    var(--SmartThemeQuoteColor, #7f92ab) 50%,
+    var(--SmartThemeQuoteColor, #7f92ab) 48%,
     transparent
   );
-  transform: translateY(-1px) scale(1.02); /* Slight lift */
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .ew-btn:active:not(:disabled) {
-  transform: translateY(1px) scale(0.96); /* Springy press */
+  transform: translateY(0) scale(0.98);
   background: color-mix(
     in srgb,
-    var(--SmartThemeQuoteColor, #7f92ab) 60%,
+    var(--SmartThemeQuoteColor, #7f92ab) 55%,
     transparent
   );
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 }
 
 .ew-btn--danger {
@@ -1664,7 +1671,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--ew-danger) 80%, transparent);
   border-color: var(--ew-danger);
   color: #fff;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--ew-danger) 30%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--ew-danger) 20%, transparent);
 }
 
 .ew-flow-scope-tab {
@@ -1681,25 +1688,25 @@ onUnmounted(() => {
   border-radius: 0.45rem;
   background: transparent;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: color 0.3s ease, background 0.3s ease, border-color 0.3s ease,
+              transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1),
+              box-shadow 0.3s ease;
 }
 
 .ew-flow-scope-tab:hover:not(.ew-flow-scope-tab--active) {
   color: var(--SmartThemeBodyColor, #edf2f9);
   background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
-  transform: scale(1.02);
 }
 
 .ew-flow-scope-tab:active:not(.ew-flow-scope-tab--active) {
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 
 .ew-flow-scope-tab--active {
   color: var(--SmartThemeBodyColor, #edf2f9);
   background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
   border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 35%, transparent);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-  transform: scale(1.02); /* Pop out active tab slightly */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .ew-switch {
