@@ -52,7 +52,7 @@
         />
       </template>
 
-      <transition name="ew-tab-fade" mode="out-in">
+      <transition name="ew-tab-fade">
         <div :key="store.activeTab" class="ew-content-stack">
           <template v-if="store.activeTab === 'overview'">
             <EwSectionCard title="高频设置">
@@ -1316,6 +1316,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 1rem;
   min-width: 0; /* Prevent flex child overflow from compressing the layout */
+  position: relative; /* Anchor for absolutely positioned leaving elements */
   font-family:
     "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
 }
@@ -2574,29 +2575,37 @@ onUnmounted(() => {
    Phase 2.6: 流体空间编排 (Fluid Spatial Choreography)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Container Breathing Morph (容器呼吸形变) ── */
+/* ── Container Enter: Breathing Morph ── */
 .ew-tab-fade-enter-active {
-  animation: ew-breathe-morph 0.65s cubic-bezier(0.25, 1, 0.5, 1) both;
+  animation: ew-breathe-morph 0.9s cubic-bezier(0.25, 1, 0.5, 1) both;
 }
+
+/* ── Container Leave: absolute so it overlaps seamlessly ── */
 .ew-tab-fade-leave-active {
-  animation: ew-tab-leave 0.35s cubic-bezier(0.25, 1, 0.5, 1) both;
+  animation: ew-tab-leave 0.5s cubic-bezier(0.25, 1, 0.5, 1) both;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 0;
 }
 
 @keyframes ew-breathe-morph {
-  0% { opacity: 0; transform: scale(0.96); filter: brightness(0.95); }
+  0% { opacity: 0; transform: scale(0.96); filter: brightness(0.92); }
   100% { opacity: 1; transform: scale(1); filter: brightness(1); }
 }
 
 @keyframes ew-tab-leave {
-  from { opacity: 1; transform: translateY(0); }
-  to { opacity: 0; transform: translateY(-8px); }
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.97); }
 }
 
 /* ── Outgoing Elements: Gentle Radial Scattering ── */
 .ew-tab-fade-leave-active .ew-section-card,
 .ew-tab-fade-leave-active .ew-field-row,
 .ew-tab-fade-leave-active .ew-flow-card {
-  animation-duration: 0.35s;
+  animation-duration: 0.45s;
   animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
   animation-fill-mode: forwards;
 }
@@ -2612,10 +2621,10 @@ onUnmounted(() => {
 }
 
 @keyframes glide-out-left {
-  to { opacity: 0; transform: translate(-30px, -20px) scale(0.98); }
+  to { opacity: 0; transform: translate(-35px, -20px) scale(0.97); }
 }
 @keyframes glide-out-right {
-  to { opacity: 0; transform: translate(30px, 20px) scale(0.98); }
+  to { opacity: 0; transform: translate(35px, 20px) scale(0.97); }
 }
 
 /* ── Incoming Elements: Gentle Convergent Glide ── */
@@ -2623,7 +2632,7 @@ onUnmounted(() => {
 .ew-tab-fade-enter-active .ew-field-row,
 .ew-tab-fade-enter-active .ew-flow-card {
   opacity: 0;
-  animation-duration: 0.65s;
+  animation-duration: 0.85s;
   animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
   animation-fill-mode: both;
 }
@@ -2639,33 +2648,33 @@ onUnmounted(() => {
 }
 
 @keyframes glide-in-left {
-  0% { opacity: 0; transform: translate(-40px, 30px) scale(0.95); }
+  0% { opacity: 0; transform: translate(-45px, 35px) scale(0.94); }
   100% { opacity: 1; transform: translate(0, 0) scale(1); }
 }
 @keyframes glide-in-right {
-  0% { opacity: 0; transform: translate(40px, -30px) scale(0.95); }
+  0% { opacity: 0; transform: translate(45px, -35px) scale(0.94); }
   100% { opacity: 1; transform: translate(0, 0) scale(1); }
 }
 
-/* Micro-staggering */
+/* Wider stagger intervals for a more visible assembly effect */
 .ew-tab-fade-enter-active .ew-section-card:nth-child(1),
 .ew-tab-fade-enter-active .ew-field-row:nth-child(1),
 .ew-tab-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.0s; }
 .ew-tab-fade-enter-active .ew-section-card:nth-child(2),
 .ew-tab-fade-enter-active .ew-field-row:nth-child(2),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.04s; }
+.ew-tab-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.06s; }
 .ew-tab-fade-enter-active .ew-section-card:nth-child(3),
 .ew-tab-fade-enter-active .ew-field-row:nth-child(3),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.08s; }
+.ew-tab-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.12s; }
 .ew-tab-fade-enter-active .ew-section-card:nth-child(4),
 .ew-tab-fade-enter-active .ew-field-row:nth-child(4),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.12s; }
+.ew-tab-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.18s; }
 .ew-tab-fade-enter-active .ew-section-card:nth-child(5),
 .ew-tab-fade-enter-active .ew-field-row:nth-child(5),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.16s; }
+.ew-tab-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.24s; }
 .ew-tab-fade-enter-active .ew-section-card:nth-child(n+6),
 .ew-tab-fade-enter-active .ew-field-row:nth-child(n+6),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.20s; }
+.ew-tab-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.30s; }
 
 /* ═══════════════════════════════════════════════════════════════════
    Phase 3: 探照灯 + 流光动画
