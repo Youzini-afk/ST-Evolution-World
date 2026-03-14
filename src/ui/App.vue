@@ -55,8 +55,9 @@
       <div ref="crossfadeRef" class="ew-tab-crossfade" style="display: grid">
         <transition
           name="ew-tab-fade"
-          @leave="onTabCrossfadeLeave"
-          @after-leave="onTabCrossfadeAfterLeave"
+          @before-enter="onTabCrossfadeBeforeEnter"
+          @enter="onTabCrossfadeEnter"
+          @after-enter="onTabCrossfadeAfterEnter"
         >
           <div
             :key="store.activeTab"
@@ -1362,7 +1363,7 @@ function clearCrossfadeHeightAnimation(): void {
   }
 }
 
-function onTabCrossfadeLeave(): void {
+function onTabCrossfadeBeforeEnter(): void {
   const grid = crossfadeRef.value;
   if (!grid) {
     crossfadePrevHeight = 0;
@@ -1372,64 +1373,86 @@ function onTabCrossfadeLeave(): void {
   clearCrossfadeHeightAnimation();
   crossfadeAnimationToken += 1;
   crossfadePrevHeight = grid.getBoundingClientRect().height;
+  grid.style.transition = "none";
+  grid.style.minHeight = `${crossfadePrevHeight}px`;
   grid.style.overflow = "hidden";
 }
 
-function onTabCrossfadeAfterLeave(): void {
+function onTabCrossfadeEnter(el: Element): void {
   const grid = crossfadeRef.value;
   if (!grid) {
-    crossfadePrevHeight = 0;
     return;
   }
 
   const prevHeight = crossfadePrevHeight;
   const animationToken = crossfadeAnimationToken;
-  crossfadePrevHeight = 0;
+  const enteringEl = el as HTMLElement;
 
   if (!prevHeight) {
+    grid.style.minHeight = "";
     grid.style.overflow = "";
     return;
   }
-
-  const nextHeight = grid.getBoundingClientRect().height;
-  if (Math.abs(prevHeight - nextHeight) < 2) {
-    grid.style.overflow = "";
-    return;
-  }
-
-  grid.style.transition = "none";
-  grid.style.minHeight = `${prevHeight}px`;
-  void grid.offsetHeight;
 
   requestAnimationFrame(() => {
-    if (
-      crossfadeRef.value !== grid ||
-      animationToken !== crossfadeAnimationToken
-    ) {
+    requestAnimationFrame(() => {
+      if (
+        crossfadeRef.value !== grid ||
+        animationToken !== crossfadeAnimationToken
+      ) {
+        return;
+      }
+
+      const nextHeight = Math.max(
+        enteringEl.getBoundingClientRect().height,
+        enteringEl.scrollHeight,
+      );
+
+      if (Math.abs(prevHeight - nextHeight) < 2) {
+        grid.style.minHeight = "";
+        grid.style.transition = "";
+        grid.style.overflow = "";
+        crossfadePrevHeight = 0;
+        return;
+      }
+
+      grid.style.transition = "min-height 0.45s cubic-bezier(0.25, 1, 0.5, 1)";
+      grid.style.minHeight = `${nextHeight}px`;
+
+      const cleanup = () => {
+        grid.removeEventListener("transitionend", cleanup);
+        if (crossfadeCleanupTimer) {
+          clearTimeout(crossfadeCleanupTimer);
+          crossfadeCleanupTimer = null;
+        }
+        grid.style.minHeight = "";
+        grid.style.transition = "";
+        grid.style.overflow = "";
+        crossfadePrevHeight = 0;
+        if (crossfadeCleanup === cleanup) {
+          crossfadeCleanup = null;
+        }
+      };
+
+      crossfadeCleanup = cleanup;
+      grid.addEventListener("transitionend", cleanup, { once: true });
+      crossfadeCleanupTimer = setTimeout(cleanup, 600);
+    });
+  });
+}
+
+function onTabCrossfadeAfterEnter(): void {
+  if (!crossfadeCleanup) {
+    const grid = crossfadeRef.value;
+    if (!grid) {
+      crossfadePrevHeight = 0;
       return;
     }
-
-    grid.style.transition = "min-height 0.4s cubic-bezier(0.25, 1, 0.5, 1)";
-    grid.style.minHeight = `${nextHeight}px`;
-
-    const cleanup = () => {
-      grid.removeEventListener("transitionend", cleanup);
-      if (crossfadeCleanupTimer) {
-        clearTimeout(crossfadeCleanupTimer);
-        crossfadeCleanupTimer = null;
-      }
-      grid.style.minHeight = "";
-      grid.style.transition = "";
-      grid.style.overflow = "";
-      if (crossfadeCleanup === cleanup) {
-        crossfadeCleanup = null;
-      }
-    };
-
-    crossfadeCleanup = cleanup;
-    grid.addEventListener("transitionend", cleanup, { once: true });
-    crossfadeCleanupTimer = setTimeout(cleanup, 500);
-  });
+    grid.style.minHeight = "";
+    grid.style.transition = "";
+    grid.style.overflow = "";
+    crossfadePrevHeight = 0;
+  }
 }
 </script>
 
