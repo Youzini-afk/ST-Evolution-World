@@ -1,10 +1,23 @@
 <template>
-  <path
-    class="ew-graph-edge__path"
-    :d="pathD"
-    :style="edgeStyle"
-    @click.stop="$emit('select', edge.id)"
-  />
+  <g>
+    <!-- Invisible fat hitbox for easier clicking -->
+    <path
+      :d="pathD"
+      fill="none"
+      stroke="transparent"
+      stroke-width="14"
+      style="cursor: pointer"
+      @click.stop="$emit('select', edge.id)"
+      @contextmenu.stop.prevent="$emit('context-menu', edge.id, $event)"
+    />
+    <!-- Visible edge -->
+    <path
+      class="ew-graph-edge__path"
+      :d="pathD"
+      :style="edgeStyle"
+      pointer-events="none"
+    />
+  </g>
 </template>
 
 <script setup lang="ts">
@@ -23,6 +36,7 @@ const props = defineProps<{
 
 defineEmits<{
   (e: 'select', edgeId: string): void;
+  (e: 'context-menu', edgeId: string, event: MouseEvent): void;
 }>();
 
 const pathD = computed(() => {
@@ -31,7 +45,6 @@ const pathD = computed(() => {
   const tx = props.targetX;
   const ty = props.targetY;
 
-  // Horizontal distance for control points
   const dx = Math.abs(tx - sx);
   const cp = Math.max(80, dx * 0.4);
 
@@ -50,13 +63,7 @@ const edgeStyle = computed(() => ({
   stroke: var(--edge-color, #6366f1);
   stroke-width: 2px;
   stroke-linecap: round;
-  cursor: pointer;
   transition: stroke-width 0.15s ease;
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--edge-color, #6366f1) 40%, transparent));
-}
-
-.ew-graph-edge__path:hover {
-  stroke-width: 3px;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--edge-color, #6366f1) 60%, transparent));
 }
 </style>

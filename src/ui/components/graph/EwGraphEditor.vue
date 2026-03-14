@@ -7,6 +7,10 @@
       @pointerdown="onCanvasPointerDown"
       @wheel.prevent="onWheel"
       @dblclick="onDblClick"
+      @contextmenu.prevent="onCanvasContextMenu"
+      @touchstart.passive="onTouchStart"
+      @touchmove.prevent="onTouchMove"
+      @touchend="onTouchEnd"
     >
       <!-- Grid background -->
       <svg class="ew-graph-editor__grid" :style="gridStyle">
@@ -55,6 +59,7 @@
             :source-color="getNodeColor(edge.source)"
             :selected="selectedEdge === edge.id"
             @select="selectedEdge = $event"
+            @context-menu="onEdgeContextMenu"
           />
           <!-- In-progress drag edge -->
           <path
@@ -79,6 +84,7 @@
           @move="graph.moveNode"
           @toggle-collapse="graph.toggleCollapse(node.id)"
           @port-drag-start="onPortDragStart"
+          @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
         >
           <div class="ew-graph-node__type-label">{{ node.type }}</div>
         </EwGraphNode>
@@ -101,6 +107,19 @@
           {{ isFullscreen ? "⛶" : "⛶" }}
         </button>
       </div>
+
+      <!-- Context menu -->
+      <div
+        v-if="ctxMenu"
+        class="ew-graph-ctx"
+        :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
+      >
+        <button v-if="ctxMenu.edgeId" @click="deleteEdge(ctxMenu.edgeId)">🗑 删除连线</button>
+        <button v-if="ctxMenu.nodeId" @click="deleteNode(ctxMenu.nodeId)">🗑 删除节点</button>
+        <button @click="ctxMenu = null">✕ 取消</button>
+      </div>
+      <!-- Click-away overlay -->
+      <div v-if="ctxMenu" class="ew-graph-ctx-overlay" @pointerdown="ctxMenu = null" />
     </div>
   </Teleport>
 </template>
@@ -116,6 +135,85 @@ const canvasContainer = ref<HTMLElement>();
 const graph = createGraphState();
 const selectedEdge = ref<string | null>(null);
 const isFullscreen = ref(false);
+
+// ── Context menu ──
+const ctxMenu = ref<{ x: number; y: number; edgeId?: string; nodeId?: string } | null>(null);
+
+function onEdgeContextMenu(edgeId: string, event: MouseEvent) {
+  const rect = canvasContainer.value?.getBoundingClientRect();
+  if (!rect) return;
+  ctxMenu.value = { x: event.clientX - rect.left, y: event.clientY - rect.top, edgeId };
+}
+
+function onNodeContextMenu(nodeId: string, event: MouseEvent) {
+  const rect = canvasContainer.value?.getBoundingClientRect();
+  if (!rect) return;
+  ctxMenu.value = { x: event.clientX - rect.left, y: event.clientY - rect.top, nodeId };
+}
+
+function onCanvasContextMenu(event: MouseEvent) {
+  // Only show if we right-clicked on the blank canvas itself
+  ctxMenu.value = null;
+}
+
+function deleteEdge(edgeId: string) {
+  graph.removeEdge(edgeId);
+  selectedEdge.value = null;
+  ctxMenu.value = null;
+}
+
+function deleteNode(nodeId: string) {
+  graph.removeNode(nodeId);
+  ctxMenu.value = null;
+}
+
+// ── Touch (mobile) ──
+let touchPanState: { startX: number; startY: number; vpX: number; vpY: number } | null = null;
+let pinchState: { dist: number; zoom: number } | null = null;
+
+function getTouchDist(t1: Touch, t2: Touch): number {
+  const dx = t1.clientX - t2.clientX;
+  const dy = t1.clientY - t2.clientY;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function onTouchStart(e: TouchEvent) {
+  ctxMenu.value = null;
+  if (e.touches.length === 1) {
+    // Single touch = pan
+    touchPanState = {
+      startX: e.touches[0].clientX,
+      startY: e.touches[0].clientY,
+      vpX: graph.state.viewport.x,
+      vpY: graph.state.viewport.y,
+    };
+    pinchState = null;
+  } else if (e.touches.length === 2) {
+    // Two touch = pinch zoom
+    touchPanState = null;
+    pinchState = {
+      dist: getTouchDist(e.touches[0], e.touches[1]),
+      zoom: graph.state.viewport.zoom,
+    };
+  }
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (e.touches.length === 1 && touchPanState) {
+    const dx = e.touches[0].clientX - touchPanState.startX;
+    const dy = e.touches[0].clientY - touchPanState.startY;
+    graph.panTo(touchPanState.vpX + dx, touchPanState.vpY + dy);
+  } else if (e.touches.length === 2 && pinchState) {
+    const newDist = getTouchDist(e.touches[0], e.touches[1]);
+    const scale = newDist / pinchState.dist;
+    graph.zoomTo(pinchState.zoom * scale);
+  }
+}
+
+function onTouchEnd() {
+  touchPanState = null;
+  pinchState = null;
+}
 const nodeRefs = new Map<string, any>();
 let fitViewRaf: number | null = null;
 let containerResizeObserver: ResizeObserver | null = null;
@@ -547,5 +645,48 @@ onUnmounted(() => {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.35);
   font-family: monospace;
+}
+
+/* ── Context menu ── */
+.ew-graph-ctx {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  background: rgba(20, 20, 35, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  z-index: 100;
+  animation: ew-ctx-in 0.12s ease-out;
+}
+
+@keyframes ew-ctx-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.ew-graph-ctx button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.ew-graph-ctx button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ew-graph-ctx-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 99;
 }
 </style>
