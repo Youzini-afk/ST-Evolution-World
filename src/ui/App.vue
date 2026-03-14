@@ -1423,22 +1423,31 @@ onUnmounted(() => {
   border-color: rgba(239, 68, 68, 0.35);
 }
 
-.ew-status-pill[data-tone="muted"] {
-  color: color-mix(
-    in srgb,
-    var(--SmartThemeBodyColor, #edf2f9) 70%,
-    transparent
-  );
-  background: color-mix(
-    in srgb,
-    var(--SmartThemeQuoteColor, #7f92ab) 14%,
-    transparent
-  );
-  border-color: color-mix(
-    in srgb,
-    var(--SmartThemeQuoteColor, #7f92ab) 26%,
-    transparent
-  );
+.ew-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 60%, transparent);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ew-icon-btn:hover:not(:disabled) {
+  color: var(--SmartThemeBodyColor, #edf2f9);
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
+  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
+  transform: scale(1.08); /* Bounce scale for icons */
+}
+
+.ew-icon-btn:active:not(:disabled) {
+  transform: scale(0.92);
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 25%, transparent);
 }
 
 .ew-flow-list,
@@ -1463,35 +1472,53 @@ onUnmounted(() => {
 }
 
 .ew-btn {
-  border-radius: 0.75rem;
-  border: 1px solid
-    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 45%, transparent);
-  background: color-mix(
-    in srgb,
-    var(--SmartThemeQuoteColor, #7f92ab) 20%,
-    transparent
-  );
-  color: var(--SmartThemeBodyColor, #edf2f9);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.8rem;
   font-size: 0.8rem;
   font-weight: 600;
-  padding: 0.4rem 0.85rem;
+  color: var(--SmartThemeBodyColor, #edf2f9);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 30%,
+    transparent
+  );
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
+  border-radius: 0.6rem;
   cursor: pointer;
-  transition:
-    background 0.2s ease,
-    border-color 0.2s ease,
-    color 0.2s ease,
-    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1); /* Faster spring */
+  outline: none;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
-.ew-btn:hover,
-.ew-btn:focus-visible {
-  border-color: var(--ew-accent);
-  background: color-mix(in srgb, var(--ew-accent) 25%, transparent);
-  color: #fff;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px var(--ew-accent-glow);
-  outline: none;
+.ew-btn:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 45%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 50%,
+    transparent
+  );
+  transform: translateY(-1px) scale(1.02); /* Slight lift */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.ew-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.96); /* Springy press */
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 60%,
+    transparent
+  );
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .ew-btn--danger {
@@ -1508,8 +1535,39 @@ onUnmounted(() => {
   box-shadow: 0 4px 12px color-mix(in srgb, var(--ew-danger) 30%, transparent);
 }
 
-.ew-hidden-file-input {
-  display: none;
+.ew-flow-scope-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 65%, transparent);
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ew-flow-scope-tab:hover:not(.ew-flow-scope-tab--active) {
+  color: var(--SmartThemeBodyColor, #edf2f9);
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
+  transform: scale(1.02);
+}
+
+.ew-flow-scope-tab:active:not(.ew-flow-scope-tab--active) {
+  transform: scale(0.96);
+}
+
+.ew-flow-scope-tab--active {
+  color: var(--SmartThemeBodyColor, #edf2f9);
+  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
+  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 35%, transparent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transform: scale(1.02); /* Pop out active tab slightly */
 }
 
 .ew-switch {
