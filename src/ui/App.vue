@@ -661,9 +661,7 @@
             </template>
 
             <template v-else-if="store.activeTab === 'graph'">
-              <EwSectionCard title="图编辑器">
-                <p style="opacity: 0.5; padding: 12px">图编辑器开发中…</p>
-              </EwSectionCard>
+              <EwGraphEditor />
             </template>
 
             <template v-else-if="store.activeTab === 'history'">
@@ -789,7 +787,7 @@ import EwHistoryPanel from "./components/EwHistoryPanel.vue";
 import EwPanelShell from "./components/EwPanelShell.vue";
 import EwSectionCard from "./components/EwSectionCard.vue";
 import { getFieldHelp, PANEL_TABS } from "./help-meta";
-// Graph editor deferred — will be custom-built later
+import EwGraphEditor from "./components/graph/EwGraphEditor.vue";
 import { replaceWorldbook } from "../runtime/compat/worldbook";
 import { showEwNotice } from "./notice";
 import { useEwStore } from "./store";
