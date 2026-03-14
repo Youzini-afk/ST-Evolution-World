@@ -1192,31 +1192,36 @@ function openImportFilePicker() {
 let _lockedHeight = 0;
 
 function onTabBeforeLeave(el: Element) {
-  const parent = el.parentElement;
-  if (parent) {
-    _lockedHeight = parent.offsetHeight;
-    parent.style.minHeight = _lockedHeight + 'px';
-    parent.style.overflow = 'hidden';
-  }
+  const parent = el.parentElement as HTMLElement | null;
+  if (!parent) return;
+  // Capture current rendered height and lock it
+  _lockedHeight = parent.getBoundingClientRect().height;
+  parent.style.flex = 'none';
+  parent.style.height = _lockedHeight + 'px';
+  parent.style.overflow = 'hidden';
 }
 
 function onTabEnter(el: Element) {
-  const parent = el.parentElement;
-  if (parent) {
-    // Wait one frame for the new content to render and get its real height
+  const parent = el.parentElement as HTMLElement | null;
+  if (!parent) return;
+  // Double-rAF: first frame lets Vue insert DOM, second frame gets real layout
+  requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      const newHeight = el.scrollHeight;
-      parent.style.minHeight = newHeight + 'px';
+      // Measure the new content's full height
+      const newHeight = (el as HTMLElement).offsetHeight;
+      // Animate from locked height to new height
+      parent.style.height = newHeight + 'px';
     });
-  }
+  });
 }
 
 function onTabAfterEnter(el: Element) {
-  const parent = el.parentElement;
-  if (parent) {
-    parent.style.minHeight = '';
-    parent.style.overflow = '';
-  }
+  const parent = el.parentElement as HTMLElement | null;
+  if (!parent) return;
+  // Release all locks — let flex layout take over again
+  parent.style.flex = '';
+  parent.style.height = '';
+  parent.style.overflow = '';
 }
 
 async function onImportFileChange(event: Event) {
