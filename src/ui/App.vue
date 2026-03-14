@@ -52,9 +52,9 @@
         />
       </template>
 
-      <div class="ew-tab-crossfade">
+      <div class="ew-tab-crossfade" style="display:grid">
         <transition name="ew-tab-fade">
-          <div :key="store.activeTab" class="ew-content-stack">
+          <div :key="store.activeTab" class="ew-content-stack" style="grid-area:1/1">
           <template v-if="store.activeTab === 'overview'">
             <EwSectionCard title="高频设置">
               <div class="ew-grid two">
@@ -1279,13 +1279,8 @@ onUnmounted(() => {
 .ew-tab-crossfade {
   display: grid;
 }
-.ew-tab-crossfade :deep(.ew-tab-fade-enter-active),
-.ew-tab-crossfade :deep(.ew-tab-fade-leave-active) {
+.ew-tab-crossfade :deep(.ew-content-stack) {
   grid-area: 1 / 1;
-}
-.ew-tab-crossfade :deep(.ew-tab-fade-leave-active) {
-  pointer-events: none;
-  overflow: hidden;
 }
 
 /* ── Panel Open / Close Transition ── */
