@@ -52,8 +52,9 @@
         />
       </template>
 
-      <transition name="ew-tab-fade" mode="out-in">
-        <div :key="store.activeTab" class="ew-content-stack">
+      <div class="ew-tab-crossfade">
+        <transition name="ew-tab-fade">
+          <div :key="store.activeTab" class="ew-content-stack">
           <template v-if="store.activeTab === 'overview'">
             <EwSectionCard title="高频设置">
               <div class="ew-grid two">
@@ -635,8 +636,9 @@
           <template v-else>
             <EwDebugPanel />
           </template>
-        </div>
-      </transition>
+          </div>
+        </transition>
+      </div>
     </EwPanelShell>
   </transition>
 
@@ -2572,77 +2574,96 @@ onUnmounted(() => {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   Phase 2.6: 流体空间编排 (Fluid Spatial Choreography)
+   Phase 2.6: CSS Grid Cross-Fade (Grid 叠层交叉淡入)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Container Enter: Breathing Morph ── */
-.ew-tab-fade-enter-active {
-  animation: ew-breathe-morph 0.9s cubic-bezier(0.25, 1, 0.5, 1) both;
+/* Grid 容器：让新旧内容叠加在同一格 */
+.ew-tab-crossfade {
+  display: grid;
 }
 
-/* ── Container Leave: ultra-fast clean exit ── */
+/* 进/退场元素都占据 grid 的 1/1 格 → 叠加 */
+.ew-tab-fade-enter-active,
 .ew-tab-fade-leave-active {
-  animation: ew-tab-leave 0.12s cubic-bezier(0.4, 0, 1, 1) both;
+  grid-area: 1 / 1;
 }
 
-@keyframes ew-breathe-morph {
-  0% { opacity: 0; transform: scale(0.96); filter: brightness(0.92); }
-  100% { opacity: 1; transform: scale(1); filter: brightness(1); }
+/* ── 退场：柔和散去 ── */
+.ew-tab-fade-leave-active {
+  animation: ew-crossfade-out 0.45s cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
+  overflow: hidden;
 }
 
-@keyframes ew-tab-leave {
-  from { opacity: 1; }
-  to { opacity: 0; }
+/* ── 入场：呼吸聚拢 ── */
+.ew-tab-fade-enter-active {
+  animation: ew-crossfade-in 0.7s cubic-bezier(0.25, 1, 0.5, 1) both;
 }
 
-/* ── Incoming Elements: Gentle Convergent Glide ── */
+@keyframes ew-crossfade-out {
+  0%   { opacity: 1; transform: scale(1); filter: none; }
+  100% { opacity: 0; transform: scale(0.97); filter: blur(4px); }
+}
+
+@keyframes ew-crossfade-in {
+  0%   { opacity: 0; transform: scale(0.97); filter: blur(4px) brightness(0.92); }
+  100% { opacity: 1; transform: scale(1); filter: none; }
+}
+
+/* ── 子元素汇聚滑入（仅入场） ── */
 .ew-tab-fade-enter-active .ew-section-card,
 .ew-tab-fade-enter-active .ew-field-row,
 .ew-tab-fade-enter-active .ew-flow-card {
   opacity: 0;
-  animation-duration: 0.85s;
+  animation-duration: 0.7s;
   animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
   animation-fill-mode: both;
 }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(odd),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(odd),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(odd) {
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(odd) {
   animation-name: glide-in-left;
 }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(even),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(even),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(even) {
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(even) {
   animation-name: glide-in-right;
 }
 
 @keyframes glide-in-left {
-  0% { opacity: 0; transform: translate(-45px, 35px) scale(0.94); }
-  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+  0%   { opacity: 0; transform: translate(-40px, 25px) scale(0.95); }
+  100% { opacity: 1; transform: none; }
 }
 @keyframes glide-in-right {
-  0% { opacity: 0; transform: translate(45px, -35px) scale(0.94); }
-  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+  0%   { opacity: 0; transform: translate(40px, -25px) scale(0.95); }
+  100% { opacity: 1; transform: none; }
 }
 
-/* Wider stagger intervals for a more visible assembly effect */
-.ew-tab-fade-enter-active .ew-section-card:nth-child(1),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(1),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.0s; }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(2),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(2),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.06s; }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(3),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(3),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.12s; }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(4),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(4),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.18s; }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(5),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(5),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.24s; }
-.ew-tab-fade-enter-active .ew-section-card:nth-child(n+6),
-.ew-tab-fade-enter-active .ew-field-row:nth-child(n+6),
-.ew-tab-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.30s; }
+/* 级联延迟 */
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(1) { animation-delay: 0s; }
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(2) { animation-delay: 0.05s; }
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(3) { animation-delay: 0.1s; }
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(4) { animation-delay: 0.15s; }
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(5) { animation-delay: 0.2s; }
+.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(n+6) { animation-delay: 0.25s; }
+
+/* ── 退场子元素散去 ── */
+.ew-tab-fade-leave-active .ew-section-card,
+.ew-tab-fade-leave-active .ew-field-row,
+.ew-tab-fade-leave-active .ew-flow-card {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  animation-fill-mode: forwards;
+}
+.ew-tab-fade-leave-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(odd) {
+  animation-name: glide-out-left;
+}
+.ew-tab-fade-leave-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(even) {
+  animation-name: glide-out-right;
+}
+
+@keyframes glide-out-left {
+  to { opacity: 0; transform: translate(-30px, -15px) scale(0.97); }
+}
+@keyframes glide-out-right {
+  to { opacity: 0; transform: translate(30px, 15px) scale(0.97); }
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Phase 3: 探照灯 + 流光动画
