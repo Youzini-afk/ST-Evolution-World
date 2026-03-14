@@ -52,7 +52,13 @@
         />
       </template>
 
-      <transition name="ew-tab-fade" mode="out-in">
+      <transition
+        name="ew-tab-fade"
+        mode="out-in"
+        @before-leave="onTabBeforeLeave"
+        @enter="onTabEnter"
+        @after-enter="onTabAfterEnter"
+      >
         <div :key="store.activeTab" class="ew-content-stack">
           <template v-if="store.activeTab === 'overview'">
             <EwSectionCard title="高频设置">
@@ -1180,6 +1186,37 @@ function onUnhideAll() {
 
 function openImportFilePicker() {
   importFileInputRef.value?.click();
+}
+
+/* ── Tab transition height-locking hooks ── */
+let _lockedHeight = 0;
+
+function onTabBeforeLeave(el: Element) {
+  const parent = el.parentElement;
+  if (parent) {
+    _lockedHeight = parent.offsetHeight;
+    parent.style.minHeight = _lockedHeight + 'px';
+    parent.style.overflow = 'hidden';
+  }
+}
+
+function onTabEnter(el: Element) {
+  const parent = el.parentElement;
+  if (parent) {
+    // Wait one frame for the new content to render and get its real height
+    requestAnimationFrame(() => {
+      const newHeight = el.scrollHeight;
+      parent.style.minHeight = newHeight + 'px';
+    });
+  }
+}
+
+function onTabAfterEnter(el: Element) {
+  const parent = el.parentElement;
+  if (parent) {
+    parent.style.minHeight = '';
+    parent.style.overflow = '';
+  }
 }
 
 async function onImportFileChange(event: Event) {

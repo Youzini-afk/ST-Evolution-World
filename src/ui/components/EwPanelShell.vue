@@ -247,6 +247,7 @@ function onPanelDragStart(event: DragEvent) {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 1.1rem 1.25rem 1.25rem;
+  transition: min-height 0.6s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .ew-panel__body::-webkit-scrollbar {
