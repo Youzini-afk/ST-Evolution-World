@@ -1,4 +1,5 @@
 <template>
+  <Teleport to="body" :disabled="!isFullscreen">
   <div
     class="ew-graph-editor"
     :class="{ 'is-fullscreen': isFullscreen }"
@@ -86,6 +87,7 @@
       <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">{{ isFullscreen ? '⛶' : '⛶' }}</button>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
