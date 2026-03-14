@@ -252,8 +252,26 @@ function onDrop(e: DragEvent) {
       graph.addNode(nodeType, worldX, worldY);
     }
   } else if (kind === 'flow') {
-    // Drop a flow: create its entry node at the drop point
-    graph.addNode('flow_entry', worldX, worldY, { _flowId: payload });
+    // Drop a flow: create the full chain of 7 nodes + 6 edges
+    const CHAIN: NodeType[] = [
+      'flow_entry', 'generation_params', 'behavior_params',
+      'prompt_ordering', 'context_rules', 'request_builder', 'response_processor',
+    ];
+    const H_SPACING = 300;
+    const V_STAGGER = 30;
+    const nodes: ReturnType<typeof graph.addNode>[] = [];
+
+    for (let i = 0; i < CHAIN.length; i++) {
+      const data = i === 0 ? { _flowId: payload } : {};
+      const nx = worldX + i * H_SPACING;
+      const ny = worldY + (i % 2 === 0 ? 0 : V_STAGGER);
+      nodes.push(graph.addNode(CHAIN[i], nx, ny, data));
+    }
+
+    // Connect consecutive nodes: out → in
+    for (let i = 0; i < nodes.length - 1; i++) {
+      graph.addEdge(nodes[i].id, 'out', nodes[i + 1].id, 'in');
+    }
   }
 }
 const nodeRefs = new Map<string, any>();
