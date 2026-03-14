@@ -298,6 +298,10 @@ function onFullscreenKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && isFullscreen.value) {
     isFullscreen.value = false;
   }
+  if ((event.key === "Delete" || event.key === "Backspace") && selectedEdge.value) {
+    graph.removeEdge(selectedEdge.value);
+    selectedEdge.value = null;
+  }
 }
 
 // ── Port drag (edge creation) ──
