@@ -52,590 +52,626 @@
         />
       </template>
 
-      <div class="ew-tab-crossfade" style="display:grid">
-        <transition name="ew-tab-fade">
-          <div :key="store.activeTab" class="ew-content-stack" style="grid-area:1/1">
-          <template v-if="store.activeTab === 'overview'">
-            <EwSectionCard title="高频设置">
-              <div class="ew-grid two">
-                <EwFieldRow label="总开关" :help="help('enabled')">
-                  <div class="ew-inline-actions">
+      <div ref="crossfadeRef" class="ew-tab-crossfade" style="display: grid">
+        <transition
+          name="ew-tab-fade"
+          @leave="onTabCrossfadeLeave"
+          @after-leave="onTabCrossfadeAfterLeave"
+        >
+          <div
+            :key="store.activeTab"
+            class="ew-content-stack"
+            style="grid-area: 1/1"
+          >
+            <template v-if="store.activeTab === 'overview'">
+              <EwSectionCard title="高频设置">
+                <div class="ew-grid two">
+                  <EwFieldRow label="总开关" :help="help('enabled')">
+                    <div class="ew-inline-actions">
+                      <button
+                        type="button"
+                        class="ew-switch"
+                        role="switch"
+                        :aria-checked="
+                          store.settings.enabled ? 'true' : 'false'
+                        "
+                        @click="
+                          store.settings.enabled = !store.settings.enabled
+                        "
+                      >
+                        <span
+                          class="ew-switch__track"
+                          :data-enabled="store.settings.enabled ? '1' : '0'"
+                        >
+                          <span class="ew-switch__thumb" />
+                        </span>
+                        <span class="ew-switch__text">{{
+                          store.settings.enabled ? "已开启" : "已关闭"
+                        }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="ew-btn ew-btn--sm"
+                        :disabled="!canRerollCurrentFloor"
+                        :title="rerollButtonTitle"
+                        @click="onRerollCurrentFloor"
+                      >
+                        重roll当前楼
+                      </button>
+                    </div>
+                  </EwFieldRow>
+
+                  <EwFieldRow label="调度模式" :help="help('dispatch_mode')">
+                    <select v-model="store.settings.dispatch_mode">
+                      <option value="parallel">并行</option>
+                      <option value="serial">串行</option>
+                    </select>
+                  </EwFieldRow>
+                  <EwFieldRow
+                    label="总超时(ms)"
+                    :help="help('total_timeout_ms')"
+                  >
+                    <input
+                      v-model.number="store.settings.total_timeout_ms"
+                      type="number"
+                      min="1000"
+                      step="500"
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow label="门控时效(ms)" :help="help('gate_ttl_ms')">
+                    <input
+                      v-model.number="store.settings.gate_ttl_ms"
+                      type="number"
+                      min="1000"
+                      step="500"
+                    />
+                  </EwFieldRow>
+                </div>
+              </EwSectionCard>
+
+              <EwSectionCard
+                title="运行摘要"
+                subtitle="当前配置规模和关键参数一览。"
+              >
+                <div class="ew-summary-grid">
+                  <article class="ew-summary-card">
+                    <h4>工作流数量</h4>
+                    <strong>{{ store.settings.flows.length }}</strong>
+                    <small>总工作流</small>
+                  </article>
+                  <article class="ew-summary-card">
+                    <h4>已启用</h4>
+                    <strong>{{ enabledFlowCount }}</strong>
+                    <small>活跃工作流</small>
+                  </article>
+                  <article class="ew-summary-card">
+                    <h4>API预设</h4>
+                    <strong>{{ store.settings.api_presets.length }}</strong>
+                    <small>接口配置</small>
+                  </article>
+                  <article class="ew-summary-card ew-summary-card--env">
+                    <h4>环境检查</h4>
+                    <strong>{{ environmentStatus.overallLabel }}</strong>
+                    <div class="ew-summary-badges">
+                      <span
+                        class="ew-status-pill"
+                        :data-tone="environmentStatus.promptTemplateTone"
+                      >
+                        模板 {{ environmentStatus.promptTemplateLabel }}
+                      </span>
+                      <span
+                        class="ew-status-pill"
+                        :data-tone="environmentStatus.ewEjsTone"
+                      >
+                        EW EJS {{ environmentStatus.ewEjsLabel }}
+                      </span>
+                    </div>
+                    <small>{{ environmentStatus.overallDetail }}</small>
+                  </article>
+                </div>
+              </EwSectionCard>
+            </template>
+
+            <template v-else-if="store.activeTab === 'api'">
+              <EwSectionCard
+                title="API配置"
+                subtitle="统一管理外部接口预设，供工作流复用。"
+              >
+                <template #actions>
+                  <button
+                    type="button"
+                    class="ew-btn"
+                    @click="store.addApiPreset"
+                  >
+                    新增API配置
+                  </button>
+                </template>
+
+                <transition-group name="ew-list" tag="div" class="ew-api-list">
+                  <EwApiPresetCard
+                    v-for="(preset, index) in store.settings.api_presets"
+                    :key="preset.id"
+                    v-memo="[
+                      preset,
+                      store.expandedApiPresetId === preset.id,
+                      bindCountByPresetId[preset.id] ?? 0,
+                    ]"
+                    :index="index"
+                    :model-value="preset"
+                    :expanded="store.expandedApiPresetId === preset.id"
+                    :bind-count="bindCountByPresetId[preset.id] ?? 0"
+                    @toggle-expand="store.toggleApiPresetExpanded(preset.id)"
+                    @duplicate="store.duplicateApiPreset(preset.id)"
+                    @remove="store.removeApiPreset(preset.id)"
+                    @update:model-value="
+                      (value) => updateApiPreset(index, value)
+                    "
+                  />
+                </transition-group>
+              </EwSectionCard>
+            </template>
+
+            <template v-else-if="store.activeTab === 'global'">
+              <EwSectionCard
+                title="基础配置"
+                subtitle="世界书命名与楼层绑定控制。"
+              >
+                <div class="ew-grid two">
+                  <EwFieldRow
+                    label="动态条目前缀"
+                    :help="help('dynamic_entry_prefix')"
+                  >
+                    <input
+                      v-model="store.settings.dynamic_entry_prefix"
+                      type="text"
+                      :placeholder="help('dynamic_entry_prefix')?.placeholder"
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow
+                    label="控制器条目前缀"
+                    :help="help('controller_entry_prefix')"
+                  >
+                    <input
+                      v-model="store.settings.controller_entry_prefix"
+                      type="text"
+                      :placeholder="
+                        help('controller_entry_prefix')?.placeholder
+                      "
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow
+                    label="楼层绑定"
+                    :help="help('floor_binding_enabled')"
+                  >
                     <button
                       type="button"
                       class="ew-switch"
                       role="switch"
-                      :aria-checked="store.settings.enabled ? 'true' : 'false'"
-                      @click="store.settings.enabled = !store.settings.enabled"
+                      :aria-checked="
+                        store.settings.floor_binding_enabled ? 'true' : 'false'
+                      "
+                      @click="
+                        store.settings.floor_binding_enabled =
+                          !store.settings.floor_binding_enabled
+                      "
                     >
                       <span
                         class="ew-switch__track"
-                        :data-enabled="store.settings.enabled ? '1' : '0'"
+                        :data-enabled="
+                          store.settings.floor_binding_enabled ? '1' : '0'
+                        "
                       >
                         <span class="ew-switch__thumb" />
                       </span>
                       <span class="ew-switch__text">{{
-                        store.settings.enabled ? "已开启" : "已关闭"
+                        store.settings.floor_binding_enabled
+                          ? "已开启"
+                          : "已关闭"
                       }}</span>
                     </button>
+                  </EwFieldRow>
+                  <EwFieldRow
+                    label="自动清理孤儿条目"
+                    :help="help('auto_cleanup_orphans')"
+                  >
                     <button
                       type="button"
-                      class="ew-btn ew-btn--sm"
-                      :disabled="!canRerollCurrentFloor"
-                      :title="rerollButtonTitle"
-                      @click="onRerollCurrentFloor"
+                      class="ew-switch"
+                      role="switch"
+                      :aria-checked="
+                        store.settings.auto_cleanup_orphans ? 'true' : 'false'
+                      "
+                      @click="
+                        store.settings.auto_cleanup_orphans =
+                          !store.settings.auto_cleanup_orphans
+                      "
                     >
-                      重roll当前楼
+                      <span
+                        class="ew-switch__track"
+                        :data-enabled="
+                          store.settings.auto_cleanup_orphans ? '1' : '0'
+                        "
+                      >
+                        <span class="ew-switch__thumb" />
+                      </span>
+                      <span class="ew-switch__text">{{
+                        store.settings.auto_cleanup_orphans
+                          ? "已开启"
+                          : "已关闭"
+                      }}</span>
                     </button>
-                  </div>
-                </EwFieldRow>
+                  </EwFieldRow>
+                </div>
+              </EwSectionCard>
 
-                <EwFieldRow label="调度模式" :help="help('dispatch_mode')">
-                  <select v-model="store.settings.dispatch_mode">
-                    <option value="parallel">并行</option>
-                    <option value="serial">串行</option>
-                  </select>
-                </EwFieldRow>
-                <EwFieldRow label="总超时(ms)" :help="help('total_timeout_ms')">
-                  <input
-                    v-model.number="store.settings.total_timeout_ms"
-                    type="number"
-                    min="1000"
-                    step="500"
-                  />
-                </EwFieldRow>
-                <EwFieldRow label="门控时效(ms)" :help="help('gate_ttl_ms')">
-                  <input
-                    v-model.number="store.settings.gate_ttl_ms"
-                    type="number"
-                    min="1000"
-                    step="500"
-                  />
-                </EwFieldRow>
-              </div>
-            </EwSectionCard>
-
-            <EwSectionCard
-              title="运行摘要"
-              subtitle="当前配置规模和关键参数一览。"
-            >
-              <div class="ew-summary-grid">
-                <article class="ew-summary-card">
-                  <h4>工作流数量</h4>
-                  <strong>{{ store.settings.flows.length }}</strong>
-                  <small>总工作流</small>
-                </article>
-                <article class="ew-summary-card">
-                  <h4>已启用</h4>
-                  <strong>{{ enabledFlowCount }}</strong>
-                  <small>活跃工作流</small>
-                </article>
-                <article class="ew-summary-card">
-                  <h4>API预设</h4>
-                  <strong>{{ store.settings.api_presets.length }}</strong>
-                  <small>接口配置</small>
-                </article>
-                <article class="ew-summary-card ew-summary-card--env">
-                  <h4>环境检查</h4>
-                  <strong>{{ environmentStatus.overallLabel }}</strong>
-                  <div class="ew-summary-badges">
-                    <span
-                      class="ew-status-pill"
-                      :data-tone="environmentStatus.promptTemplateTone"
+              <EwSectionCard
+                v-model="store.globalAdvancedOpen"
+                title="高级配置"
+                subtitle=""
+                collapsible
+              >
+                <div class="ew-grid two">
+                  <EwFieldRow label="执行时机" :help="help('workflow_timing')">
+                    <select v-model="store.settings.workflow_timing">
+                      <option value="after_reply">回复后更新（默认）</option>
+                      <option value="before_reply">回复前拦截</option>
+                    </select>
+                  </EwFieldRow>
+                  <EwFieldRow label="失败策略" :help="help('failure_policy')">
+                    <select v-model="store.settings.failure_policy">
+                      <option value="stop_generation">失败即中止发送</option>
+                      <option value="continue_generation">静默继续生成</option>
+                      <option value="retry_once">失败重试一次</option>
+                      <option value="notify_only">仅通知（不中止）</option>
+                    </select>
+                  </EwFieldRow>
+                  <EwFieldRow label="重roll范围" :help="help('reroll_scope')">
+                    <select v-model="store.settings.reroll_scope">
+                      <option value="all">全部工作流</option>
+                      <option value="failed_only">仅失败工作流</option>
+                    </select>
+                  </EwFieldRow>
+                  <EwFieldRow
+                    label="原消息放行策略"
+                    :help="help('intercept_release_policy')"
+                  >
+                    <select v-model="store.settings.intercept_release_policy">
+                      <option value="success_only">
+                        仅工作流成功时发送原消息
+                      </option>
+                      <option value="always">无论成功失败都发送原消息</option>
+                      <option value="never">永不自动发送原消息</option>
+                    </select>
+                  </EwFieldRow>
+                  <EwFieldRow
+                    label="快照存储方式"
+                    :help="help('snapshot_storage')"
+                  >
+                    <div style="display: flex; gap: 8px; align-items: center">
+                      <select
+                        v-model="store.settings.snapshot_storage"
+                        style="flex: 1"
+                      >
+                        <option value="message_data">消息数据（默认）</option>
+                        <option value="file">服务器文件</option>
+                      </select>
+                      <button
+                        type="button"
+                        class="ew-btn ew-btn--sm"
+                        :disabled="migratingSnapshots"
+                        @click="onMigrateSnapshots"
+                      >
+                        {{ migratingSnapshots ? "同步中…" : "同步快照" }}
+                      </button>
+                    </div>
+                  </EwFieldRow>
+                  <EwFieldRow label="悬浮球">
+                    <label
+                      style="
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        cursor: pointer;
+                      "
                     >
-                      模板 {{ environmentStatus.promptTemplateLabel }}
-                    </span>
-                    <span
-                      class="ew-status-pill"
-                      :data-tone="environmentStatus.ewEjsTone"
-                    >
-                      EW EJS {{ environmentStatus.ewEjsLabel }}
-                    </span>
-                  </div>
-                  <small>{{ environmentStatus.overallDetail }}</small>
-                </article>
-              </div>
-            </EwSectionCard>
-          </template>
+                      <input
+                        v-model="store.settings.show_fab"
+                        type="checkbox"
+                        @change="emitFabChanged"
+                      />
+                      显示悬浮球入口
+                    </label>
+                  </EwFieldRow>
+                </div>
+              </EwSectionCard>
 
-          <template v-else-if="store.activeTab === 'api'">
-            <EwSectionCard
-              title="API配置"
-              subtitle="统一管理外部接口预设，供工作流复用。"
-            >
-              <template #actions>
+              <EwSectionCard
+                title="隐藏设置"
+                subtitle="批量隐藏旧楼层（节省 tokens）或限制界面渲染数量（提升流畅度）。"
+              >
+                <div class="ew-grid two">
+                  <EwFieldRow label="隐藏楼层">
+                    <button
+                      type="button"
+                      class="ew-switch"
+                      role="switch"
+                      :aria-checked="
+                        store.settings.hide_settings.enabled ? 'true' : 'false'
+                      "
+                      @click="
+                        store.settings.hide_settings.enabled =
+                          !store.settings.hide_settings.enabled
+                      "
+                    >
+                      <span
+                        class="ew-switch__track"
+                        :data-enabled="
+                          store.settings.hide_settings.enabled ? '1' : '0'
+                        "
+                      >
+                        <span class="ew-switch__thumb" />
+                      </span>
+                      <span class="ew-switch__text">{{
+                        store.settings.hide_settings.enabled
+                          ? "已开启"
+                          : "已关闭"
+                      }}</span>
+                    </button>
+                  </EwFieldRow>
+                  <EwFieldRow label="保留最新 N 条">
+                    <input
+                      v-model.number="store.settings.hide_settings.hide_last_n"
+                      type="number"
+                      min="0"
+                      step="1"
+                      placeholder="0 表示不隐藏"
+                      :disabled="!store.settings.hide_settings.enabled"
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow label="限制楼层渲染">
+                    <button
+                      type="button"
+                      class="ew-switch"
+                      role="switch"
+                      :aria-checked="
+                        store.settings.hide_settings.limiter_enabled
+                          ? 'true'
+                          : 'false'
+                      "
+                      @click="
+                        store.settings.hide_settings.limiter_enabled =
+                          !store.settings.hide_settings.limiter_enabled
+                      "
+                    >
+                      <span
+                        class="ew-switch__track"
+                        :data-enabled="
+                          store.settings.hide_settings.limiter_enabled
+                            ? '1'
+                            : '0'
+                        "
+                      >
+                        <span class="ew-switch__thumb" />
+                      </span>
+                      <span class="ew-switch__text">{{
+                        store.settings.hide_settings.limiter_enabled
+                          ? "已开启"
+                          : "已关闭"
+                      }}</span>
+                    </button>
+                  </EwFieldRow>
+                  <EwFieldRow label="仅渲染最新 M 条">
+                    <input
+                      v-model.number="
+                        store.settings.hide_settings.limiter_count
+                      "
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="例如 20"
+                      :disabled="!store.settings.hide_settings.limiter_enabled"
+                    />
+                  </EwFieldRow>
+                </div>
+                <div class="ew-actions-wrap" style="margin-top: 0.75rem">
+                  <button type="button" class="ew-btn" @click="onApplyHide">
+                    立即应用隐藏
+                  </button>
+                  <button
+                    type="button"
+                    class="ew-btn ew-btn--danger"
+                    @click="onUnhideAll"
+                  >
+                    取消全部隐藏
+                  </button>
+                </div>
+              </EwSectionCard>
+            </template>
+
+            <template v-else-if="store.activeTab === 'flows'">
+              <!-- ── 作用域切换标签 ── -->
+              <div class="ew-flow-scope-tabs">
                 <button
                   type="button"
-                  class="ew-btn"
-                  @click="store.addApiPreset"
+                  class="ew-flow-scope-tab"
+                  :class="{
+                    'ew-flow-scope-tab--active': store.flowScope === 'global',
+                  }"
+                  @click="store.setFlowScope('global')"
                 >
-                  新增API配置
+                  🌐 全局
                 </button>
+                <button
+                  type="button"
+                  class="ew-flow-scope-tab"
+                  :class="{
+                    'ew-flow-scope-tab--active':
+                      store.flowScope === 'character',
+                  }"
+                  @click="store.setFlowScope('character')"
+                >
+                  🎭 当前角色卡{{
+                    store.activeCharName ? `: ${store.activeCharName}` : ""
+                  }}
+                </button>
+              </div>
+
+              <!-- ── 全局工作流 ── -->
+              <template v-if="store.flowScope === 'global'">
+                <EwSectionCard
+                  title="全局工作流"
+                  subtitle="所有角色卡共享的工作流，优先级较低。"
+                >
+                  <template #actions>
+                    <button type="button" class="ew-btn" @click="store.addFlow">
+                      新增工作流
+                    </button>
+                    <button
+                      type="button"
+                      class="ew-btn"
+                      @click="openFlowImportPicker"
+                    >
+                      导入工作流
+                    </button>
+                    <button
+                      type="button"
+                      class="ew-btn"
+                      @click="store.exportAllFlows"
+                    >
+                      导出全部工作流
+                    </button>
+                    <button
+                      type="button"
+                      class="ew-btn"
+                      @click="openWriteToCardModal"
+                    >
+                      写入角色卡
+                    </button>
+                    <input
+                      ref="flowImportRef"
+                      type="file"
+                      accept=".json,application/json"
+                      class="ew-hidden-file-input"
+                      @change="onFlowImportChange"
+                    />
+                  </template>
+
+                  <transition-group
+                    name="ew-list"
+                    tag="div"
+                    class="ew-flow-list"
+                  >
+                    <EwFlowCard
+                      v-for="(flow, index) in store.settings.flows"
+                      :key="flow.id"
+                      v-memo="[
+                        flow,
+                        store.expandedFlowId === flow.id,
+                        store.settings.api_presets,
+                      ]"
+                      :index="index"
+                      :model-value="flow"
+                      :api-presets="store.settings.api_presets"
+                      :expanded="store.expandedFlowId === flow.id"
+                      @toggle-expand="store.toggleFlowExpanded(flow.id)"
+                      @duplicate="store.duplicateFlow(flow.id)"
+                      @remove="store.removeFlow(flow.id)"
+                      @export="store.exportSingleFlow(flow.id)"
+                      @update:model-value="(value) => updateFlow(index, value)"
+                    />
+                  </transition-group>
+                </EwSectionCard>
               </template>
 
-              <transition-group name="ew-list" tag="div" class="ew-api-list">
-                <EwApiPresetCard
-                  v-for="(preset, index) in store.settings.api_presets"
-                  :key="preset.id"
-                  v-memo="[
-                    preset,
-                    store.expandedApiPresetId === preset.id,
-                    bindCountByPresetId[preset.id] ?? 0,
-                  ]"
-                  :index="index"
-                  :model-value="preset"
-                  :expanded="store.expandedApiPresetId === preset.id"
-                  :bind-count="bindCountByPresetId[preset.id] ?? 0"
-                  @toggle-expand="store.toggleApiPresetExpanded(preset.id)"
-                  @duplicate="store.duplicateApiPreset(preset.id)"
-                  @remove="store.removeApiPreset(preset.id)"
-                  @update:model-value="(value) => updateApiPreset(index, value)"
-                />
-              </transition-group>
-            </EwSectionCard>
-          </template>
-
-          <template v-else-if="store.activeTab === 'global'">
-            <EwSectionCard
-              title="基础配置"
-              subtitle="世界书命名与楼层绑定控制。"
-            >
-              <div class="ew-grid two">
-                <EwFieldRow
-                  label="动态条目前缀"
-                  :help="help('dynamic_entry_prefix')"
+              <!-- ── 角色卡绑定工作流 ── -->
+              <template v-else>
+                <EwSectionCard
+                  :title="
+                    '角色卡工作流' +
+                    (store.activeCharName ? ` — ${store.activeCharName}` : '')
+                  "
+                  subtitle="仅在当前角色卡生效的工作流，随角色卡导出/导入。优先级高于全局。"
                 >
-                  <input
-                    v-model="store.settings.dynamic_entry_prefix"
-                    type="text"
-                    :placeholder="help('dynamic_entry_prefix')?.placeholder"
-                  />
-                </EwFieldRow>
-                <EwFieldRow
-                  label="控制器条目前缀"
-                  :help="help('controller_entry_prefix')"
-                >
-                  <input
-                    v-model="store.settings.controller_entry_prefix"
-                    type="text"
-                    :placeholder="help('controller_entry_prefix')?.placeholder"
-                  />
-                </EwFieldRow>
-                <EwFieldRow
-                  label="楼层绑定"
-                  :help="help('floor_binding_enabled')"
-                >
-                  <button
-                    type="button"
-                    class="ew-switch"
-                    role="switch"
-                    :aria-checked="
-                      store.settings.floor_binding_enabled ? 'true' : 'false'
-                    "
-                    @click="
-                      store.settings.floor_binding_enabled =
-                        !store.settings.floor_binding_enabled
-                    "
-                  >
-                    <span
-                      class="ew-switch__track"
-                      :data-enabled="
-                        store.settings.floor_binding_enabled ? '1' : '0'
-                      "
-                    >
-                      <span class="ew-switch__thumb" />
-                    </span>
-                    <span class="ew-switch__text">{{
-                      store.settings.floor_binding_enabled ? "已开启" : "已关闭"
-                    }}</span>
-                  </button>
-                </EwFieldRow>
-                <EwFieldRow
-                  label="自动清理孤儿条目"
-                  :help="help('auto_cleanup_orphans')"
-                >
-                  <button
-                    type="button"
-                    class="ew-switch"
-                    role="switch"
-                    :aria-checked="
-                      store.settings.auto_cleanup_orphans ? 'true' : 'false'
-                    "
-                    @click="
-                      store.settings.auto_cleanup_orphans =
-                        !store.settings.auto_cleanup_orphans
-                    "
-                  >
-                    <span
-                      class="ew-switch__track"
-                      :data-enabled="
-                        store.settings.auto_cleanup_orphans ? '1' : '0'
-                      "
-                    >
-                      <span class="ew-switch__thumb" />
-                    </span>
-                    <span class="ew-switch__text">{{
-                      store.settings.auto_cleanup_orphans ? "已开启" : "已关闭"
-                    }}</span>
-                  </button>
-                </EwFieldRow>
-              </div>
-            </EwSectionCard>
-
-            <EwSectionCard
-              v-model="store.globalAdvancedOpen"
-              title="高级配置"
-              subtitle=""
-              collapsible
-            >
-              <div class="ew-grid two">
-                <EwFieldRow label="执行时机" :help="help('workflow_timing')">
-                  <select v-model="store.settings.workflow_timing">
-                    <option value="after_reply">回复后更新（默认）</option>
-                    <option value="before_reply">回复前拦截</option>
-                  </select>
-                </EwFieldRow>
-                <EwFieldRow label="失败策略" :help="help('failure_policy')">
-                  <select v-model="store.settings.failure_policy">
-                    <option value="stop_generation">失败即中止发送</option>
-                    <option value="continue_generation">静默继续生成</option>
-                    <option value="retry_once">失败重试一次</option>
-                    <option value="notify_only">仅通知（不中止）</option>
-                  </select>
-                </EwFieldRow>
-                <EwFieldRow label="重roll范围" :help="help('reroll_scope')">
-                  <select v-model="store.settings.reroll_scope">
-                    <option value="all">全部工作流</option>
-                    <option value="failed_only">仅失败工作流</option>
-                  </select>
-                </EwFieldRow>
-                <EwFieldRow
-                  label="原消息放行策略"
-                  :help="help('intercept_release_policy')"
-                >
-                  <select v-model="store.settings.intercept_release_policy">
-                    <option value="success_only">
-                      仅工作流成功时发送原消息
-                    </option>
-                    <option value="always">无论成功失败都发送原消息</option>
-                    <option value="never">永不自动发送原消息</option>
-                  </select>
-                </EwFieldRow>
-                <EwFieldRow
-                  label="快照存储方式"
-                  :help="help('snapshot_storage')"
-                >
-                  <div style="display: flex; gap: 8px; align-items: center">
-                    <select
-                      v-model="store.settings.snapshot_storage"
-                      style="flex: 1"
-                    >
-                      <option value="message_data">消息数据（默认）</option>
-                      <option value="file">服务器文件</option>
-                    </select>
+                  <template #actions>
                     <button
                       type="button"
-                      class="ew-btn ew-btn--sm"
-                      :disabled="migratingSnapshots"
-                      @click="onMigrateSnapshots"
+                      class="ew-btn"
+                      @click="store.addCharFlow"
                     >
-                      {{ migratingSnapshots ? "同步中…" : "同步快照" }}
+                      新增工作流
                     </button>
+                    <button
+                      type="button"
+                      class="ew-btn"
+                      @click="store.saveCharFlows"
+                    >
+                      💾 保存到世界书
+                    </button>
+                    <button
+                      type="button"
+                      class="ew-btn"
+                      @click="store.loadCharFlows"
+                    >
+                      刷新
+                    </button>
+                  </template>
+
+                  <div v-if="store.charFlowsLoading" class="ew-flow-loading">
+                    加载角色卡工作流中...
                   </div>
-                </EwFieldRow>
-                <EwFieldRow label="悬浮球">
-                  <label
-                    style="
-                      display: flex;
-                      align-items: center;
-                      gap: 8px;
-                      cursor: pointer;
-                    "
+
+                  <transition-group
+                    v-else
+                    name="ew-list"
+                    tag="div"
+                    class="ew-flow-list"
                   >
-                    <input
-                      v-model="store.settings.show_fab"
-                      type="checkbox"
-                      @change="emitFabChanged"
+                    <EwFlowCard
+                      v-for="(flow, index) in store.charFlows"
+                      :key="flow.id"
+                      v-memo="[
+                        flow,
+                        store.expandedFlowId === flow.id,
+                        store.settings.api_presets,
+                      ]"
+                      :index="index"
+                      :model-value="flow"
+                      :api-presets="store.settings.api_presets"
+                      :expanded="store.expandedFlowId === flow.id"
+                      @toggle-expand="store.toggleFlowExpanded(flow.id)"
+                      @duplicate="store.duplicateCharFlow(flow.id)"
+                      @remove="store.removeCharFlow(flow.id)"
+                      @update:model-value="
+                        (value) => updateCharFlow(index, value)
+                      "
                     />
-                    显示悬浮球入口
-                  </label>
-                </EwFieldRow>
-              </div>
-            </EwSectionCard>
+                  </transition-group>
 
-            <EwSectionCard
-              title="隐藏设置"
-              subtitle="批量隐藏旧楼层（节省 tokens）或限制界面渲染数量（提升流畅度）。"
-            >
-              <div class="ew-grid two">
-                <EwFieldRow label="隐藏楼层">
-                  <button
-                    type="button"
-                    class="ew-switch"
-                    role="switch"
-                    :aria-checked="
-                      store.settings.hide_settings.enabled ? 'true' : 'false'
+                  <div
+                    v-if="
+                      !store.charFlowsLoading && store.charFlows.length === 0
                     "
-                    @click="
-                      store.settings.hide_settings.enabled =
-                        !store.settings.hide_settings.enabled
-                    "
+                    class="ew-flow-empty"
                   >
-                    <span
-                      class="ew-switch__track"
-                      :data-enabled="
-                        store.settings.hide_settings.enabled ? '1' : '0'
-                      "
-                    >
-                      <span class="ew-switch__thumb" />
-                    </span>
-                    <span class="ew-switch__text">{{
-                      store.settings.hide_settings.enabled ? "已开启" : "已关闭"
-                    }}</span>
-                  </button>
-                </EwFieldRow>
-                <EwFieldRow label="保留最新 N 条">
-                  <input
-                    v-model.number="store.settings.hide_settings.hide_last_n"
-                    type="number"
-                    min="0"
-                    step="1"
-                    placeholder="0 表示不隐藏"
-                    :disabled="!store.settings.hide_settings.enabled"
-                  />
-                </EwFieldRow>
-                <EwFieldRow label="限制楼层渲染">
-                  <button
-                    type="button"
-                    class="ew-switch"
-                    role="switch"
-                    :aria-checked="
-                      store.settings.hide_settings.limiter_enabled
-                        ? 'true'
-                        : 'false'
-                    "
-                    @click="
-                      store.settings.hide_settings.limiter_enabled =
-                        !store.settings.hide_settings.limiter_enabled
-                    "
-                  >
-                    <span
-                      class="ew-switch__track"
-                      :data-enabled="
-                        store.settings.hide_settings.limiter_enabled ? '1' : '0'
-                      "
-                    >
-                      <span class="ew-switch__thumb" />
-                    </span>
-                    <span class="ew-switch__text">{{
-                      store.settings.hide_settings.limiter_enabled
-                        ? "已开启"
-                        : "已关闭"
-                    }}</span>
-                  </button>
-                </EwFieldRow>
-                <EwFieldRow label="仅渲染最新 M 条">
-                  <input
-                    v-model.number="store.settings.hide_settings.limiter_count"
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="例如 20"
-                    :disabled="!store.settings.hide_settings.limiter_enabled"
-                  />
-                </EwFieldRow>
-              </div>
-              <div class="ew-actions-wrap" style="margin-top: 0.75rem">
-                <button type="button" class="ew-btn" @click="onApplyHide">
-                  立即应用隐藏
-                </button>
-                <button
-                  type="button"
-                  class="ew-btn ew-btn--danger"
-                  @click="onUnhideAll"
-                >
-                  取消全部隐藏
-                </button>
-              </div>
-            </EwSectionCard>
-          </template>
+                    当前角色卡还没有绑定工作流。点击「新增工作流」来创建。
+                  </div>
+                </EwSectionCard>
+              </template>
+            </template>
 
-          <template v-else-if="store.activeTab === 'flows'">
-            <!-- ── 作用域切换标签 ── -->
-            <div class="ew-flow-scope-tabs">
-              <button
-                type="button"
-                class="ew-flow-scope-tab"
-                :class="{
-                  'ew-flow-scope-tab--active': store.flowScope === 'global',
-                }"
-                @click="store.setFlowScope('global')"
-              >
-                🌐 全局
-              </button>
-              <button
-                type="button"
-                class="ew-flow-scope-tab"
-                :class="{
-                  'ew-flow-scope-tab--active': store.flowScope === 'character',
-                }"
-                @click="store.setFlowScope('character')"
-              >
-                🎭 当前角色卡{{
-                  store.activeCharName ? `: ${store.activeCharName}` : ""
-                }}
-              </button>
-            </div>
-
-            <!-- ── 全局工作流 ── -->
-            <template v-if="store.flowScope === 'global'">
-              <EwSectionCard
-                title="全局工作流"
-                subtitle="所有角色卡共享的工作流，优先级较低。"
-              >
-                <template #actions>
-                  <button type="button" class="ew-btn" @click="store.addFlow">
-                    新增工作流
-                  </button>
-                  <button
-                    type="button"
-                    class="ew-btn"
-                    @click="openFlowImportPicker"
-                  >
-                    导入工作流
-                  </button>
-                  <button
-                    type="button"
-                    class="ew-btn"
-                    @click="store.exportAllFlows"
-                  >
-                    导出全部工作流
-                  </button>
-                  <button
-                    type="button"
-                    class="ew-btn"
-                    @click="openWriteToCardModal"
-                  >
-                    写入角色卡
-                  </button>
-                  <input
-                    ref="flowImportRef"
-                    type="file"
-                    accept=".json,application/json"
-                    class="ew-hidden-file-input"
-                    @change="onFlowImportChange"
-                  />
-                </template>
-
-                <transition-group name="ew-list" tag="div" class="ew-flow-list">
-                  <EwFlowCard
-                    v-for="(flow, index) in store.settings.flows"
-                    :key="flow.id"
-                    v-memo="[
-                      flow,
-                      store.expandedFlowId === flow.id,
-                      store.settings.api_presets,
-                    ]"
-                    :index="index"
-                    :model-value="flow"
-                    :api-presets="store.settings.api_presets"
-                    :expanded="store.expandedFlowId === flow.id"
-                    @toggle-expand="store.toggleFlowExpanded(flow.id)"
-                    @duplicate="store.duplicateFlow(flow.id)"
-                    @remove="store.removeFlow(flow.id)"
-                    @export="store.exportSingleFlow(flow.id)"
-                    @update:model-value="(value) => updateFlow(index, value)"
-                  />
-                </transition-group>
+            <template v-else-if="store.activeTab === 'graph'">
+              <EwSectionCard title="图编辑器">
+                <p style="opacity: 0.5; padding: 12px">图编辑器开发中…</p>
               </EwSectionCard>
             </template>
 
-            <!-- ── 角色卡绑定工作流 ── -->
+            <template v-else-if="store.activeTab === 'history'">
+              <EwHistoryPanel />
+            </template>
+
             <template v-else>
-              <EwSectionCard
-                :title="
-                  '角色卡工作流' +
-                  (store.activeCharName ? ` — ${store.activeCharName}` : '')
-                "
-                subtitle="仅在当前角色卡生效的工作流，随角色卡导出/导入。优先级高于全局。"
-              >
-                <template #actions>
-                  <button
-                    type="button"
-                    class="ew-btn"
-                    @click="store.addCharFlow"
-                  >
-                    新增工作流
-                  </button>
-                  <button
-                    type="button"
-                    class="ew-btn"
-                    @click="store.saveCharFlows"
-                  >
-                    💾 保存到世界书
-                  </button>
-                  <button
-                    type="button"
-                    class="ew-btn"
-                    @click="store.loadCharFlows"
-                  >
-                    刷新
-                  </button>
-                </template>
-
-                <div v-if="store.charFlowsLoading" class="ew-flow-loading">
-                  加载角色卡工作流中...
-                </div>
-
-                <transition-group
-                  v-else
-                  name="ew-list"
-                  tag="div"
-                  class="ew-flow-list"
-                >
-                  <EwFlowCard
-                    v-for="(flow, index) in store.charFlows"
-                    :key="flow.id"
-                    v-memo="[
-                      flow,
-                      store.expandedFlowId === flow.id,
-                      store.settings.api_presets,
-                    ]"
-                    :index="index"
-                    :model-value="flow"
-                    :api-presets="store.settings.api_presets"
-                    :expanded="store.expandedFlowId === flow.id"
-                    @toggle-expand="store.toggleFlowExpanded(flow.id)"
-                    @duplicate="store.duplicateCharFlow(flow.id)"
-                    @remove="store.removeCharFlow(flow.id)"
-                    @update:model-value="
-                      (value) => updateCharFlow(index, value)
-                    "
-                  />
-                </transition-group>
-
-                <div
-                  v-if="!store.charFlowsLoading && store.charFlows.length === 0"
-                  class="ew-flow-empty"
-                >
-                  当前角色卡还没有绑定工作流。点击「新增工作流」来创建。
-                </div>
-              </EwSectionCard>
+              <EwDebugPanel />
             </template>
-          </template>
-
-          <template v-else-if="store.activeTab === 'graph'">
-            <EwSectionCard title="图编辑器">
-              <p style="opacity: 0.5; padding: 12px">图编辑器开发中…</p>
-            </EwSectionCard>
-          </template>
-
-          <template v-else-if="store.activeTab === 'history'">
-            <EwHistoryPanel />
-          </template>
-
-          <template v-else>
-            <EwDebugPanel />
-          </template>
           </div>
         </transition>
       </div>
@@ -644,11 +680,21 @@
 
   <!-- ── 写入角色卡弹窗 ── -->
   <transition name="ew-modal">
-    <div v-if="showWriteToCardModal" class="ew-modal-overlay" @click.self="showWriteToCardModal = false">
+    <div
+      v-if="showWriteToCardModal"
+      class="ew-modal-overlay"
+      @click.self="showWriteToCardModal = false"
+    >
       <div class="ew-modal ew-modal--write-card">
         <header class="ew-modal__header">
           <h3>选择要写入角色卡的工作流</h3>
-          <button type="button" class="ew-modal__close" @click="showWriteToCardModal = false">✕</button>
+          <button
+            type="button"
+            class="ew-modal__close"
+            @click="showWriteToCardModal = false"
+          >
+            ✕
+          </button>
         </header>
         <div class="ew-modal__body">
           <p class="ew-modal__hint">
@@ -657,8 +703,13 @@
           <label class="ew-write-card-item ew-write-card-item--all">
             <input
               type="checkbox"
-              :checked="writeToCardSelection.size === store.settings.flows.length"
-              :indeterminate="writeToCardSelection.size > 0 && writeToCardSelection.size < store.settings.flows.length"
+              :checked="
+                writeToCardSelection.size === store.settings.flows.length
+              "
+              :indeterminate="
+                writeToCardSelection.size > 0 &&
+                writeToCardSelection.size < store.settings.flows.length
+              "
               @change="toggleWriteToCardSelectAll"
             />
             <span>全选 / 取消全选</span>
@@ -674,22 +725,41 @@
                 :checked="writeToCardSelection.has(flow.id)"
                 @change="toggleWriteToCardItem(flow.id)"
               />
-              <span class="ew-write-card-item__name">{{ flow.name || flow.id }}</span>
+              <span class="ew-write-card-item__name">{{
+                flow.name || flow.id
+              }}</span>
               <span class="ew-write-card-item__badges">
-                <span v-if="flow.enabled" class="ew-status-pill" data-tone="good">启用</span>
-                <span v-else class="ew-status-pill" data-tone="muted">禁用</span>
+                <span
+                  v-if="flow.enabled"
+                  class="ew-status-pill"
+                  data-tone="good"
+                  >启用</span
+                >
+                <span v-else class="ew-status-pill" data-tone="muted"
+                  >禁用</span
+                >
               </span>
             </label>
           </div>
           <div class="ew-modal__actions">
-            <button type="button" class="ew-btn" @click="showWriteToCardModal = false">取消</button>
+            <button
+              type="button"
+              class="ew-btn"
+              @click="showWriteToCardModal = false"
+            >
+              取消
+            </button>
             <button
               type="button"
               class="ew-btn ew-btn--primary"
               :disabled="writeToCardSelection.size === 0 || writeToCardBusy"
               @click="confirmWriteToCard"
             >
-              {{ writeToCardBusy ? '写入中…' : `确认写入 (${writeToCardSelection.size})` }}
+              {{
+                writeToCardBusy
+                  ? "写入中…"
+                  : `确认写入 (${writeToCardSelection.size})`
+              }}
             </button>
           </div>
         </div>
@@ -728,6 +798,12 @@ const store = useEwStore();
 const importFileInputRef = ref<HTMLInputElement | null>(null);
 const flowImportRef = ref<HTMLInputElement | null>(null);
 const migratingSnapshots = ref(false);
+const crossfadeRef = ref<HTMLDivElement | null>(null);
+
+let crossfadePrevHeight = 0;
+let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+let crossfadeCleanup: (() => void) | null = null;
+let crossfadeAnimationToken = 0;
 
 // ── 写入角色卡弹窗 ──
 const showWriteToCardModal = ref(false);
@@ -736,7 +812,7 @@ const writeToCardBusy = ref(false);
 
 function openWriteToCardModal() {
   writeToCardSelection.value = new Set(
-    store.settings.flows.filter(f => f.enabled).map(f => f.id),
+    store.settings.flows.filter((f) => f.enabled).map((f) => f.id),
   );
   showWriteToCardModal.value = true;
 }
@@ -745,7 +821,7 @@ function toggleWriteToCardSelectAll() {
   if (writeToCardSelection.value.size === store.settings.flows.length) {
     writeToCardSelection.value = new Set();
   } else {
-    writeToCardSelection.value = new Set(store.settings.flows.map(f => f.id));
+    writeToCardSelection.value = new Set(store.settings.flows.map((f) => f.id));
   }
 }
 
@@ -1184,7 +1260,6 @@ function openImportFilePicker() {
   importFileInputRef.value?.click();
 }
 
-
 async function onImportFileChange(event: Event) {
   const input = event.target as HTMLInputElement | null;
   const file = input?.files?.[0];
@@ -1270,14 +1345,99 @@ watch(
 );
 
 onUnmounted(() => {
+  crossfadeCleanup?.();
+  if (crossfadeCleanupTimer) {
+    clearTimeout(crossfadeCleanupTimer);
+    crossfadeCleanupTimer = null;
+  }
   window.removeEventListener("keydown", onEsc);
 });
+
+function clearCrossfadeHeightAnimation(): void {
+  crossfadeCleanup?.();
+  crossfadeCleanup = null;
+  if (crossfadeCleanupTimer) {
+    clearTimeout(crossfadeCleanupTimer);
+    crossfadeCleanupTimer = null;
+  }
+}
+
+function onTabCrossfadeLeave(): void {
+  const grid = crossfadeRef.value;
+  if (!grid) {
+    crossfadePrevHeight = 0;
+    return;
+  }
+
+  clearCrossfadeHeightAnimation();
+  crossfadeAnimationToken += 1;
+  crossfadePrevHeight = grid.getBoundingClientRect().height;
+  grid.style.overflow = "hidden";
+}
+
+function onTabCrossfadeAfterLeave(): void {
+  const grid = crossfadeRef.value;
+  if (!grid) {
+    crossfadePrevHeight = 0;
+    return;
+  }
+
+  const prevHeight = crossfadePrevHeight;
+  const animationToken = crossfadeAnimationToken;
+  crossfadePrevHeight = 0;
+
+  if (!prevHeight) {
+    grid.style.overflow = "";
+    return;
+  }
+
+  const nextHeight = grid.getBoundingClientRect().height;
+  if (Math.abs(prevHeight - nextHeight) < 2) {
+    grid.style.overflow = "";
+    return;
+  }
+
+  grid.style.transition = "none";
+  grid.style.minHeight = `${prevHeight}px`;
+  void grid.offsetHeight;
+
+  requestAnimationFrame(() => {
+    if (
+      crossfadeRef.value !== grid ||
+      animationToken !== crossfadeAnimationToken
+    ) {
+      return;
+    }
+
+    grid.style.transition = "min-height 0.4s cubic-bezier(0.25, 1, 0.5, 1)";
+    grid.style.minHeight = `${nextHeight}px`;
+
+    const cleanup = () => {
+      grid.removeEventListener("transitionend", cleanup);
+      if (crossfadeCleanupTimer) {
+        clearTimeout(crossfadeCleanupTimer);
+        crossfadeCleanupTimer = null;
+      }
+      grid.style.minHeight = "";
+      grid.style.transition = "";
+      grid.style.overflow = "";
+      if (crossfadeCleanup === cleanup) {
+        crossfadeCleanup = null;
+      }
+    };
+
+    crossfadeCleanup = cleanup;
+    grid.addEventListener("transitionend", cleanup, { once: true });
+    crossfadeCleanupTimer = setTimeout(cleanup, 500);
+  });
+}
 </script>
 
 <style scoped>
 /* ── CSS Grid Cross-Fade: ensures stacking overlap during tab transitions ── */
 .ew-tab-crossfade {
   display: grid;
+  overflow: hidden;
 }
 .ew-tab-crossfade :deep(.ew-content-stack) {
   grid-area: 1 / 1;
@@ -1474,8 +1634,16 @@ onUnmounted(() => {
 }
 
 @keyframes ew-breathe-morph {
-  0% { transform: scale(0.96); filter: brightness(0.95); border-radius: 20px; }
-  100% { transform: scale(1); filter: brightness(1); border-radius: 12px; }
+  0% {
+    transform: scale(0.96);
+    filter: brightness(0.95);
+    border-radius: 20px;
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+    border-radius: 12px;
+  }
 }
 
 /* ── Outgoing Elements: Gentle Radial Scattering (向四周轻柔溶解漂散) ── */
@@ -1501,12 +1669,17 @@ onUnmounted(() => {
 }
 
 @keyframes glide-out-left {
-  to { opacity: 0; transform: translate(-30px, -20px) scale(0.98); }
+  to {
+    opacity: 0;
+    transform: translate(-30px, -20px) scale(0.98);
+  }
 }
 @keyframes glide-out-right {
-  to { opacity: 0; transform: translate(30px, 20px) scale(0.98); }
+  to {
+    opacity: 0;
+    transform: translate(30px, 20px) scale(0.98);
+  }
 }
-
 
 /* ── Incoming Elements: Gentle Convergent Glide (从远端被引力吸附入场) ── */
 .ew-fade-enter-active .ew-section-card,
@@ -1532,44 +1705,69 @@ onUnmounted(() => {
 }
 
 @keyframes glide-in-left {
-  0% { opacity: 0; transform: translate(-40px, 30px) scale(0.95); }
-  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+  0% {
+    opacity: 0;
+    transform: translate(-40px, 30px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
 }
 @keyframes glide-in-right {
-  0% { opacity: 0; transform: translate(40px, -30px) scale(0.95); }
-  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+  0% {
+    opacity: 0;
+    transform: translate(40px, -30px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
 }
 
 /* Asymmetric Micro-staggering to amplify the assembly feel */
 .ew-fade-enter-active .ew-section-card:nth-child(1),
 .ew-fade-enter-active .ew-field-row:nth-child(1),
-.ew-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.0s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(1) {
+  animation-delay: 0s;
+}
 
 .ew-fade-enter-active .ew-section-card:nth-child(2),
 .ew-fade-enter-active .ew-field-row:nth-child(2),
-.ew-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.04s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(2) {
+  animation-delay: 0.04s;
+}
 
 .ew-fade-enter-active .ew-section-card:nth-child(3),
 .ew-fade-enter-active .ew-field-row:nth-child(3),
-.ew-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.08s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(3) {
+  animation-delay: 0.08s;
+}
 
 .ew-fade-enter-active .ew-section-card:nth-child(4),
 .ew-fade-enter-active .ew-field-row:nth-child(4),
-.ew-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.12s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(4) {
+  animation-delay: 0.12s;
+}
 
 .ew-fade-enter-active .ew-section-card:nth-child(5),
 .ew-fade-enter-active .ew-field-row:nth-child(5),
-.ew-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.16s; }
+.ew-fade-enter-active .ew-flow-card:nth-child(5) {
+  animation-delay: 0.16s;
+}
 
-.ew-fade-enter-active .ew-section-card:nth-child(n+6),
-.ew-fade-enter-active .ew-field-row:nth-child(n+6),
-.ew-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.20s; }
+.ew-fade-enter-active .ew-section-card:nth-child(n + 6),
+.ew-fade-enter-active .ew-field-row:nth-child(n + 6),
+.ew-fade-enter-active .ew-flow-card:nth-child(n + 6) {
+  animation-delay: 0.2s;
+}
 
 /* ── Modal & Overall Panel Intro ── */
 .ew-panel-enter-active,
 .ew-panel-leave-active {
-  transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1),
-              transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+  transition:
+    opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1),
+    transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
 }
 .ew-panel-enter-from {
   opacity: 0;
@@ -1616,21 +1814,40 @@ onUnmounted(() => {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 60%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 60%,
+    transparent
+  );
   cursor: pointer;
-  transition: color 0.25s ease, background 0.25s ease, border-color 0.25s ease,
-              transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1);
+  transition:
+    color 0.25s ease,
+    background 0.25s ease,
+    border-color 0.25s ease,
+    transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1);
 }
 
 .ew-icon-btn:hover:not(:disabled) {
   color: var(--SmartThemeBodyColor, #edf2f9);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 15%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 20%,
+    transparent
+  );
 }
 
 .ew-icon-btn:active:not(:disabled) {
   transform: scale(0.92);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 25%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 25%,
+    transparent
+  );
 }
 
 .ew-flow-list,
@@ -1672,9 +1889,12 @@ onUnmounted(() => {
     color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
   border-radius: 0.6rem;
   cursor: pointer;
-  transition: color 0.25s ease, background 0.3s ease, border-color 0.3s ease,
-              transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1),
-              box-shadow 0.3s ease;
+  transition:
+    color 0.25s ease,
+    background 0.3s ease,
+    border-color 0.3s ease,
+    transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1),
+    box-shadow 0.3s ease;
   outline: none;
   white-space: nowrap;
   backdrop-filter: blur(4px);
@@ -1729,19 +1949,30 @@ onUnmounted(() => {
   padding: 0.4rem 0.6rem;
   font-size: 0.82rem;
   font-weight: 600;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 65%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 65%,
+    transparent
+  );
   border: 1px solid transparent;
   border-radius: 0.45rem;
   background: transparent;
   cursor: pointer;
-  transition: color 0.3s ease, background 0.3s ease, border-color 0.3s ease,
-              transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1),
-              box-shadow 0.3s ease;
+  transition:
+    color 0.3s ease,
+    background 0.3s ease,
+    border-color 0.3s ease,
+    transform 0.2s cubic-bezier(0.2, 0.85, 0.3, 1),
+    box-shadow 0.3s ease;
 }
 
 .ew-flow-scope-tab:hover:not(.ew-flow-scope-tab--active) {
   color: var(--SmartThemeBodyColor, #edf2f9);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 15%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 15%,
+    transparent
+  );
 }
 
 .ew-flow-scope-tab:active:not(.ew-flow-scope-tab--active) {
@@ -1750,8 +1981,16 @@ onUnmounted(() => {
 
 .ew-flow-scope-tab--active {
   color: var(--SmartThemeBodyColor, #edf2f9);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 35%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 30%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 35%,
+    transparent
+  );
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
@@ -2609,13 +2848,29 @@ onUnmounted(() => {
 }
 
 @keyframes ew-crossfade-out {
-  0%   { opacity: 1; transform: scale(1); filter: none; }
-  100% { opacity: 0; transform: scale(0.97); filter: blur(4px); }
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: none;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.97);
+    filter: blur(4px);
+  }
 }
 
 @keyframes ew-crossfade-in {
-  0%   { opacity: 0; transform: scale(0.97); filter: blur(4px) brightness(0.92); }
-  100% { opacity: 1; transform: scale(1); filter: none; }
+  0% {
+    opacity: 0;
+    transform: scale(0.97);
+    filter: blur(4px) brightness(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: none;
+  }
 }
 
 /* ── 子元素汇聚滑入（仅入场） ── */
@@ -2627,29 +2882,61 @@ onUnmounted(() => {
   animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
   animation-fill-mode: both;
 }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(odd) {
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(odd) {
   animation-name: glide-in-left;
 }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(even) {
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(even) {
   animation-name: glide-in-right;
 }
 
 @keyframes glide-in-left {
-  0%   { opacity: 0; transform: translate(-40px, 25px) scale(0.95); }
-  100% { opacity: 1; transform: none; }
+  0% {
+    opacity: 0;
+    transform: translate(-40px, 25px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 @keyframes glide-in-right {
-  0%   { opacity: 0; transform: translate(40px, -25px) scale(0.95); }
-  100% { opacity: 1; transform: none; }
+  0% {
+    opacity: 0;
+    transform: translate(40px, -25px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* 级联延迟 */
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(1) { animation-delay: 0s; }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(2) { animation-delay: 0.05s; }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(3) { animation-delay: 0.1s; }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(4) { animation-delay: 0.15s; }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(5) { animation-delay: 0.2s; }
-.ew-tab-fade-enter-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(n+6) { animation-delay: 0.25s; }
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(1) {
+  animation-delay: 0s;
+}
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(2) {
+  animation-delay: 0.05s;
+}
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(3) {
+  animation-delay: 0.1s;
+}
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(4) {
+  animation-delay: 0.15s;
+}
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(5) {
+  animation-delay: 0.2s;
+}
+.ew-tab-fade-enter-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(n + 6) {
+  animation-delay: 0.25s;
+}
 
 /* ── 退场子元素散去 ── */
 .ew-tab-fade-leave-active .ew-section-card,
@@ -2659,18 +2946,26 @@ onUnmounted(() => {
   animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   animation-fill-mode: forwards;
 }
-.ew-tab-fade-leave-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(odd) {
+.ew-tab-fade-leave-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(odd) {
   animation-name: glide-out-left;
 }
-.ew-tab-fade-leave-active :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(even) {
+.ew-tab-fade-leave-active
+  :is(.ew-section-card, .ew-field-row, .ew-flow-card):nth-child(even) {
   animation-name: glide-out-right;
 }
 
 @keyframes glide-out-left {
-  to { opacity: 0; transform: translate(-30px, -15px) scale(0.97); }
+  to {
+    opacity: 0;
+    transform: translate(-30px, -15px) scale(0.97);
+  }
 }
 @keyframes glide-out-right {
-  to { opacity: 0; transform: translate(30px, 15px) scale(0.97); }
+  to {
+    opacity: 0;
+    transform: translate(30px, 15px) scale(0.97);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2962,7 +3257,6 @@ body:has(.theme-moon-phase) #toast-container > div:hover {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-
 .ew-flow-loading,
 .ew-flow-empty {
   padding: 24px 16px;
@@ -2989,8 +3283,13 @@ body:has(.theme-moon-phase) .ew-flow-scope-tab--active {
   width: min(520px, 90vw);
   max-height: 80vh;
   border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 8%, rgba(12, 16, 24, 0.95));
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 30%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 8%,
+    rgba(12, 16, 24, 0.95)
+  );
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
@@ -3001,7 +3300,11 @@ body:has(.theme-moon-phase) .ew-flow-scope-tab--active {
   margin: 0 0 0.5rem;
   font-size: 0.8rem;
   line-height: 1.45;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 60%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 60%,
+    transparent
+  );
 }
 
 .ew-modal__actions {
@@ -3010,7 +3313,8 @@ body:has(.theme-moon-phase) .ew-flow-scope-tab--active {
   gap: 0.5rem;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
-  border-top: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 12%, transparent);
+  border-top: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 12%, transparent);
 }
 
 .ew-write-card-list {
@@ -3028,22 +3332,41 @@ body:has(.theme-moon-phase) .ew-flow-scope-tab--active {
   gap: 0.6rem;
   padding: 0.5rem 0.65rem;
   border-radius: 0.7rem;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 6%, rgba(0, 0, 0, 0.12));
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 6%,
+    rgba(0, 0, 0, 0.12)
+  );
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .ew-write-card-item:hover {
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 14%, rgba(0, 0, 0, 0.12));
-  border-color: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 35%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 14%,
+    rgba(0, 0, 0, 0.12)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 35%,
+    transparent
+  );
 }
 
 .ew-write-card-item--all {
   margin-bottom: 0.35rem;
   font-weight: 600;
   font-size: 0.82rem;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 80%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 80%,
+    transparent
+  );
 }
 
 .ew-write-card-item__name {
@@ -3054,7 +3377,11 @@ body:has(.theme-moon-phase) .ew-flow-scope-tab--active {
   white-space: nowrap;
   font-size: 0.85rem;
   font-weight: 600;
-  color: color-mix(in srgb, var(--SmartThemeBodyColor, #edf2f9) 92%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 92%,
+    transparent
+  );
 }
 
 .ew-write-card-item__badges {
