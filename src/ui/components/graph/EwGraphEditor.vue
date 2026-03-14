@@ -138,6 +138,7 @@ import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
 import EwGraphPalette from "./EwGraphPalette.vue";
 import { createGraphState } from "./graph-state";
+import { flowsToGraph } from "./graph-serializer";
 import type { GraphEdge, NodeType } from "./graph-types";
 import { NODE_TYPE_REGISTRY } from "./graph-types";
 
@@ -676,30 +677,32 @@ function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
   window.addEventListener("pointerup", onUp);
 }
 
-// ── Test data ──
+// ── Load real flow data ──
 
-function addTestNodes() {
-  // Clear existing
+function loadFlowsIntoGraph() {
   graph.state.nodes = [];
   graph.state.edges = [];
 
-  const entry = graph.addNode("flow_entry", 50, 100);
-  const gen = graph.addNode("generation_params", 380, 50);
-  const behavior = graph.addNode("behavior_params", 380, 220);
-  const prompt = graph.addNode("prompt_ordering", 710, 100);
-  const ctx = graph.addNode("context_rules", 1040, 100);
-  const req = graph.addNode("request_builder", 1370, 50);
-  const resp = graph.addNode("response_processor", 1370, 250);
+  const flows = props.flows || [];
+  if (flows.length === 0) return;
 
-  graph.addEdge(entry.id, "out", gen.id, "in");
-  graph.addEdge(entry.id, "out", behavior.id, "in");
-  graph.addEdge(gen.id, "out", prompt.id, "in");
-  graph.addEdge(prompt.id, "out", ctx.id, "in");
-  graph.addEdge(ctx.id, "out", req.id, "in");
-  graph.addEdge(req.id, "out", resp.id, "in");
-
+  const { nodes, edges } = flowsToGraph(flows);
+  graph.state.nodes = nodes;
+  graph.state.edges = edges;
   nextTick(() => fitView());
 }
+
+// Alias for toolbar button
+function addTestNodes() {
+  loadFlowsIntoGraph();
+}
+
+// Reload when flows data changes
+watch(() => props.flows, (newFlows) => {
+  if (newFlows && newFlows.length > 0 && graph.state.nodes.length === 0) {
+    loadFlowsIntoGraph();
+  }
+}, { deep: false });
 
 // Initialize with test nodes
 onMounted(() => {
