@@ -2659,6 +2659,21 @@
 }
 
 
+.ew-graph-edge__path[data-v-46bbe286] {
+  fill: none;
+  stroke: var(--edge-color, #6366f1);
+  stroke-width: 2px;
+  stroke-linecap: round;
+  cursor: pointer;
+  transition: stroke-width 0.15s ease;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--edge-color, #6366f1) 40%, transparent));
+}
+.ew-graph-edge__path[data-v-46bbe286]:hover {
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--edge-color, #6366f1) 60%, transparent));
+}
+
+
 .ew-graph-port[data-v-5dce4602] {
   display: flex;
   align-items: center;
@@ -2771,63 +2786,55 @@
 }
 
 
-.ew-graph-edge__path[data-v-46bbe286] {
-  fill: none;
-  stroke: var(--edge-color, #6366f1);
-  stroke-width: 2px;
-  stroke-linecap: round;
-  cursor: pointer;
-  transition: stroke-width 0.15s ease;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--edge-color, #6366f1) 40%, transparent));
-}
-.ew-graph-edge__path[data-v-46bbe286]:hover {
-  stroke-width: 3px;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--edge-color, #6366f1) 60%, transparent));
-}
-
-
-.ew-graph-editor[data-v-3c174451] {
+.ew-graph-editor[data-v-dfa05842] {
   position: relative;
   width: 100%;
   height: 500px;
   overflow: hidden;
-  background: radial-gradient(ellipse at center, rgba(15, 15, 30, 0.95), rgba(5, 5, 15, 0.98));
+  background: radial-gradient(
+    ellipse at center,
+    rgba(15, 15, 30, 0.95),
+    rgba(5, 5, 15, 0.98)
+  );
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: grab;
-  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+  transition:
+    border-radius 0.22s cubic-bezier(0.25, 1, 0.5, 1),
+    box-shadow 0.22s cubic-bezier(0.25, 1, 0.5, 1),
+    border-color 0.22s cubic-bezier(0.25, 1, 0.5, 1);
 }
-.ew-graph-editor.is-fullscreen[data-v-3c174451] {
+.ew-graph-editor.is-fullscreen[data-v-dfa05842] {
   position: fixed;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100vw;
   height: 100vh;
   border-radius: 0;
   z-index: 99999;
+  box-shadow: none;
 }
-.ew-graph-editor[data-v-3c174451]:active {
+.ew-graph-editor[data-v-dfa05842]:active {
   cursor: grabbing;
 }
-.ew-graph-editor__grid[data-v-3c174451] {
+.ew-graph-editor__grid[data-v-dfa05842] {
   pointer-events: none;
 }
-.ew-graph-editor__canvas[data-v-3c174451] {
+.ew-graph-editor__canvas[data-v-dfa05842] {
   position: absolute;
   top: 0;
   left: 0;
   will-change: transform;
 }
-.ew-graph-editor__edges[data-v-3c174451] {
+.ew-graph-editor__edges[data-v-dfa05842] {
   pointer-events: none;
 }
-.ew-graph-editor__edges[data-v-3c174451] path {
+.ew-graph-editor__edges[data-v-dfa05842] path {
   pointer-events: stroke;
 }
-.ew-graph-editor__drag-edge[data-v-3c174451] {
+.ew-graph-editor__drag-edge[data-v-dfa05842] {
   pointer-events: none;
 }
-.ew-graph-editor__toolbar[data-v-3c174451] {
+.ew-graph-editor__toolbar[data-v-dfa05842] {
   position: absolute;
   bottom: 12px;
   left: 50%;
@@ -2843,7 +2850,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 10;
 }
-.ew-graph-editor__toolbar button[data-v-3c174451] {
+.ew-graph-editor__toolbar button[data-v-dfa05842] {
   width: 28px;
   height: 28px;
   border: none;
@@ -2857,11 +2864,11 @@
   justify-content: center;
   transition: all 0.15s ease;
 }
-.ew-graph-editor__toolbar button[data-v-3c174451]:hover {
+.ew-graph-editor__toolbar button[data-v-dfa05842]:hover {
   background: rgba(255, 255, 255, 0.2);
   color: white;
 }
-.ew-graph-editor__zoom-label[data-v-3c174451] {
+.ew-graph-editor__zoom-label[data-v-dfa05842] {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.6);
   min-width: 40px;
@@ -2869,7 +2876,7 @@
 }
 
 /* Node type label (placeholder for Phase 1) */
-.ew-graph-node__type-label[data-v-3c174451] {
+.ew-graph-node__type-label[data-v-dfa05842] {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.35);
   font-family: monospace;
