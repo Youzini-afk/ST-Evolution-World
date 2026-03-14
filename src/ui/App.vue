@@ -52,7 +52,7 @@
         />
       </template>
 
-      <transition name="ew-tab-fade">
+      <transition name="ew-tab-fade" mode="out-in">
         <div :key="store.activeTab" class="ew-content-stack">
           <template v-if="store.activeTab === 'overview'">
             <EwSectionCard title="高频设置">
@@ -1316,7 +1316,6 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 1rem;
   min-width: 0; /* Prevent flex child overflow from compressing the layout */
-  position: relative; /* Anchor for absolutely positioned leaving elements */
   font-family:
     "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
 }
@@ -2580,15 +2579,9 @@ onUnmounted(() => {
   animation: ew-breathe-morph 0.9s cubic-bezier(0.25, 1, 0.5, 1) both;
 }
 
-/* ── Container Leave: absolute so it overlaps seamlessly ── */
+/* ── Container Leave: ultra-fast clean exit ── */
 .ew-tab-fade-leave-active {
-  animation: ew-tab-leave 0.5s cubic-bezier(0.25, 1, 0.5, 1) both;
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  pointer-events: none;
-  z-index: 0;
+  animation: ew-tab-leave 0.12s cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 @keyframes ew-breathe-morph {
@@ -2597,34 +2590,8 @@ onUnmounted(() => {
 }
 
 @keyframes ew-tab-leave {
-  from { opacity: 1; transform: scale(1); }
-  to { opacity: 0; transform: scale(0.97); }
-}
-
-/* ── Outgoing Elements: Gentle Radial Scattering ── */
-.ew-tab-fade-leave-active .ew-section-card,
-.ew-tab-fade-leave-active .ew-field-row,
-.ew-tab-fade-leave-active .ew-flow-card {
-  animation-duration: 0.45s;
-  animation-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
-  animation-fill-mode: forwards;
-}
-.ew-tab-fade-leave-active .ew-section-card:nth-child(odd),
-.ew-tab-fade-leave-active .ew-field-row:nth-child(odd),
-.ew-tab-fade-leave-active .ew-flow-card:nth-child(odd) {
-  animation-name: glide-out-left;
-}
-.ew-tab-fade-leave-active .ew-section-card:nth-child(even),
-.ew-tab-fade-leave-active .ew-field-row:nth-child(even),
-.ew-tab-fade-leave-active .ew-flow-card:nth-child(even) {
-  animation-name: glide-out-right;
-}
-
-@keyframes glide-out-left {
-  to { opacity: 0; transform: translate(-35px, -20px) scale(0.97); }
-}
-@keyframes glide-out-right {
-  to { opacity: 0; transform: translate(35px, 20px) scale(0.97); }
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* ── Incoming Elements: Gentle Convergent Glide ── */
