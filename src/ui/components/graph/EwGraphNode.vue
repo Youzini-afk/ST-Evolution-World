@@ -60,6 +60,7 @@
 import type { GraphNode, GraphEdge, PortDefinition, NodeType } from './graph-types';
 import { NODE_TYPE_REGISTRY } from './graph-types';
 import EwGraphPort from './EwGraphPort.vue';
+import { markRaw } from 'vue';
 import FlowEntryNode from './nodes/FlowEntryNode.vue';
 import GenerationNode from './nodes/GenerationNode.vue';
 import BehaviorNode from './nodes/BehaviorNode.vue';
@@ -69,15 +70,15 @@ import RequestBuilderNode from './nodes/RequestBuilderNode.vue';
 import ResponseNode from './nodes/ResponseNode.vue';
 import WorldbookOutputNode from './nodes/WorldbookOutputNode.vue';
 
-const NODE_CONTENT_MAP: Partial<Record<NodeType, any>> = {
-  flow_entry: FlowEntryNode,
-  generation_params: GenerationNode,
-  behavior_params: BehaviorNode,
-  prompt_ordering: PromptOrderNode,
-  context_rules: ContextRulesNode,
-  request_builder: RequestBuilderNode,
-  response_processor: ResponseNode,
-  worldbook_output: WorldbookOutputNode,
+const NODE_CONTENT_MAP: Record<string, any> = {
+  flow_entry: markRaw(FlowEntryNode),
+  generation_params: markRaw(GenerationNode),
+  behavior_params: markRaw(BehaviorNode),
+  prompt_ordering: markRaw(PromptOrderNode),
+  context_rules: markRaw(ContextRulesNode),
+  request_builder: markRaw(RequestBuilderNode),
+  response_processor: markRaw(ResponseNode),
+  worldbook_output: markRaw(WorldbookOutputNode),
 };
 
 const props = defineProps<{

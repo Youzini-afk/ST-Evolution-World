@@ -2698,7 +2698,7 @@
 }
 
 
-.ew-graph-node[data-v-693611cc] {
+.ew-graph-node[data-v-6818b366] {
   position: absolute;
   top: 0;
   left: 0;
@@ -2715,19 +2715,19 @@
   user-select: none;
   transition: box-shadow 0.2s ease;
 }
-.ew-graph-node.is-selected[data-v-693611cc] {
+.ew-graph-node.is-selected[data-v-6818b366] {
   box-shadow:
     0 4px 24px rgba(0, 0, 0, 0.3),
     0 0 0 2px rgba(100, 160, 255, 0.6),
     0 0 16px rgba(100, 160, 255, 0.15);
 }
-.ew-graph-node[data-v-693611cc]:hover {
+.ew-graph-node[data-v-6818b366]:hover {
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.4),
     0 0 16px color-mix(in srgb, var(--node-color, #6366f1) 20%, transparent),
     0 0 0 1px rgba(255, 255, 255, 0.1) inset;
 }
-.ew-graph-node__header[data-v-693611cc] {
+.ew-graph-node__header[data-v-6818b366] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2737,14 +2737,14 @@
   border-radius: 12px 12px 0 0;
   background: color-mix(in srgb, var(--node-color, #6366f1) 15%, transparent);
 }
-.ew-graph-node__header[data-v-693611cc]:active {
+.ew-graph-node__header[data-v-6818b366]:active {
   cursor: grabbing;
 }
-.ew-graph-node__icon[data-v-693611cc] {
+.ew-graph-node__icon[data-v-6818b366] {
   font-size: 16px;
   flex-shrink: 0;
 }
-.ew-graph-node__title[data-v-693611cc] {
+.ew-graph-node__title[data-v-6818b366] {
   flex: 1;
   font-size: 13px;
   font-weight: 600;
@@ -2753,7 +2753,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ew-graph-node__collapse[data-v-693611cc] {
+.ew-graph-node__collapse[data-v-6818b366] {
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.5);
@@ -2762,58 +2762,58 @@
   padding: 2px 4px;
   border-radius: 4px;
 }
-.ew-graph-node__collapse[data-v-693611cc]:hover {
+.ew-graph-node__collapse[data-v-6818b366]:hover {
   color: rgba(255, 255, 255, 0.9);
   background: rgba(255, 255, 255, 0.1);
 }
-.ew-graph-node__ports[data-v-693611cc] {
+.ew-graph-node__ports[data-v-6818b366] {
   display: flex;
   justify-content: space-between;
   padding: 4px 6px;
 }
-.ew-graph-node__ports-in[data-v-693611cc],
-.ew-graph-node__ports-out[data-v-693611cc] {
+.ew-graph-node__ports-in[data-v-6818b366],
+.ew-graph-node__ports-out[data-v-6818b366] {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.ew-graph-node__body[data-v-693611cc] {
+.ew-graph-node__body[data-v-6818b366] {
   padding: 8px 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.6);
 }
-.ew-graph-node[data-collapsed="1"] .ew-graph-node__ports[data-v-693611cc] {
+.ew-graph-node[data-collapsed="1"] .ew-graph-node__ports[data-v-6818b366] {
   padding: 6px;
 }
 
 /* ── Shared node field styles ── */
-[data-v-693611cc] .node-fields {
+[data-v-6818b366] .node-fields {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-[data-v-693611cc] .node-field {
+[data-v-6818b366] .node-field {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-[data-v-693611cc] .node-field--row {
+[data-v-6818b366] .node-field--row {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
 }
-[data-v-693611cc] .node-field label {
+[data-v-6818b366] .node-field label {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.45);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-[data-v-693611cc] .node-field__val {
+[data-v-6818b366] .node-field__val {
   float: right;
   color: rgba(255, 255, 255, 0.7);
   font-weight: 600;
 }
-[data-v-693611cc] .node-field input[type="text"],[data-v-693611cc] .node-field input[type="number"],[data-v-693611cc] .node-field input:not([type]),[data-v-693611cc] .node-field select,[data-v-693611cc] .node-field textarea {
+[data-v-6818b366] .node-field input[type="text"],[data-v-6818b366] .node-field input[type="number"],[data-v-6818b366] .node-field input:not([type]),[data-v-6818b366] .node-field select,[data-v-6818b366] .node-field textarea {
   width: 100%;
   padding: 4px 6px;
   border-radius: 4px;
@@ -2826,15 +2826,15 @@
   transition: border-color 0.15s;
   box-sizing: border-box;
 }
-[data-v-693611cc] .node-field input:focus,[data-v-693611cc] .node-field select:focus,[data-v-693611cc] .node-field textarea:focus {
+[data-v-6818b366] .node-field input:focus,[data-v-6818b366] .node-field select:focus,[data-v-6818b366] .node-field textarea:focus {
   border-color: rgba(255, 255, 255, 0.3);
 }
-[data-v-693611cc] .node-field textarea {
+[data-v-6818b366] .node-field textarea {
   resize: vertical;
   min-height: 40px;
   line-height: 1.4;
 }
-[data-v-693611cc] .node-field input[type="range"] {
+[data-v-6818b366] .node-field input[type="range"] {
   width: 100%;
   height: 4px;
   -webkit-appearance: none;
@@ -2844,7 +2844,7 @@
   outline: none;
   border: none;
 }
-[data-v-693611cc] .node-field input[type="range"]::-webkit-slider-thumb {
+[data-v-6818b366] .node-field input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 12px;
   height: 12px;
@@ -2852,18 +2852,18 @@
   background: var(--node-color, #6366f1);
   cursor: pointer;
 }
-[data-v-693611cc] .node-field input[type="checkbox"] {
+[data-v-6818b366] .node-field input[type="checkbox"] {
   width: 14px;
   height: 14px;
   accent-color: var(--node-color, #6366f1);
 }
-[data-v-693611cc] .node-field__list-header {
+[data-v-6818b366] .node-field__list-header {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.4);
   padding-bottom: 2px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
-[data-v-693611cc] .node-field__list-item {
+[data-v-6818b366] .node-field__list-item {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2871,27 +2871,27 @@
   color: rgba(255, 255, 255, 0.65);
   padding: 1px 0;
 }
-[data-v-693611cc] .node-field__list-dot {
+[data-v-6818b366] .node-field__list-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--node-color, #6366f1);
   flex-shrink: 0;
 }
-[data-v-693611cc] .node-field__list-text {
+[data-v-6818b366] .node-field__list-text {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-[data-v-693611cc] .node-field__list-role {
+[data-v-6818b366] .node-field__list-role {
   font-size: 9px;
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.4);
 }
-[data-v-693611cc] .node-field__empty {
+[data-v-6818b366] .node-field__empty {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.25);
   font-style: italic;
