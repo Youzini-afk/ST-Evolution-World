@@ -1,8 +1,12 @@
 <template>
   <Teleport to="body" :disabled="!isFullscreen">
+  <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
+    <!-- Left palette -->
+    <EwGraphPalette :flows="paletteFlows" @add-flow="$emit('add-flow')" />
+
+    <!-- Main canvas area -->
     <div
       class="ew-graph-editor"
-      :class="{ 'is-fullscreen': isFullscreen }"
       ref="canvasContainer"
       @pointerdown="onCanvasPointerDown"
       @wheel.prevent="onWheel"
@@ -11,6 +15,8 @@
       @touchstart.passive="onTouchStart"
       @touchmove.prevent="onTouchMove"
       @touchend="onTouchEnd"
+      @dragover.prevent="onDragOver"
+      @drop.prevent="onDrop"
     >
       <!-- Grid background -->
       <svg class="ew-graph-editor__grid" :style="gridStyle">
@@ -96,16 +102,8 @@
         <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
         <button type="button" @click="zoomOut" title="缩小">−</button>
         <button type="button" @click="fitView" title="适配">⊞</button>
-        <button type="button" @click="addTestNodes" title="重置测试节点">
-          ↻
-        </button>
-        <button
-          type="button"
-          @click="toggleFullscreen"
-          :title="isFullscreen ? '退出全屏' : '全屏'"
-        >
-          {{ isFullscreen ? "⛶" : "⛶" }}
-        </button>
+        <button type="button" @click="addTestNodes" title="重置测试节点">↻</button>
+        <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">⛶</button>
       </div>
 
       <!-- Context menu -->
@@ -121,15 +119,29 @@
       <!-- Click-away overlay -->
       <div v-if="ctxMenu" class="ew-graph-ctx-overlay" @pointerdown="ctxMenu = null" />
     </div>
+  </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
 import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
+import EwGraphPalette from "./EwGraphPalette.vue";
 import { createGraphState } from "./graph-state";
-import type { GraphEdge } from "./graph-types";
+import type { GraphEdge, NodeType } from "./graph-types";
 import { NODE_TYPE_REGISTRY } from "./graph-types";
+
+const props = defineProps<{
+  flows?: Array<{ id: string; name: string; enabled: boolean }>;
+  apiPresets?: Array<{ id: string; name: string }>;
+}>();
+
+defineEmits<{
+  (e: 'add-flow'): void;
+  (e: 'update:flows', flows: any[]): void;
+}>();
+
+const paletteFlows = computed(() => props.flows || []);
 
 const canvasContainer = ref<HTMLElement>();
 const graph = createGraphState();
@@ -213,6 +225,36 @@ function onTouchMove(e: TouchEvent) {
 function onTouchEnd() {
   touchPanState = null;
   pinchState = null;
+}
+
+// ── Palette drag-drop ──
+
+function onDragOver(e: DragEvent) {
+  if (e.dataTransfer?.types.includes('application/ew-graph-node')) {
+    e.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+function onDrop(e: DragEvent) {
+  const raw = e.dataTransfer?.getData('application/ew-graph-node');
+  if (!raw) return;
+  const { kind, payload } = JSON.parse(raw) as { kind: string; payload: string };
+  const rect = canvasContainer.value?.getBoundingClientRect();
+  if (!rect) return;
+
+  const zoom = graph.state.viewport.zoom;
+  const worldX = (e.clientX - rect.left - graph.state.viewport.x) / zoom;
+  const worldY = (e.clientY - rect.top - graph.state.viewport.y) / zoom;
+
+  if (kind === 'module') {
+    const nodeType = payload as NodeType;
+    if (NODE_TYPE_REGISTRY[nodeType]) {
+      graph.addNode(nodeType, worldX, worldY);
+    }
+  } else if (kind === 'flow') {
+    // Drop a flow: create its entry node at the drop point
+    graph.addNode('flow_entry', worldX, worldY, { _flowId: payload });
+  }
 }
 const nodeRefs = new Map<string, any>();
 let fitViewRaf: number | null = null;
@@ -540,26 +582,20 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.ew-graph-editor {
-  position: relative;
+.ew-graph-root {
+  display: flex;
   width: 100%;
   height: 500px;
-  overflow: hidden;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(15, 15, 30, 0.95),
-    rgba(5, 5, 15, 0.98)
-  );
   border-radius: 12px;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  cursor: grab;
   transition:
     border-radius 0.22s cubic-bezier(0.25, 1, 0.5, 1),
     box-shadow 0.22s cubic-bezier(0.25, 1, 0.5, 1),
     border-color 0.22s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-.ew-graph-editor.is-fullscreen {
+.ew-graph-root.is-fullscreen {
   position: fixed;
   inset: 0;
   width: 100vw;
@@ -567,6 +603,19 @@ onUnmounted(() => {
   border-radius: 0;
   z-index: 99999;
   box-shadow: none;
+  border: none;
+}
+
+.ew-graph-editor {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(15, 15, 30, 0.95),
+    rgba(5, 5, 15, 0.98)
+  );
+  cursor: grab;
 }
 
 .ew-graph-editor:active {

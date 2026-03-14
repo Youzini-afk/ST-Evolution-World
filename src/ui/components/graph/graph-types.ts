@@ -7,7 +7,8 @@ export type NodeType =
   | 'prompt_ordering'
   | 'context_rules'
   | 'request_builder'
-  | 'response_processor';
+  | 'response_processor'
+  | 'worldbook_output';
 
 export interface PortDefinition {
   id: string;
@@ -131,6 +132,15 @@ export const NODE_TYPE_REGISTRY: Record<NodeType, NodeTypeInfo> = {
     icon: '🎯',
     defaultPorts: [
       { id: 'in', label: '响应', direction: 'in' },
+    ],
+  },
+  worldbook_output: {
+    type: 'worldbook_output',
+    label: '世界书输出',
+    color: '#14b8a6',
+    icon: '📚',
+    defaultPorts: [
+      { id: 'in', label: '数据', direction: 'in' },
     ],
   },
 };
