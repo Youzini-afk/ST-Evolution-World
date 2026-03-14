@@ -1,6 +1,7 @@
 <template>
   <div
     class="ew-graph-editor"
+    :class="{ 'is-fullscreen': isFullscreen }"
     ref="canvasContainer"
     @pointerdown="onCanvasPointerDown"
     @wheel.prevent="onWheel"
@@ -81,7 +82,8 @@
       <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
       <button type="button" @click="zoomOut" title="缩小">−</button>
       <button type="button" @click="fitView" title="适配">⊞</button>
-      <button type="button" @click="addTestNodes" title="测试节点">＋</button>
+      <button type="button" @click="addTestNodes" title="重置测试节点">↻</button>
+      <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">{{ isFullscreen ? '⛶' : '⛶' }}</button>
     </div>
   </div>
 </template>
@@ -96,6 +98,7 @@ import EwGraphEdge from './EwGraphEdge.vue';
 const canvasContainer = ref<HTMLElement>();
 const graph = createGraphState();
 const selectedEdge = ref<string | null>(null);
+const isFullscreen = ref(false);
 const nodeRefs = new Map<string, any>();
 
 // ── Drag edge state ──
@@ -235,6 +238,11 @@ function fitView() {
   graph.fitToView(el.clientWidth, el.clientHeight);
 }
 
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value;
+  nextTick(() => fitView());
+}
+
 // ── Port drag (edge creation) ──
 
 function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
@@ -308,6 +316,17 @@ onMounted(() => {
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: grab;
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.ew-graph-editor.is-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  z-index: 99999;
 }
 
 .ew-graph-editor:active {

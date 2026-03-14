@@ -2786,7 +2786,7 @@
 }
 
 
-.ew-graph-editor[data-v-17c9c4ce] {
+.ew-graph-editor[data-v-3c174451] {
   position: relative;
   width: 100%;
   height: 500px;
@@ -2795,29 +2795,39 @@
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: grab;
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
 }
-.ew-graph-editor[data-v-17c9c4ce]:active {
+.ew-graph-editor.is-fullscreen[data-v-3c174451] {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  z-index: 99999;
+}
+.ew-graph-editor[data-v-3c174451]:active {
   cursor: grabbing;
 }
-.ew-graph-editor__grid[data-v-17c9c4ce] {
+.ew-graph-editor__grid[data-v-3c174451] {
   pointer-events: none;
 }
-.ew-graph-editor__canvas[data-v-17c9c4ce] {
+.ew-graph-editor__canvas[data-v-3c174451] {
   position: absolute;
   top: 0;
   left: 0;
   will-change: transform;
 }
-.ew-graph-editor__edges[data-v-17c9c4ce] {
+.ew-graph-editor__edges[data-v-3c174451] {
   pointer-events: none;
 }
-.ew-graph-editor__edges[data-v-17c9c4ce] path {
+.ew-graph-editor__edges[data-v-3c174451] path {
   pointer-events: stroke;
 }
-.ew-graph-editor__drag-edge[data-v-17c9c4ce] {
+.ew-graph-editor__drag-edge[data-v-3c174451] {
   pointer-events: none;
 }
-.ew-graph-editor__toolbar[data-v-17c9c4ce] {
+.ew-graph-editor__toolbar[data-v-3c174451] {
   position: absolute;
   bottom: 12px;
   left: 50%;
@@ -2833,7 +2843,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 10;
 }
-.ew-graph-editor__toolbar button[data-v-17c9c4ce] {
+.ew-graph-editor__toolbar button[data-v-3c174451] {
   width: 28px;
   height: 28px;
   border: none;
@@ -2847,11 +2857,11 @@
   justify-content: center;
   transition: all 0.15s ease;
 }
-.ew-graph-editor__toolbar button[data-v-17c9c4ce]:hover {
+.ew-graph-editor__toolbar button[data-v-3c174451]:hover {
   background: rgba(255, 255, 255, 0.2);
   color: white;
 }
-.ew-graph-editor__zoom-label[data-v-17c9c4ce] {
+.ew-graph-editor__zoom-label[data-v-3c174451] {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.6);
   min-width: 40px;
@@ -2859,7 +2869,7 @@
 }
 
 /* Node type label (placeholder for Phase 1) */
-.ew-graph-node__type-label[data-v-17c9c4ce] {
+.ew-graph-node__type-label[data-v-3c174451] {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.35);
   font-family: monospace;
