@@ -303,7 +303,12 @@ function onFullscreenKeydown(event: KeyboardEvent) {
 // ── Port drag (edge creation) ──
 
 function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
-  const pos = getPortWorldPosition(nodeId, portId, "out");
+  // Determine if we're dragging from an 'in' or 'out' port
+  const sourceNode = graph.nodeMap.value.get(nodeId);
+  const sourcePortDef = sourceNode?.ports.find((p: any) => p.id === portId);
+  const sourceDir = sourcePortDef?.direction || "out";
+
+  const pos = getPortWorldPosition(nodeId, portId, sourceDir);
   dragEdge.value = {
     sourceNodeId: nodeId,
     sourcePortId: portId,
@@ -324,10 +329,46 @@ function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
       (ev.clientY - rect.top - graph.state.viewport.y) / zoom;
   };
 
-  const onUp = () => {
-    dragEdge.value = null;
+  const onUp = (ev: PointerEvent) => {
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
+
+    if (!dragEdge.value) return;
+
+    // Hit-test: find the nearest port within 30px
+    const dropX = dragEdge.value.currentX;
+    const dropY = dragEdge.value.currentY;
+    let bestDist = 30; // max snap distance in canvas units
+    let targetNodeId: string | null = null;
+    let targetPortId: string | null = null;
+
+    for (const node of graph.state.nodes) {
+      if (node.id === nodeId) continue; // skip self
+      for (const port of node.ports) {
+        // Only connect out→in or in→out
+        if (port.direction === sourceDir) continue;
+        const portPos = getPortWorldPosition(node.id, port.id, port.direction);
+        const dx = portPos.x - dropX;
+        const dy = portPos.y - dropY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          targetNodeId = node.id;
+          targetPortId = port.id;
+        }
+      }
+    }
+
+    if (targetNodeId && targetPortId) {
+      // Ensure correct direction: always source(out) → target(in)
+      if (sourceDir === "out") {
+        graph.addEdge(nodeId, portId, targetNodeId, targetPortId);
+      } else {
+        graph.addEdge(targetNodeId, targetPortId, nodeId, portId);
+      }
+    }
+
+    dragEdge.value = null;
   };
 
   window.addEventListener("pointermove", onMove);
