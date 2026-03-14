@@ -1,6 +1,7 @@
 <template>
   <div
     class="ew-graph-node"
+    :class="{ 'is-selected': selected }"
     :style="nodeStyle"
     :data-type="node.type"
     :data-collapsed="node.collapsed ? '1' : '0'"
@@ -63,10 +64,13 @@ const props = defineProps<{
   node: GraphNode;
   edges: GraphEdge[];
   zoom: number;
+  selected?: boolean;
+  selectedNodes?: Set<string>;
 }>();
 
 const emit = defineEmits<{
   (e: 'move', nodeId: string, x: number, y: number): void;
+  (e: 'group-move', dx: number, dy: number): void;
   (e: 'toggle-collapse'): void;
   (e: 'port-drag-start', nodeId: string, portId: string, event: PointerEvent): void;
 }>();
@@ -165,6 +169,13 @@ defineExpose({ nodeEl, getPortCenter });
   cursor: default;
   user-select: none;
   transition: box-shadow 0.2s ease;
+}
+
+.ew-graph-node.is-selected {
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.3),
+    0 0 0 2px rgba(100, 160, 255, 0.6),
+    0 0 16px rgba(100, 160, 255, 0.15);
 }
 
 .ew-graph-node:hover {

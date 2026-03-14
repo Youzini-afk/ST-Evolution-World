@@ -79,6 +79,13 @@
           />
         </svg>
 
+        <!-- Marquee selection rect -->
+        <div
+          v-if="marquee"
+          class="ew-graph-editor__marquee"
+          :style="marqueeStyle"
+        />
+
         <!-- Nodes -->
         <EwGraphNode
           v-for="node in graph.state.nodes"
@@ -87,7 +94,10 @@
           :node="node"
           :edges="graph.state.edges"
           :zoom="graph.state.viewport.zoom"
-          @move="graph.moveNode"
+          :selected="selectedNodes.has(node.id)"
+          :selected-nodes="selectedNodes"
+          @move="onNodeMove"
+          @group-move="onGroupMove"
           @toggle-collapse="graph.toggleCollapse(node.id)"
           @port-drag-start="onPortDragStart"
           @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
@@ -146,7 +156,53 @@ const paletteFlows = computed(() => props.flows || []);
 const canvasContainer = ref<HTMLElement>();
 const graph = createGraphState();
 const selectedEdge = ref<string | null>(null);
+const selectedNodes = reactive(new Set<string>());
 const isFullscreen = ref(false);
+
+// ── Marquee selection ──
+const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+const marqueeStyle = computed(() => {
+  if (!marquee.value) return {};
+  const { x1, y1, x2, y2 } = marquee.value;
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  return {
+    left: left + 'px',
+    top: top + 'px',
+    width: Math.abs(x2 - x1) + 'px',
+    height: Math.abs(y2 - y1) + 'px',
+  };
+});
+
+function onNodeMove(nodeId: string, x: number, y: number) {
+  // If the dragged node is selected and there are other selected nodes, move all
+  if (selectedNodes.has(nodeId) && selectedNodes.size > 1) {
+    const node = graph.state.nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const dx = x - node.position.x;
+    const dy = y - node.position.y;
+    for (const sid of selectedNodes) {
+      const sn = graph.state.nodes.find(n => n.id === sid);
+      if (sn) {
+        sn.position.x += dx;
+        sn.position.y += dy;
+      }
+    }
+  } else {
+    graph.moveNode(nodeId, x, y);
+  }
+}
+
+function onGroupMove(dx: number, dy: number) {
+  for (const sid of selectedNodes) {
+    const sn = graph.state.nodes.find(n => n.id === sid);
+    if (sn) {
+      sn.position.x += dx;
+      sn.position.y += dy;
+    }
+  }
+}
 
 // ── Context menu ──
 const ctxMenu = ref<{ x: number; y: number; edgeId?: string; nodeId?: string } | null>(null);
@@ -362,41 +418,124 @@ let panStartY = 0;
 let vpStartX = 0;
 let vpStartY = 0;
 
+let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+let isMarqueeMode = false;
+let marqueeOriginX = 0;
+let marqueeOriginY = 0;
+
 function onCanvasPointerDown(e: PointerEvent) {
-  // Middle button or space+left for panning
-  if (
-    e.button === 1 ||
-    (e.button === 0 && e.target === canvasContainer.value)
-  ) {
-    isPanning = true;
-    panStartX = e.clientX;
-    panStartY = e.clientY;
-    vpStartX = graph.state.viewport.x;
-    vpStartY = graph.state.viewport.y;
-
-    const onMove = (ev: PointerEvent) => {
-      if (!isPanning) return;
-      graph.panTo(
-        vpStartX + ev.clientX - panStartX,
-        vpStartY + ev.clientY - panStartY,
-      );
-    };
-    const onUp = () => {
-      isPanning = false;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
-
-  // Deselect edge on background click
-  if (
+  const isBackground =
     e.target === canvasContainer.value ||
-    (e.target as HTMLElement)?.classList?.contains("ew-graph-editor__canvas")
-  ) {
-    selectedEdge.value = null;
+    (e.target as HTMLElement)?.classList?.contains('ew-graph-editor__grid') ||
+    (e.target as HTMLElement)?.tagName === 'rect' ||
+    (e.target as HTMLElement)?.tagName === 'pattern' ||
+    (e.target as HTMLElement)?.classList?.contains('ew-graph-editor__canvas');
+
+  // Middle button = always pan
+  if (e.button === 1) {
+    startPan(e);
+    return;
   }
+
+  if (e.button === 0 && isBackground) {
+    // Clear node selection on background click (unless shift)
+    if (!e.shiftKey) {
+      selectedNodes.clear();
+    }
+    selectedEdge.value = null;
+
+    // Start pan immediately, but also start long-press timer for marquee
+    startPan(e);
+
+    const sx = e.clientX;
+    const sy = e.clientY;
+
+    longPressTimer = setTimeout(() => {
+      // Switch from pan to marquee
+      isPanning = false;
+      isMarqueeMode = true;
+      const rect = canvasContainer.value?.getBoundingClientRect();
+      if (!rect) return;
+      const zoom = graph.state.viewport.zoom;
+      marqueeOriginX = (sx - rect.left - graph.state.viewport.x) / zoom;
+      marqueeOriginY = (sy - rect.top - graph.state.viewport.y) / zoom;
+      marquee.value = {
+        x1: marqueeOriginX,
+        y1: marqueeOriginY,
+        x2: marqueeOriginX,
+        y2: marqueeOriginY,
+      };
+    }, 300);
+
+    // Also listen for move to update marquee
+    const onMoveMarquee = (ev: PointerEvent) => {
+      if (isMarqueeMode && marquee.value) {
+        const rect = canvasContainer.value?.getBoundingClientRect();
+        if (!rect) return;
+        const zoom = graph.state.viewport.zoom;
+        marquee.value.x2 = (ev.clientX - rect.left - graph.state.viewport.x) / zoom;
+        marquee.value.y2 = (ev.clientY - rect.top - graph.state.viewport.y) / zoom;
+      }
+    };
+
+    const onUpMarquee = () => {
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      if (isMarqueeMode && marquee.value) {
+        // Hit-test: select nodes inside the marquee rect
+        const { x1, y1, x2, y2 } = marquee.value;
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        const right = Math.max(x1, x2);
+        const bottom = Math.max(y1, y2);
+        for (const node of graph.state.nodes) {
+          const nx = node.position.x;
+          const ny = node.position.y;
+          const nw = 240; // node width
+          const nh = 80;  // approximate node height
+          // Check overlap
+          if (nx + nw > left && nx < right && ny + nh > top && ny < bottom) {
+            selectedNodes.add(node.id);
+          }
+        }
+      }
+      isMarqueeMode = false;
+      marquee.value = null;
+      window.removeEventListener('pointermove', onMoveMarquee);
+      window.removeEventListener('pointerup', onUpMarquee);
+    };
+
+    window.addEventListener('pointermove', onMoveMarquee);
+    window.addEventListener('pointerup', onUpMarquee);
+  }
+}
+
+function startPan(e: PointerEvent) {
+  isPanning = true;
+  panStartX = e.clientX;
+  panStartY = e.clientY;
+  vpStartX = graph.state.viewport.x;
+  vpStartY = graph.state.viewport.y;
+
+  const onMove = (ev: PointerEvent) => {
+    if (!isPanning) return;
+    // If we moved far enough, cancel the long-press timer
+    const dist = Math.abs(ev.clientX - panStartX) + Math.abs(ev.clientY - panStartY);
+    if (dist > 5 && longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    graph.panTo(
+      vpStartX + ev.clientX - panStartX,
+      vpStartY + ev.clientY - panStartY,
+    );
+  };
+  const onUp = () => {
+    isPanning = false;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
 }
 
 function onWheel(e: WheelEvent) {
@@ -755,5 +894,14 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   z-index: 99;
+}
+
+.ew-graph-editor__marquee {
+  position: absolute;
+  border: 1.5px dashed rgba(100, 160, 255, 0.7);
+  background: rgba(100, 160, 255, 0.08);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 50;
 }
 </style>
