@@ -661,7 +661,12 @@
             </template>
 
             <template v-else-if="store.activeTab === 'graph'">
-              <EwGraphEditor :flows="store.settings.flows" :api-presets="store.settings.api_presets" />
+              <EwGraphEditor
+                :flows="store.settings.flows"
+                :api-presets="store.settings.api_presets"
+                :saved-slots="store.settings.graph_canvas_slots"
+                @save-slots="(slots: any[]) => { store.settings.graph_canvas_slots = slots; }"
+              />
             </template>
 
             <template v-else-if="store.activeTab === 'history'">

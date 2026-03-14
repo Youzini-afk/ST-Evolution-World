@@ -164,11 +164,13 @@ import { NODE_TYPE_REGISTRY } from "./graph-types";
 const props = defineProps<{
   flows?: Array<{ id: string; name: string; enabled: boolean }>;
   apiPresets?: Array<{ id: string; name: string }>;
+  savedSlots?: Array<any>;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'add-flow'): void;
   (e: 'update:flows', flows: any[]): void;
+  (e: 'save-slots', slots: any[]): void;
 }>();
 
 const paletteFlows = computed(() => props.flows || []);
@@ -188,22 +190,9 @@ interface CanvasSlot {
   viewport: { x: number; y: number; zoom: number };
 }
 
-const STORAGE_KEY = 'ew-graph-canvas-slots';
-
-function loadSlotsFromStorage(): CanvasSlot[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  return [];
-}
-
-function saveSlotsToStorage() {
-  try {
-    // Save current slot state first
-    saveCurrentSlotState();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(canvasSlots.value));
-  } catch { /* ignore */ }
+function emitSaveSlots() {
+  saveCurrentSlotState();
+  emit('save-slots', JSON.parse(JSON.stringify(canvasSlots.value)));
 }
 
 const canvasSlots = ref<CanvasSlot[]>([
@@ -212,10 +201,9 @@ const canvasSlots = ref<CanvasSlot[]>([
 const activeSlotId = ref('overview');
 
 function initSlots() {
-  const saved = loadSlotsFromStorage();
+  const saved = props.savedSlots || [];
   if (saved.length > 0) {
-    // Ensure overview slot exists
-    const hasOverview = saved.some(s => s.id === 'overview');
+    const hasOverview = saved.some((s: any) => s.id === 'overview');
     if (!hasOverview) {
       saved.unshift({ id: 'overview', name: '★ 实时总览', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
     }
@@ -236,7 +224,7 @@ function switchSlot(slotId: string) {
   if (slotId === activeSlotId.value) return;
   // Save current state
   saveCurrentSlotState();
-  saveSlotsToStorage();
+  emitSaveSlots();
 
   activeSlotId.value = slotId;
 
@@ -851,7 +839,7 @@ onMounted(() => {
   }
 
   window.addEventListener("keydown", onFullscreenKeydown);
-  window.addEventListener("beforeunload", saveSlotsToStorage);
+  window.addEventListener("beforeunload", () => emitSaveSlots());
 });
 
 watch(isFullscreen, async (fullscreen) => {
@@ -871,9 +859,8 @@ onUnmounted(() => {
     containerResizeObserver = null;
   }
   document.body.style.overflow = "";
-  saveSlotsToStorage();
+  emitSaveSlots();
   window.removeEventListener("keydown", onFullscreenKeydown);
-  window.removeEventListener("beforeunload", saveSlotsToStorage);
 });
 </script>
 

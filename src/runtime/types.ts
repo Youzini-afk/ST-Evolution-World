@@ -287,6 +287,17 @@ export const EwSettingsSchema = z.object({
   ui_open: z.boolean().default(false),
   api_presets: z.array(EwApiPresetSchema).default([]),
   flows: z.array(EwFlowConfigSchema).default([]),
+  graph_canvas_slots: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    nodes: z.array(z.any()).default([]),
+    edges: z.array(z.any()).default([]),
+    viewport: z.object({
+      x: z.number().default(0),
+      y: z.number().default(0),
+      zoom: z.number().default(1),
+    }).default({ x: 0, y: 0, zoom: 1 }),
+  })).default([]),
 
   // 已弃用：仅保留用于向后兼容迁移。
   meta_entry_name: z.string().default('EW/Meta'),
