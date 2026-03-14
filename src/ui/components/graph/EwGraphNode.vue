@@ -38,7 +38,8 @@
 
       <!-- Body (collapsed hides content) -->
       <div v-if="!node.collapsed" class="ew-graph-node__body">
-        <slot />
+        <component :is="contentComponent" v-if="contentComponent" :data="node.data" />
+        <slot v-else />
       </div>
 
       <div class="ew-graph-node__ports-out">
@@ -56,9 +57,28 @@
 </template>
 
 <script setup lang="ts">
-import type { GraphNode, GraphEdge, PortDefinition } from './graph-types';
+import type { GraphNode, GraphEdge, PortDefinition, NodeType } from './graph-types';
 import { NODE_TYPE_REGISTRY } from './graph-types';
 import EwGraphPort from './EwGraphPort.vue';
+import FlowEntryNode from './nodes/FlowEntryNode.vue';
+import GenerationNode from './nodes/GenerationNode.vue';
+import BehaviorNode from './nodes/BehaviorNode.vue';
+import PromptOrderNode from './nodes/PromptOrderNode.vue';
+import ContextRulesNode from './nodes/ContextRulesNode.vue';
+import RequestBuilderNode from './nodes/RequestBuilderNode.vue';
+import ResponseNode from './nodes/ResponseNode.vue';
+import WorldbookOutputNode from './nodes/WorldbookOutputNode.vue';
+
+const NODE_CONTENT_MAP: Partial<Record<NodeType, any>> = {
+  flow_entry: FlowEntryNode,
+  generation_params: GenerationNode,
+  behavior_params: BehaviorNode,
+  prompt_ordering: PromptOrderNode,
+  context_rules: ContextRulesNode,
+  request_builder: RequestBuilderNode,
+  response_processor: ResponseNode,
+  worldbook_output: WorldbookOutputNode,
+};
 
 const props = defineProps<{
   node: GraphNode;
@@ -83,6 +103,7 @@ function registerPortRef(portId: string, comp: any) {
 }
 
 const nodeInfo = computed(() => NODE_TYPE_REGISTRY[props.node.type]);
+const contentComponent = computed(() => NODE_CONTENT_MAP[props.node.type] || null);
 
 const inPorts = computed(() =>
   props.node.ports.filter((p: PortDefinition) => p.direction === 'in')
@@ -251,5 +272,140 @@ defineExpose({ nodeEl, getPortCenter });
 
 .ew-graph-node[data-collapsed="1"] .ew-graph-node__ports {
   padding: 6px;
+}
+
+/* ── Shared node field styles ── */
+:deep(.node-fields) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:deep(.node-field) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+:deep(.node-field--row) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+:deep(.node-field label) {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+:deep(.node-field__val) {
+  float: right;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+}
+
+:deep(.node-field input[type="text"]),
+:deep(.node-field input[type="number"]),
+:deep(.node-field input:not([type])),
+:deep(.node-field select),
+:deep(.node-field textarea) {
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+:deep(.node-field input:focus),
+:deep(.node-field select:focus),
+:deep(.node-field textarea:focus) {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+:deep(.node-field textarea) {
+  resize: vertical;
+  min-height: 40px;
+  line-height: 1.4;
+}
+
+:deep(.node-field input[type="range"]) {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  outline: none;
+  border: none;
+}
+
+:deep(.node-field input[type="range"]::-webkit-slider-thumb) {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--node-color, #6366f1);
+  cursor: pointer;
+}
+
+:deep(.node-field input[type="checkbox"]) {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--node-color, #6366f1);
+}
+
+:deep(.node-field__list-header) {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+:deep(.node-field__list-item) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.65);
+  padding: 1px 0;
+}
+
+:deep(.node-field__list-dot) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--node-color, #6366f1);
+  flex-shrink: 0;
+}
+
+:deep(.node-field__list-text) {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:deep(.node-field__list-role) {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+:deep(.node-field__empty) {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.25);
+  font-style: italic;
+  text-align: center;
+  padding: 4px;
 }
 </style>
