@@ -1423,6 +1423,138 @@ onUnmounted(() => {
   border-color: rgba(239, 68, 68, 0.35);
 }
 
+.ew-status-pill[data-tone="muted"] {
+  color: color-mix(
+    in srgb,
+    var(--SmartThemeBodyColor, #edf2f9) 70%,
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 14%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 26%,
+    transparent
+  );
+}
+
+.ew-hidden-file-input {
+  display: none;
+}
+
+/* =====================================================================
+ * APP CORE TRANSITIONS (Seamless One-Take Animation)
+ * ================================================================== */
+
+/* ── Tab Switching Fade & Slide ──
+ * Creates a spatial "push in" effect rather than just flat opacity
+ */
+.ew-fade-enter-active {
+  transition: opacity 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+              transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ew-fade-leave-active {
+  transition: opacity 0.2s cubic-bezier(0.4, 0, 1, 1),
+              transform 0.2s cubic-bezier(0.4, 0, 1, 1);
+  position: absolute;
+  width: 100%;
+}
+
+.ew-fade-enter-from {
+  opacity: 0;
+  transform: translateY(12px) scale(0.985);
+}
+.ew-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.99);
+}
+
+/* ── Staggered Cascading Animations (瀑布流呼吸感) ── */
+@keyframes ew-slide-up-cascade {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* When a tab enters, its children animate sequentially */
+.ew-fade-enter-active .ew-section-card,
+.ew-fade-enter-active .ew-field-row,
+.ew-fade-enter-active .ew-flow-card {
+  animation: ew-slide-up-cascade 0.45s cubic-bezier(0.2, 0.85, 0.3, 1) both;
+}
+
+.ew-fade-enter-active .ew-section-card:nth-child(1),
+.ew-fade-enter-active .ew-field-row:nth-child(1),
+.ew-fade-enter-active .ew-flow-card:nth-child(1) { animation-delay: 0.04s; }
+
+.ew-fade-enter-active .ew-section-card:nth-child(2),
+.ew-fade-enter-active .ew-field-row:nth-child(2),
+.ew-fade-enter-active .ew-flow-card:nth-child(2) { animation-delay: 0.08s; }
+
+.ew-fade-enter-active .ew-section-card:nth-child(3),
+.ew-fade-enter-active .ew-field-row:nth-child(3),
+.ew-fade-enter-active .ew-flow-card:nth-child(3) { animation-delay: 0.12s; }
+
+.ew-fade-enter-active .ew-section-card:nth-child(4),
+.ew-fade-enter-active .ew-field-row:nth-child(4),
+.ew-fade-enter-active .ew-flow-card:nth-child(4) { animation-delay: 0.16s; }
+
+.ew-fade-enter-active .ew-section-card:nth-child(5),
+.ew-fade-enter-active .ew-field-row:nth-child(5),
+.ew-fade-enter-active .ew-flow-card:nth-child(5) { animation-delay: 0.2s; }
+
+.ew-fade-enter-active .ew-section-card:nth-child(n+6),
+.ew-fade-enter-active .ew-field-row:nth-child(n+6),
+.ew-fade-enter-active .ew-flow-card:nth-child(n+6) { animation-delay: 0.24s; }
+
+/* ── Modal & Overall Panel Intro ── */
+.ew-panel-enter-active,
+.ew-panel-leave-active {
+  transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+              transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ew-panel-enter-from {
+  opacity: 0;
+  transform: translateY(20px) scale(0.97);
+}
+.ew-panel-leave-to {
+  opacity: 0;
+  transform: translateY(15px) scale(0.98);
+}
+
+/* ── Transition Group Lists (Adding/Removing/Reordering) ── */
+.ew-list-enter-active,
+.ew-list-leave-active {
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.ew-list-enter-from {
+  opacity: 0;
+  transform: scale(0.92) translateY(-10px);
+}
+.ew-list-leave-to {
+  opacity: 0;
+  transform: scale(0.95) translateY(10px);
+}
+.ew-list-leave-active {
+  position: absolute;
+  width: 100%;
+}
+.ew-list-move {
+  transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* =====================================================================
+ * BUTTONS & INTERACTIVE ELEMENTS (Micro-interactions)
+ * ================================================================== */
+
 .ew-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -2720,33 +2852,6 @@ body:has(.theme-moon-phase) #toast-container > div:hover {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.ew-flow-scope-tab {
-  flex: 1;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 180ms ease;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ew-flow-scope-tab:hover {
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.ew-flow-scope-tab--active {
-  color: #e0e8f0;
-  background: rgba(115, 184, 255, 0.12);
-  border: 1px solid rgba(115, 184, 255, 0.2);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-}
 
 .ew-flow-loading,
 .ew-flow-empty {
