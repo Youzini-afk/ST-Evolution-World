@@ -112,8 +112,27 @@
         <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
         <button type="button" @click="zoomOut" title="缩小">−</button>
         <button type="button" @click="fitView" title="适配">⊞</button>
-        <button type="button" @click="addTestNodes" title="重置测试节点">↻</button>
+        <button type="button" @click="reloadCurrentSlot" title="重新加载">↻</button>
         <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">⛶</button>
+      </div>
+
+      <!-- Canvas slot bar -->
+      <div class="ew-graph-editor__slots">
+        <button
+          v-for="slot in canvasSlots"
+          :key="slot.id"
+          class="ew-graph-editor__slot-tab"
+          :class="{ 'is-active': activeSlotId === slot.id }"
+          @click="switchSlot(slot.id)"
+        >
+          <span>{{ slot.name }}</span>
+          <span
+            v-if="slot.id !== 'overview'"
+            class="ew-graph-editor__slot-close"
+            @click.stop="removeSlot(slot.id)"
+          >×</span>
+        </button>
+        <button class="ew-graph-editor__slot-add" @click="addSlot" title="新建画布">+</button>
       </div>
 
       <!-- Context menu -->
@@ -159,6 +178,119 @@ const graph = createGraphState();
 const selectedEdge = ref<string | null>(null);
 const selectedNodes = reactive(new Set<string>());
 const isFullscreen = ref(false);
+
+// ── Canvas Slots ──
+interface CanvasSlot {
+  id: string;
+  name: string;
+  nodes: any[];
+  edges: any[];
+  viewport: { x: number; y: number; zoom: number };
+}
+
+const STORAGE_KEY = 'ew-graph-canvas-slots';
+
+function loadSlotsFromStorage(): CanvasSlot[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return [];
+}
+
+function saveSlotsToStorage() {
+  try {
+    // Save current slot state first
+    saveCurrentSlotState();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(canvasSlots.value));
+  } catch { /* ignore */ }
+}
+
+const canvasSlots = ref<CanvasSlot[]>([
+  { id: 'overview', name: '★ 实时总览', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+]);
+const activeSlotId = ref('overview');
+
+function initSlots() {
+  const saved = loadSlotsFromStorage();
+  if (saved.length > 0) {
+    // Ensure overview slot exists
+    const hasOverview = saved.some(s => s.id === 'overview');
+    if (!hasOverview) {
+      saved.unshift({ id: 'overview', name: '★ 实时总览', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
+    }
+    canvasSlots.value = saved;
+  }
+}
+
+function saveCurrentSlotState() {
+  const slot = canvasSlots.value.find(s => s.id === activeSlotId.value);
+  if (slot) {
+    slot.nodes = JSON.parse(JSON.stringify(graph.state.nodes));
+    slot.edges = JSON.parse(JSON.stringify(graph.state.edges));
+    slot.viewport = { ...graph.state.viewport };
+  }
+}
+
+function switchSlot(slotId: string) {
+  if (slotId === activeSlotId.value) return;
+  // Save current state
+  saveCurrentSlotState();
+  saveSlotsToStorage();
+
+  activeSlotId.value = slotId;
+
+  if (slotId === 'overview') {
+    // Overview always reloads from flows
+    loadFlowsIntoGraph();
+  } else {
+    // Load saved state
+    const slot = canvasSlots.value.find(s => s.id === slotId);
+    if (slot) {
+      graph.state.nodes = JSON.parse(JSON.stringify(slot.nodes));
+      graph.state.edges = JSON.parse(JSON.stringify(slot.edges));
+      graph.state.viewport.x = slot.viewport.x;
+      graph.state.viewport.y = slot.viewport.y;
+      graph.state.viewport.zoom = slot.viewport.zoom;
+    }
+  }
+}
+
+function addSlot() {
+  const id = `slot_${Date.now().toString(36)}`;
+  const num = canvasSlots.value.length;
+  canvasSlots.value.push({
+    id,
+    name: `画布 ${num}`,
+    nodes: [],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  });
+  switchSlot(id);
+}
+
+function removeSlot(slotId: string) {
+  if (slotId === 'overview') return;
+  const idx = canvasSlots.value.findIndex(s => s.id === slotId);
+  if (idx === -1) return;
+  canvasSlots.value.splice(idx, 1);
+  if (activeSlotId.value === slotId) {
+    switchSlot('overview');
+  }
+  saveSlotsToStorage();
+}
+
+function reloadCurrentSlot() {
+  if (activeSlotId.value === 'overview') {
+    loadFlowsIntoGraph();
+  } else {
+    const slot = canvasSlots.value.find(s => s.id === activeSlotId.value);
+    if (slot) {
+      graph.state.nodes = JSON.parse(JSON.stringify(slot.nodes));
+      graph.state.edges = JSON.parse(JSON.stringify(slot.edges));
+    }
+  }
+}
 
 // ── Marquee selection ──
 const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -706,7 +838,8 @@ watch(() => props.flows, (newFlows) => {
 
 // Initialize with test nodes
 onMounted(() => {
-  addTestNodes();
+  initSlots();
+  loadFlowsIntoGraph();
   containerResizeObserver = new ResizeObserver(() => {
     if (isFullscreen.value) {
       scheduleFitView(2);
@@ -718,6 +851,7 @@ onMounted(() => {
   }
 
   window.addEventListener("keydown", onFullscreenKeydown);
+  window.addEventListener("beforeunload", saveSlotsToStorage);
 });
 
 watch(isFullscreen, async (fullscreen) => {
@@ -737,7 +871,9 @@ onUnmounted(() => {
     containerResizeObserver = null;
   }
   document.body.style.overflow = "";
+  saveSlotsToStorage();
   window.removeEventListener("keydown", onFullscreenKeydown);
+  window.removeEventListener("beforeunload", saveSlotsToStorage);
 });
 </script>
 
@@ -906,5 +1042,83 @@ onUnmounted(() => {
   border-radius: 3px;
   pointer-events: none;
   z-index: 50;
+}
+
+.ew-graph-editor__slots {
+  position: absolute;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  padding: 3px 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 40;
+}
+
+.ew-graph-editor__slot-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.ew-graph-editor__slot-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ew-graph-editor__slot-tab.is-active {
+  background: rgba(99, 102, 241, 0.25);
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.15);
+}
+
+.ew-graph-editor__slot-close {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.4;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+
+.ew-graph-editor__slot-close:hover {
+  opacity: 1;
+  background: rgba(255, 70, 70, 0.3);
+}
+
+.ew-graph-editor__slot-add {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.ew-graph-editor__slot-add:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.06);
 }
 </style>

@@ -3014,7 +3014,7 @@
 }
 
 
-.ew-graph-root[data-v-a421091c] {
+.ew-graph-root[data-v-2eb9973a] {
   display: flex;
   width: 100%;
   height: 500px;
@@ -3026,7 +3026,7 @@
     box-shadow 0.22s cubic-bezier(0.25, 1, 0.5, 1),
     border-color 0.22s cubic-bezier(0.25, 1, 0.5, 1);
 }
-.ew-graph-root.is-fullscreen[data-v-a421091c] {
+.ew-graph-root.is-fullscreen[data-v-2eb9973a] {
   position: fixed;
   inset: 0;
   width: 100vw;
@@ -3036,7 +3036,7 @@
   box-shadow: none;
   border: none;
 }
-.ew-graph-editor[data-v-a421091c] {
+.ew-graph-editor[data-v-2eb9973a] {
   position: relative;
   flex: 1;
   overflow: hidden;
@@ -3047,28 +3047,28 @@
   );
   cursor: grab;
 }
-.ew-graph-editor[data-v-a421091c]:active {
+.ew-graph-editor[data-v-2eb9973a]:active {
   cursor: grabbing;
 }
-.ew-graph-editor__grid[data-v-a421091c] {
+.ew-graph-editor__grid[data-v-2eb9973a] {
   pointer-events: none;
 }
-.ew-graph-editor__canvas[data-v-a421091c] {
+.ew-graph-editor__canvas[data-v-2eb9973a] {
   position: absolute;
   top: 0;
   left: 0;
   will-change: transform;
 }
-.ew-graph-editor__edges[data-v-a421091c] {
+.ew-graph-editor__edges[data-v-2eb9973a] {
   pointer-events: none;
 }
-.ew-graph-editor__edges[data-v-a421091c] path {
+.ew-graph-editor__edges[data-v-2eb9973a] path {
   pointer-events: stroke;
 }
-.ew-graph-editor__drag-edge[data-v-a421091c] {
+.ew-graph-editor__drag-edge[data-v-2eb9973a] {
   pointer-events: none;
 }
-.ew-graph-editor__toolbar[data-v-a421091c] {
+.ew-graph-editor__toolbar[data-v-2eb9973a] {
   position: absolute;
   bottom: 12px;
   left: 50%;
@@ -3084,7 +3084,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: 10;
 }
-.ew-graph-editor__toolbar button[data-v-a421091c] {
+.ew-graph-editor__toolbar button[data-v-2eb9973a] {
   width: 28px;
   height: 28px;
   border: none;
@@ -3098,11 +3098,11 @@
   justify-content: center;
   transition: all 0.15s ease;
 }
-.ew-graph-editor__toolbar button[data-v-a421091c]:hover {
+.ew-graph-editor__toolbar button[data-v-2eb9973a]:hover {
   background: rgba(255, 255, 255, 0.2);
   color: white;
 }
-.ew-graph-editor__zoom-label[data-v-a421091c] {
+.ew-graph-editor__zoom-label[data-v-2eb9973a] {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.6);
   min-width: 40px;
@@ -3110,14 +3110,14 @@
 }
 
 /* Node type label (placeholder for Phase 1) */
-.ew-graph-node__type-label[data-v-a421091c] {
+.ew-graph-node__type-label[data-v-2eb9973a] {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.35);
   font-family: monospace;
 }
 
 /* ── Context menu ── */
-.ew-graph-ctx[data-v-a421091c] {
+.ew-graph-ctx[data-v-2eb9973a] {
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -3129,15 +3129,15 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   padding: 4px;
   z-index: 100;
-  animation: ew-ctx-in-a421091c 0.12s ease-out;
+  animation: ew-ctx-in-2eb9973a 0.12s ease-out;
 }
-@keyframes ew-ctx-in-a421091c {
+@keyframes ew-ctx-in-2eb9973a {
 from { opacity: 0; transform: scale(0.95);
 }
 to { opacity: 1; transform: scale(1);
 }
 }
-.ew-graph-ctx button[data-v-a421091c] {
+.ew-graph-ctx button[data-v-2eb9973a] {
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.85);
@@ -3148,21 +3148,91 @@ to { opacity: 1; transform: scale(1);
   border-radius: 4px;
   transition: background 0.1s;
 }
-.ew-graph-ctx button[data-v-a421091c]:hover {
+.ew-graph-ctx button[data-v-2eb9973a]:hover {
   background: rgba(255, 255, 255, 0.1);
 }
-.ew-graph-ctx-overlay[data-v-a421091c] {
+.ew-graph-ctx-overlay[data-v-2eb9973a] {
   position: absolute;
   inset: 0;
   z-index: 99;
 }
-.ew-graph-editor__marquee[data-v-a421091c] {
+.ew-graph-editor__marquee[data-v-2eb9973a] {
   position: absolute;
   border: 1.5px dashed rgba(100, 160, 255, 0.7);
   background: rgba(100, 160, 255, 0.08);
   border-radius: 3px;
   pointer-events: none;
   z-index: 50;
+}
+.ew-graph-editor__slots[data-v-2eb9973a] {
+  position: absolute;
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  padding: 3px 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 40;
+}
+.ew-graph-editor__slot-tab[data-v-2eb9973a] {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.ew-graph-editor__slot-tab[data-v-2eb9973a]:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+.ew-graph-editor__slot-tab.is-active[data-v-2eb9973a] {
+  background: rgba(99, 102, 241, 0.25);
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.15);
+}
+.ew-graph-editor__slot-close[data-v-2eb9973a] {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.4;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 3px;
+}
+.ew-graph-editor__slot-close[data-v-2eb9973a]:hover {
+  opacity: 1;
+  background: rgba(255, 70, 70, 0.3);
+}
+.ew-graph-editor__slot-add[data-v-2eb9973a] {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.ew-graph-editor__slot-add[data-v-2eb9973a]:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 
