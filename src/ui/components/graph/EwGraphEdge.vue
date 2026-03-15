@@ -17,6 +17,13 @@
       :style="edgeStyle"
       pointer-events="none"
     />
+    <!-- Animated flow pulse -->
+    <path
+      class="ew-graph-edge__flow"
+      :d="pathD"
+      :style="edgeStyle"
+      pointer-events="none"
+    />
   </g>
 </template>
 
@@ -65,5 +72,21 @@ const edgeStyle = computed(() => ({
   stroke-linecap: round;
   transition: stroke-width 0.15s ease;
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--edge-color, #6366f1) 40%, transparent));
+}
+
+.ew-graph-edge__flow {
+  fill: none;
+  stroke: var(--edge-color, #6366f1);
+  stroke-width: 2px;
+  stroke-linecap: round;
+  stroke-dasharray: 6 14;
+  opacity: 0.7;
+  animation: edgeFlow 1.2s linear infinite;
+  filter: drop-shadow(0 0 3px var(--edge-color, #6366f1));
+}
+
+@keyframes edgeFlow {
+  from { stroke-dashoffset: 20; }
+  to   { stroke-dashoffset: 0; }
 }
 </style>

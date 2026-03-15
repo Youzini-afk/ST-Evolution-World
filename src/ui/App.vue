@@ -666,6 +666,7 @@
                 :api-presets="store.settings.api_presets"
                 :saved-slots="store.settings.graph_canvas_slots"
                 @save-slots="(slots: any[]) => { store.settings.graph_canvas_slots = slots; }"
+                @update:flows="(flows: any[]) => { store.settings.flows = flows; }"
               />
             </template>
 

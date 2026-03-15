@@ -108,10 +108,14 @@
 
       <!-- Toolbar -->
       <div class="ew-graph-editor__toolbar">
+        <button type="button" @click="undo" title="撤销 (Ctrl+Z)">↩</button>
+        <button type="button" @click="redo" title="重做 (Ctrl+Shift+Z)">↪</button>
+        <span class="ew-graph-editor__toolbar-sep"></span>
         <button type="button" @click="zoomIn" title="放大">+</button>
         <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
         <button type="button" @click="zoomOut" title="缩小">−</button>
         <button type="button" @click="fitView" title="适配">⊞</button>
+        <button type="button" @click="autoLayout" title="自动排列">⊞⊞</button>
         <button type="button" @click="reloadCurrentSlot" title="重新加载">↻</button>
         <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">⛶</button>
       </div>
@@ -147,6 +151,47 @@
       </div>
       <!-- Click-away overlay -->
       <div v-if="ctxMenu" class="ew-graph-ctx-overlay" @pointerdown="ctxMenu = null" />
+
+      <!-- Minimap -->
+      <div class="ew-graph-minimap" @pointerdown.stop="onMinimapClick">
+        <svg :viewBox="minimapViewBox" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">
+          <!-- Edges -->
+          <line
+            v-for="edge in graph.state.edges"
+            :key="'mm-e-' + edge.id"
+            :x1="getEdgeSourceX(edge)"
+            :y1="getEdgeSourceY(edge)"
+            :x2="getEdgeTargetX(edge)"
+            :y2="getEdgeTargetY(edge)"
+            stroke="rgba(99, 102, 241, 0.3)"
+            stroke-width="2"
+          />
+          <!-- Nodes -->
+          <rect
+            v-for="node in graph.state.nodes"
+            :key="'mm-' + node.id"
+            :x="node.position.x"
+            :y="node.position.y"
+            :width="180"
+            :height="node.collapsed ? 36 : 100"
+            rx="4"
+            fill="rgba(99, 102, 241, 0.5)"
+            stroke="rgba(255,255,255,0.2)"
+            stroke-width="1"
+          />
+          <!-- Viewport indicator -->
+          <rect
+            :x="viewportRect.x"
+            :y="viewportRect.y"
+            :width="viewportRect.w"
+            :height="viewportRect.h"
+            fill="rgba(255,255,255,0.06)"
+            stroke="rgba(255,255,255,0.5)"
+            stroke-width="3"
+            rx="2"
+          />
+        </svg>
+      </div>
     </div>
   </div>
   </Teleport>
@@ -157,7 +202,7 @@ import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
 import EwGraphPalette from "./EwGraphPalette.vue";
 import { createGraphState } from "./graph-state";
-import { flowsToGraph } from "./graph-serializer";
+import { flowsToGraph, graphToFlows } from "./graph-serializer";
 import type { GraphEdge, NodeType } from "./graph-types";
 import { NODE_TYPE_REGISTRY } from "./graph-types";
 
@@ -265,7 +310,7 @@ function removeSlot(slotId: string) {
   if (activeSlotId.value === slotId) {
     switchSlot('overview');
   }
-  saveSlotsToStorage();
+  emitSaveSlots();
 }
 
 function reloadCurrentSlot() {
@@ -486,6 +531,52 @@ const gridStyle = computed(() => ({
 }));
 
 const zoomPercent = computed(() => Math.round(graph.state.viewport.zoom * 100));
+
+// ── Minimap ──
+const minimapViewBox = computed(() => {
+  const nodes = graph.state.nodes;
+  if (nodes.length === 0) return '0 0 1000 600';
+  const PAD = 200;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.position.x);
+    minY = Math.min(minY, n.position.y);
+    maxX = Math.max(maxX, n.position.x + 180);
+    maxY = Math.max(maxY, n.position.y + 120);
+  }
+  return `${minX - PAD} ${minY - PAD} ${maxX - minX + PAD * 2} ${maxY - minY + PAD * 2}`;
+});
+
+const viewportRect = computed(() => {
+  const el = canvasContainer.value;
+  const vp = graph.state.viewport;
+  if (!el) return { x: 0, y: 0, w: 1000, h: 600 };
+  const w = el.clientWidth / vp.zoom;
+  const h = el.clientHeight / vp.zoom;
+  const x = -vp.x / vp.zoom;
+  const y = -vp.y / vp.zoom;
+  return { x, y, w, h };
+});
+
+function onMinimapClick(e: PointerEvent) {
+  const target = e.currentTarget as HTMLElement;
+  const svg = target.querySelector('svg');
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const xRatio = (e.clientX - rect.left) / rect.width;
+  const yRatio = (e.clientY - rect.top) / rect.height;
+
+  // Convert ratio to world coords using viewBox
+  const vb = minimapViewBox.value.split(' ').map(Number);
+  const worldX = vb[0] + xRatio * vb[2];
+  const worldY = vb[1] + yRatio * vb[3];
+
+  const el = canvasContainer.value;
+  if (!el) return;
+  const zoom = graph.state.viewport.zoom;
+  graph.state.viewport.x = -(worldX * zoom) + el.clientWidth / 2;
+  graph.state.viewport.y = -(worldY * zoom) + el.clientHeight / 2;
+}
 
 // ── Edge position helpers ──
 
@@ -712,13 +803,201 @@ function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value;
 }
 
+// ── Auto-layout (simple DAG layered) ──
+function autoLayout() {
+  pushUndo();
+  const nodes = graph.state.nodes;
+  const edges = graph.state.edges;
+  if (nodes.length === 0) return;
+
+  // Build adjacency
+  const outgoing = new Map<string, string[]>();
+  const incoming = new Map<string, string[]>();
+  for (const n of nodes) {
+    outgoing.set(n.id, []);
+    incoming.set(n.id, []);
+  }
+  for (const e of edges) {
+    outgoing.get(e.source)?.push(e.target);
+    incoming.get(e.source); // ensure entry
+    incoming.get(e.target)?.push(e.source);
+  }
+
+  // Assign layers via BFS from roots
+  const layer = new Map<string, number>();
+  const roots = nodes.filter(n => (incoming.get(n.id)?.length || 0) === 0);
+  if (roots.length === 0) roots.push(nodes[0]); // fallback
+
+  const queue: string[] = roots.map(n => n.id);
+  for (const id of queue) layer.set(id, 0);
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const l = layer.get(id)!;
+    for (const next of (outgoing.get(id) || [])) {
+      const existing = layer.get(next);
+      if (existing === undefined || existing < l + 1) {
+        layer.set(next, l + 1);
+        queue.push(next);
+      }
+    }
+  }
+
+  // Assign layers to disconnected nodes
+  for (const n of nodes) {
+    if (!layer.has(n.id)) layer.set(n.id, 0);
+  }
+
+  // Group nodes by layer
+  const layers = new Map<number, string[]>();
+  for (const [id, l] of layer) {
+    if (!layers.has(l)) layers.set(l, []);
+    layers.get(l)!.push(id);
+  }
+
+  // Position: horizontal spacing per layer, vertical centering
+  const H_GAP = 300;
+  const V_GAP = 160;
+  const START_X = 60;
+  const START_Y = 60;
+
+  for (const [l, ids] of layers) {
+    const x = START_X + l * H_GAP;
+    for (let i = 0; i < ids.length; i++) {
+      const node = nodes.find(n => n.id === ids[i]);
+      if (node) {
+        node.position.x = x;
+        node.position.y = START_Y + i * V_GAP;
+      }
+    }
+  }
+
+  nextTick(() => fitView());
+}
+
+// ── Clipboard (copy/paste) ──
+let clipboard: { nodes: any[]; edges: any[] } | null = null;
+
+function copySelectedNodes() {
+  if (selectedNodes.size === 0) return;
+  const nodeIds = new Set(selectedNodes);
+  const copiedNodes = graph.state.nodes
+    .filter(n => nodeIds.has(n.id))
+    .map(n => JSON.parse(JSON.stringify(n)));
+  const copiedEdges = graph.state.edges
+    .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
+    .map(e => JSON.parse(JSON.stringify(e)));
+  clipboard = { nodes: copiedNodes, edges: copiedEdges };
+}
+
+function pasteNodes() {
+  if (!clipboard || clipboard.nodes.length === 0) return;
+  pushUndo();
+  const idMap = new Map<string, string>();
+  const OFFSET = 60;
+
+  // Create new IDs and offset positions
+  for (const node of clipboard.nodes) {
+    const newId = `paste_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    idMap.set(node.id, newId);
+  }
+
+  selectedNodes.clear();
+
+  for (const node of clipboard.nodes) {
+    const newId = idMap.get(node.id)!;
+    const newNode = {
+      ...JSON.parse(JSON.stringify(node)),
+      id: newId,
+      position: { x: node.position.x + OFFSET, y: node.position.y + OFFSET },
+    };
+    graph.state.nodes.push(newNode);
+    selectedNodes.add(newId);
+  }
+
+  for (const edge of clipboard.edges) {
+    const newSource = idMap.get(edge.source);
+    const newTarget = idMap.get(edge.target);
+    if (newSource && newTarget) {
+      graph.addEdge(newSource, edge.sourcePort, newTarget, edge.targetPort);
+    }
+  }
+
+  // Update clipboard positions for cascading pastes
+  clipboard = {
+    nodes: clipboard.nodes.map(n => ({
+      ...n,
+      position: { x: n.position.x + OFFSET, y: n.position.y + OFFSET },
+    })),
+    edges: clipboard.edges,
+  };
+}
+
+// ── Undo / Redo ──
+const MAX_HISTORY = 30;
+const undoStack: string[] = [];
+const redoStack: string[] = [];
+
+function takeSnapshot(): string {
+  return JSON.stringify({ nodes: graph.state.nodes, edges: graph.state.edges });
+}
+
+function pushUndo() {
+  undoStack.push(takeSnapshot());
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack.length = 0; // Clear redo on new action
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  redoStack.push(takeSnapshot());
+  const snapshot = JSON.parse(undoStack.pop()!);
+  graph.state.nodes = snapshot.nodes;
+  graph.state.edges = snapshot.edges;
+}
+
+function redo() {
+  if (redoStack.length === 0) return;
+  undoStack.push(takeSnapshot());
+  const snapshot = JSON.parse(redoStack.pop()!);
+  graph.state.nodes = snapshot.nodes;
+  graph.state.edges = snapshot.edges;
+}
+
 function onFullscreenKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && isFullscreen.value) {
     isFullscreen.value = false;
   }
   if ((event.key === "Delete" || event.key === "Backspace") && selectedEdge.value) {
+    pushUndo();
     graph.removeEdge(selectedEdge.value);
     selectedEdge.value = null;
+  }
+  // Delete selected nodes
+  if ((event.key === "Delete" || event.key === "Backspace") && selectedNodes.size > 0 && !selectedEdge.value) {
+    pushUndo();
+    for (const nodeId of selectedNodes) {
+      graph.removeNode(nodeId);
+    }
+    selectedNodes.clear();
+  }
+  // Copy
+  if ((event.ctrlKey || event.metaKey) && event.key === "c") {
+    copySelectedNodes();
+  }
+  // Paste
+  if ((event.ctrlKey || event.metaKey) && event.key === "v") {
+    pasteNodes();
+  }
+  // Undo
+  if ((event.ctrlKey || event.metaKey) && event.key === "z" && !event.shiftKey) {
+    event.preventDefault();
+    undo();
+  }
+  // Redo
+  if ((event.ctrlKey || event.metaKey) && ((event.key === "z" && event.shiftKey) || event.key === "y")) {
+    event.preventDefault();
+    redo();
   }
 }
 
@@ -823,6 +1102,23 @@ watch(() => props.flows, (newFlows) => {
     loadFlowsIntoGraph();
   }
 }, { deep: false });
+
+// ── Bidirectional data sync (overview only) ──
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(
+  () => graph.state.nodes.map(n => n.data),
+  () => {
+    if (activeSlotId.value !== 'overview') return;
+    if (!props.flows || props.flows.length === 0) return;
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      const updated = graphToFlows(graph.state.nodes, props.flows as any[]);
+      emit('update:flows', updated);
+    }, 500);
+  },
+  { deep: true },
+);
 
 // Initialize with test nodes
 onMounted(() => {
@@ -1107,5 +1403,32 @@ onUnmounted(() => {
   border-color: rgba(255, 255, 255, 0.3);
   color: rgba(255, 255, 255, 0.8);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.ew-graph-editor__toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 0 2px;
+}
+
+.ew-graph-minimap {
+  position: absolute;
+  bottom: 90px;
+  right: 12px;
+  width: 180px;
+  height: 120px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 35;
+  overflow: hidden;
+  cursor: crosshair;
+  transition: opacity 0.2s ease;
+}
+
+.ew-graph-minimap:hover {
+  border-color: rgba(255, 255, 255, 0.2);
 }
 </style>

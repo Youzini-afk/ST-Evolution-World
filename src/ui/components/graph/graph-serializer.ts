@@ -135,3 +135,81 @@ export function flowsToGraph(
 
   return { nodes: allNodes, edges: allEdges };
 }
+
+/**
+ * Convert graph nodes back into flow configs (reverse of flowToNodes).
+ * Groups nodes by _flowId found in flow_entry nodes,
+ * then merges data from each node type into the flow config.
+ */
+export function graphToFlows(
+  nodes: GraphNode[],
+  originalFlows: Array<Record<string, any>>,
+): Array<Record<string, any>> {
+  // Find all flow_entry nodes — each one represents one flow
+  const entryNodes = nodes.filter(n => n.type === 'flow_entry' && n.data._flowId);
+
+  return originalFlows.map(flow => {
+    const entry = entryNodes.find(n => n.data._flowId === flow.id);
+    if (!entry) return flow; // No matching entry node, return as-is
+
+    // Find all nodes that belong to this flow by prefix
+    const prefix = entry.id.replace(/_[^_]*$/, ''); // e.g. f_flowId
+    const siblings = nodes.filter(n => n.id.startsWith(prefix + '_') || n.id === entry.id);
+
+    const updated = { ...flow };
+
+    for (const node of siblings) {
+      switch (node.type) {
+        case 'flow_entry':
+          updated.name = node.data.name ?? flow.name;
+          updated.enabled = node.data.enabled ?? flow.enabled;
+          updated.timing = node.data.timing ?? flow.timing;
+          updated.priority = node.data.priority ?? flow.priority;
+          updated.api_preset_id = node.data.api_preset_id ?? flow.api_preset_id;
+          updated.timeout_ms = node.data.timeout_ms ?? flow.timeout_ms;
+          break;
+        case 'generation_params':
+          updated.generation_options = {
+            ...(flow.generation_options || {}),
+            temperature: node.data.temperature,
+            top_p: node.data.top_p,
+            frequency_penalty: node.data.frequency_penalty,
+            presence_penalty: node.data.presence_penalty,
+            max_reply_tokens: node.data.max_reply_tokens,
+            stream: node.data.stream,
+          };
+          break;
+        case 'behavior_params':
+          updated.behavior_options = {
+            ...(flow.behavior_options || {}),
+            name_behavior: node.data.name_behavior,
+            reasoning_effort: node.data.reasoning_effort,
+            verbosity: node.data.verbosity,
+            request_thinking: node.data.request_thinking,
+            continue_prefill: node.data.continue_prefill,
+            squash_system_messages: node.data.squash_system_messages,
+          };
+          break;
+        case 'prompt_ordering':
+          if (node.data.prompt_order) updated.prompt_order = node.data.prompt_order;
+          break;
+        case 'context_rules':
+          if (node.data.extract_rules) updated.extract_rules = node.data.extract_rules;
+          if (node.data.exclude_rules) updated.exclude_rules = node.data.exclude_rules;
+          if (node.data.custom_regex_rules) updated.custom_regex_rules = node.data.custom_regex_rules;
+          break;
+        case 'request_builder':
+          updated.request_template = node.data.request_template ?? flow.request_template;
+          updated.system_prompt = node.data.system_prompt ?? flow.system_prompt;
+          updated.headers_json = node.data.headers_json ?? flow.headers_json;
+          break;
+        case 'response_processor':
+          updated.response_extract_regex = node.data.response_extract_regex ?? flow.response_extract_regex;
+          updated.response_remove_regex = node.data.response_remove_regex ?? flow.response_remove_regex;
+          break;
+      }
+    }
+
+    return updated;
+  });
+}
