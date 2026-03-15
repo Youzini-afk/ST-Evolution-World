@@ -156,15 +156,17 @@
       <div
         class="ew-graph-minimap"
         :style="{ right: minimapPos.x + 'px', bottom: minimapPos.y + 'px' }"
+        @contextmenu.prevent
+        @selectstart.prevent
       >
-        <div class="ew-graph-minimap__handle" @pointerdown.stop="onMinimapDragStart">
+        <div class="ew-graph-minimap__handle" @pointerdown.stop.prevent="onMinimapDragStart">
           <span>⡇</span>
         </div>
         <svg
           :viewBox="minimapViewBox"
           preserveAspectRatio="xMidYMid meet"
           width="100%" height="100%"
-          @pointerdown.stop="onMinimapPointerDown"
+          @pointerdown.stop.prevent="onMinimapPointerDown"
         >
           <!-- Edges as cubic Bézier curves -->
           <path
@@ -1530,6 +1532,9 @@ onUnmounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .ew-graph-minimap:hover {
