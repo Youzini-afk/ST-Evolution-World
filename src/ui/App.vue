@@ -671,7 +671,7 @@
             </template>
 
             <template v-else-if="store.activeTab === 'workbench'">
-              <EwModuleWorkbench
+              <EwNodeInspector
                 :graphs="workbenchGraphs"
                 :selected-graph-id="store.selectedGraphId"
                 :selected-node-id="store.selectedNodeId"
@@ -805,7 +805,7 @@ import EwPanelShell from "./components/EwPanelShell.vue";
 import EwSectionCard from "./components/EwSectionCard.vue";
 import { getFieldHelp, PANEL_TABS } from "./help-meta";
 import EwGraphEditor from "./components/graph/EwGraphEditor.vue";
-import EwModuleWorkbench from "./components/graph/EwModuleWorkbench.vue";
+import EwNodeInspector from "./components/graph/EwNodeInspector.vue";
 import { replaceWorldbook } from "../runtime/compat/worldbook";
 import { showEwNotice } from "./notice";
 import { useEwStore } from "./store";

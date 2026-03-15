@@ -50,6 +50,8 @@ export interface ConfigFieldSchema {
   type: 'text' | 'number' | 'boolean' | 'select' | 'textarea' | 'json' | 'slider';
   options?: string[];        // for select
   min?: number; max?: number; step?: number; // for slider/number
+  description?: string;      // tooltip / help text
+  placeholder?: string;      // input placeholder
 }
 
 /** Blueprint definition for a module type (registered in the registry) */
