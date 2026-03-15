@@ -1,5 +1,6 @@
 import { readExtensionSettings, writeExtensionSettings } from '../st-adapter';
 import { createDefaultApiPreset, createDefaultFlow } from './factory';
+import { migrateAllFlows } from './flow-migrator';
 import { simpleHash } from './helpers';
 import { readSharedSettings, writeSharedSettings } from './shared-settings-storage';
 import {
@@ -270,11 +271,28 @@ function normalizeSettings(raw: unknown): EwSettings {
     });
   });
 
-  return EwSettingsSchema.parse({
+  const result = EwSettingsSchema.parse({
     ...base,
     api_presets: apiPresets,
     flows: normalizedFlows,
   });
+
+  // Auto-migrate legacy flows → WorkbenchGraphs (if workbench is empty)
+  if (
+    (!result.graph_canvas_slots || result.graph_canvas_slots.length === 0) &&
+    normalizedFlows.length > 0 &&
+    !(result as any).workbench_graphs?.length
+  ) {
+    try {
+      // Direct import — flow-migrator is bundled by webpack
+      (result as any).workbench_graphs = migrateAllFlows(normalizedFlows);
+      console.info(`[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs`);
+    } catch (e) {
+      console.debug('[Evolution World] Auto-migration skipped:', e);
+    }
+  }
+
+  return result;
 }
 
 function emitSettings(settings: EwSettings) {
