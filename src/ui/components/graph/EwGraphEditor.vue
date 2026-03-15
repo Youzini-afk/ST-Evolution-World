@@ -116,8 +116,8 @@
         <button type="button" @click="zoomIn" title="放大">+</button>
         <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
         <button type="button" @click="zoomOut" title="缩小">−</button>
-        <button type="button" @click="fitView" title="适配">⊞</button>
-        <button type="button" @click="autoLayout" title="自动排列">⊞⊞</button>
+        <button type="button" @click="fitView" title="适配视图">◎</button>
+        <button type="button" @click="autoLayout" title="自动排列">⊞</button>
         <button type="button" @click="reloadCurrentSlot" title="重新加载">↻</button>
         <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">⛶</button>
       </div>
