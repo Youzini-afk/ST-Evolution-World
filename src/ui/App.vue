@@ -671,11 +671,10 @@
             </template>
 
             <template v-else-if="store.activeTab === 'workbench'">
-              <div class="ew-workbench-tab-placeholder">
-                <div class="ew-workbench-tab-placeholder__icon">🧩</div>
-                <div class="ew-workbench-tab-placeholder__text">模块工作台已在全屏模式中打开</div>
-                <div class="ew-workbench-tab-placeholder__hint">按 ESC 或点击工作台右上角关闭可返回</div>
-              </div>
+              <EwModuleWorkbench
+                :graphs="workbenchGraphs"
+                @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
+              />
             </template>
 
             <template v-else-if="store.activeTab === 'history'">
@@ -691,13 +690,7 @@
     </EwPanelShell>
   </transition>
 
-  <!-- Module Workbench (full-screen overlay, outside panel) -->
-  <EwModuleWorkbench
-    :visible="workbenchVisible"
-    :graphs="workbenchGraphs"
-    @close="workbenchVisible = false"
-    @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
-  />
+
 
   <!-- ── 写入角色卡弹窗 ── -->
   <transition name="ew-modal">
@@ -823,22 +816,7 @@ const migratingSnapshots = ref(false);
 const crossfadeRef = ref<HTMLDivElement | null>(null);
 
 // ── Module Workbench state ──
-const workbenchVisible = ref(false);
 const workbenchGraphs = computed(() => (store.settings as any).workbench_graphs ?? []);
-
-// Auto-open workbench when switching to the workbench tab
-watch(() => store.activeTab, (tab) => {
-  if (tab === 'workbench') {
-    workbenchVisible.value = true;
-  }
-});
-
-// Auto-switch back to overview when workbench is closed via its own close button
-watch(workbenchVisible, (visible) => {
-  if (!visible && store.activeTab === 'workbench') {
-    store.setActiveTab('overview');
-  }
-});
 
 let crossfadePrevHeight = 0;
 let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;

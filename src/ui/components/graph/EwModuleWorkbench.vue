@@ -1,143 +1,143 @@
 <template>
-  <Teleport to="body">
-    <div class="ew-workbench" :class="{ 'is-visible': visible }">
-      <!-- Top bar: graph tabs + controls -->
-      <div class="ew-workbench__topbar">
-        <div class="ew-workbench__tabs">
-          <button
-            v-for="(g, i) in graphs"
-            :key="g.id"
-            class="ew-workbench__tab"
-            :class="{ active: activeGraphId === g.id }"
-            @click="activeGraphId = g.id"
-          >
-            {{ g.name || `图 ${i + 1}` }}
-          </button>
-          <button class="ew-workbench__tab ew-workbench__tab--add" @click="addGraph">
-            +
-          </button>
-        </div>
-        <div class="ew-workbench__controls">
-          <button class="ew-workbench__ctrl-btn" @click="renameGraph" title="重命名">✏️</button>
-          <button class="ew-workbench__ctrl-btn" @click="toggleEnabled" :title="activeGraph?.enabled ? '禁用' : '启用'">
-            {{ activeGraph?.enabled ? '🟢' : '⚫' }}
-          </button>
-          <button class="ew-workbench__ctrl-btn ew-workbench__ctrl-btn--close" @click="$emit('close')" title="关闭工作台">
-            ✕
-          </button>
-        </div>
-      </div>
-
-      <div class="ew-workbench__main">
-        <!-- Module palette -->
-        <EwModulePalette />
-
-        <!-- Canvas area -->
-        <div
-          class="ew-workbench__canvas"
-          ref="canvasRef"
-          @pointerdown="onCanvasPointerDown"
-          @wheel.prevent="onWheel"
-          @dragover.prevent
-          @drop.prevent="onDrop"
-          @dblclick="onCanvasDblClick"
+  <Teleport to="body" :disabled="!isFullscreen">
+  <div class="ew-workbench" :class="{ 'is-fullscreen': isFullscreen }">
+    <!-- Top bar: graph tabs + controls -->
+    <div class="ew-workbench__topbar">
+      <div class="ew-workbench__tabs">
+        <button
+          v-for="(g, i) in graphs"
+          :key="g.id"
+          class="ew-workbench__tab"
+          :class="{ active: activeGraphId === g.id }"
+          @click="activeGraphId = g.id"
         >
-          <!-- Grid -->
-          <svg class="ew-workbench__grid">
-            <defs>
-              <pattern
-                id="ew-wb-dots"
-                :width="20 * viewport.zoom"
-                :height="20 * viewport.zoom"
-                patternUnits="userSpaceOnUse"
-                :x="viewport.x" :y="viewport.y"
-              >
-                <circle
-                  :cx="(20 * viewport.zoom) / 2"
-                  :cy="(20 * viewport.zoom) / 2"
-                  :r="1 * viewport.zoom"
-                  fill="rgba(255,255,255,0.1)"
-                />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#ew-wb-dots)" />
+          {{ g.name || `图 ${i + 1}` }}
+        </button>
+        <button class="ew-workbench__tab ew-workbench__tab--add" @click="addGraph">
+          +
+        </button>
+      </div>
+      <div class="ew-workbench__controls">
+        <button class="ew-workbench__ctrl-btn" @click="renameGraph" title="重命名">✏️</button>
+        <button class="ew-workbench__ctrl-btn" @click="toggleEnabled" :title="activeGraph?.enabled ? '禁用' : '启用'">
+          {{ activeGraph?.enabled ? '🟢' : '⚫' }}
+        </button>
+        <button class="ew-workbench__ctrl-btn" @click="isFullscreen = !isFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">
+          ⛶
+        </button>
+      </div>
+    </div>
+
+    <div class="ew-workbench__main">
+      <!-- Module palette -->
+      <EwModulePalette />
+
+      <!-- Canvas area -->
+      <div
+        class="ew-workbench__canvas"
+        ref="canvasRef"
+        @pointerdown="onCanvasPointerDown"
+        @wheel.prevent="onWheel"
+        @dragover.prevent
+        @drop.prevent="onDrop"
+        @dblclick="onCanvasDblClick"
+      >
+        <!-- Grid -->
+        <svg class="ew-workbench__grid">
+          <defs>
+            <pattern
+              id="ew-wb-dots"
+              :width="20 * viewport.zoom"
+              :height="20 * viewport.zoom"
+              patternUnits="userSpaceOnUse"
+              :x="viewport.x" :y="viewport.y"
+            >
+              <circle
+                :cx="(20 * viewport.zoom) / 2"
+                :cy="(20 * viewport.zoom) / 2"
+                :r="1 * viewport.zoom"
+                fill="rgba(255,255,255,0.1)"
+              />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#ew-wb-dots)" />
+        </svg>
+
+        <!-- Transform wrapper -->
+        <div class="ew-workbench__transform" :style="transformStyle">
+          <!-- Edges SVG -->
+          <svg class="ew-workbench__edges-svg" style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:visible">
+            <line
+              v-for="edge in activeEdges"
+              :key="edge.id"
+              :x1="getPortPos(edge.source, edge.sourcePort)?.x ?? 0"
+              :y1="getPortPos(edge.source, edge.sourcePort)?.y ?? 0"
+              :x2="getPortPos(edge.target, edge.targetPort)?.x ?? 0"
+              :y2="getPortPos(edge.target, edge.targetPort)?.y ?? 0"
+              stroke="rgba(99,102,241,0.5)"
+              stroke-width="2"
+              stroke-dasharray="6 3"
+            />
           </svg>
 
-          <!-- Transform wrapper -->
-          <div class="ew-workbench__transform" :style="transformStyle">
-            <!-- Edges SVG -->
-            <svg class="ew-workbench__edges-svg" style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:visible">
-              <line
-                v-for="edge in activeEdges"
-                :key="edge.id"
-                :x1="getPortPos(edge.source, edge.sourcePort)?.x ?? 0"
-                :y1="getPortPos(edge.source, edge.sourcePort)?.y ?? 0"
-                :x2="getPortPos(edge.target, edge.targetPort)?.x ?? 0"
-                :y2="getPortPos(edge.target, edge.targetPort)?.y ?? 0"
-                stroke="rgba(99,102,241,0.5)"
-                stroke-width="2"
-                stroke-dasharray="6 3"
-              />
-            </svg>
-
-            <!-- Nodes -->
+          <!-- Nodes -->
+          <div
+            v-for="node in activeNodes"
+            :key="node.id"
+            class="ew-workbench__node"
+            :class="{ 'is-selected': selectedNodeId === node.id }"
+            :style="nodeStyle(node)"
+            @pointerdown.stop="onNodePointerDown($event, node)"
+            @dblclick.stop="openPropertyPanel(node)"
+          >
             <div
-              v-for="node in activeNodes"
-              :key="node.id"
-              class="ew-workbench__node"
-              :class="{ 'is-selected': selectedNodeId === node.id }"
-              :style="nodeStyle(node)"
-              @pointerdown.stop="onNodePointerDown($event, node)"
-              @dblclick.stop="openPropertyPanel(node)"
+              class="ew-workbench__node-header"
+              :style="{ background: getModuleColor(node.moduleId) }"
             >
+              <span class="ew-workbench__node-icon">{{ getModuleIcon(node.moduleId) }}</span>
+              <span class="ew-workbench__node-title">{{ getModuleLabel(node.moduleId) }}</span>
+            </div>
+            <div class="ew-workbench__node-ports">
               <div
-                class="ew-workbench__node-header"
-                :style="{ background: getModuleColor(node.moduleId) }"
+                v-for="port in getModulePorts(node.moduleId, 'in')"
+                :key="port.id"
+                class="ew-workbench__port ew-workbench__port--in"
+                :data-node-id="node.id"
+                :data-port-id="port.id"
               >
-                <span class="ew-workbench__node-icon">{{ getModuleIcon(node.moduleId) }}</span>
-                <span class="ew-workbench__node-title">{{ getModuleLabel(node.moduleId) }}</span>
+                <span class="ew-workbench__port-dot" />
+                <span class="ew-workbench__port-label">{{ port.label }}</span>
               </div>
-              <div class="ew-workbench__node-ports">
-                <div
-                  v-for="port in getModulePorts(node.moduleId, 'in')"
-                  :key="port.id"
-                  class="ew-workbench__port ew-workbench__port--in"
-                  :data-node-id="node.id"
-                  :data-port-id="port.id"
-                >
-                  <span class="ew-workbench__port-dot" />
-                  <span class="ew-workbench__port-label">{{ port.label }}</span>
-                </div>
-                <div
-                  v-for="port in getModulePorts(node.moduleId, 'out')"
-                  :key="port.id"
-                  class="ew-workbench__port ew-workbench__port--out"
-                  :data-node-id="node.id"
-                  :data-port-id="port.id"
-                >
-                  <span class="ew-workbench__port-label">{{ port.label }}</span>
-                  <span class="ew-workbench__port-dot" />
-                </div>
+              <div
+                v-for="port in getModulePorts(node.moduleId, 'out')"
+                :key="port.id"
+                class="ew-workbench__port ew-workbench__port--out"
+                :data-node-id="node.id"
+                :data-port-id="port.id"
+              >
+                <span class="ew-workbench__port-label">{{ port.label }}</span>
+                <span class="ew-workbench__port-dot" />
               </div>
             </div>
           </div>
-
-          <!-- Empty state -->
-          <div v-if="activeNodes.length === 0" class="ew-workbench__empty">
-            <div class="ew-workbench__empty-icon">🧩</div>
-            <div class="ew-workbench__empty-text">从左侧拖入模块开始搭建管线</div>
-            <div class="ew-workbench__empty-hint">双击节点编辑参数 · 滚轮缩放 · 拖拽画布平移</div>
-          </div>
         </div>
 
-        <!-- Property panel -->
-        <EwNodePropertyPanel
-          :node="editingNode"
-          @close="editingNode = null"
-          @update-config="onUpdateConfig"
-        />
+        <!-- Empty state -->
+        <div v-if="activeNodes.length === 0" class="ew-workbench__empty">
+          <div class="ew-workbench__empty-icon">🧩</div>
+          <div class="ew-workbench__empty-text">从左侧拖入模块开始搭建管线</div>
+          <div class="ew-workbench__empty-hint">双击节点编辑参数 · 滚轮缩放 · 拖拽画布平移</div>
+        </div>
       </div>
+
+      <!-- Property panel -->
+      <EwNodePropertyPanel
+        :node="editingNode"
+        @close="editingNode = null"
+        @update-config="onUpdateConfig"
+      />
     </div>
+  </div>
   </Teleport>
 </template>
 
@@ -148,14 +148,14 @@ import { MODULE_REGISTRY } from './module-registry';
 import type { WorkbenchGraph, WorkbenchNode, WorkbenchEdge, ModulePortDef } from './module-types';
 
 const props = defineProps<{
-  visible: boolean;
   graphs: WorkbenchGraph[];
 }>();
 
 const emit = defineEmits<{
-  (e: 'close'): void;
   (e: 'update:graphs', graphs: WorkbenchGraph[]): void;
 }>();
+
+const isFullscreen = ref(false);
 
 // ── Active graph ──
 const activeGraphId = ref(props.graphs[0]?.id ?? '');
@@ -207,7 +207,6 @@ function onCanvasPanEnd() {
 function onWheel(e: WheelEvent) {
   const delta = e.deltaY > 0 ? 0.9 : 1.1;
   const newZoom = Math.max(0.2, Math.min(3, viewport.zoom * delta));
-  // Zoom toward cursor
   const rect = canvasRef.value?.getBoundingClientRect();
   if (rect) {
     const cx = e.clientX - rect.left;
@@ -381,20 +380,22 @@ function getPortPos(nodeId: string, portId: string) {
 
 <style scoped>
 .ew-workbench {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
   display: flex;
   flex-direction: column;
   background: #0a0a1a;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
+  height: 500px;
+  min-height: 300px;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
 }
 
-.ew-workbench.is-visible {
-  opacity: 1;
-  pointer-events: auto;
+/* Full-screen mode: fixed overlay covering entire screen */
+.ew-workbench.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  z-index: 10000;
+  border-radius: 0;
 }
 
 /* Top bar */
@@ -467,11 +468,6 @@ function getPortPos(nodeId: string, portId: string) {
 .ew-workbench__ctrl-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.8);
-}
-
-.ew-workbench__ctrl-btn--close:hover {
-  background: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
 }
 
 /* Main layout */
