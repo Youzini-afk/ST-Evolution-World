@@ -273,14 +273,54 @@ async function executeModule(
     case 'cfg_system_prompt':
       return { prompt: config.content ?? '' };
 
-    // ═══════ Compose modules (iteration 5) ═══════
+    // ═══════ Compose modules ═══════
+    case 'cmp_prompt_order': {
+      const { composePromptOrder } = await import('./module-impls/compose-impls');
+      const components = inputs.components ?? {};
+      const order = inputs.order ?? config.prompt_order ?? [];
+      return { msgs_out: composePromptOrder(components, order) };
+    }
+    case 'cmp_depth_inject': {
+      const { composeDepthInject } = await import('./module-impls/compose-impls');
+      const msgs = Array.isArray(inputs.messages) ? inputs.messages : [];
+      const injections = Array.isArray(inputs.injections) ? inputs.injections : [];
+      return { msgs_out: composeDepthInject(msgs, injections) };
+    }
     case 'cmp_message_concat': {
       const a = Array.isArray(inputs.a) ? inputs.a : [];
       const b = Array.isArray(inputs.b) ? inputs.b : [];
       return { msgs_out: [...a, ...b] };
     }
+    case 'cmp_json_body_build': {
+      const { composeJsonBodyBuild } = await import('./module-impls/compose-impls');
+      return { body: composeJsonBodyBuild(inputs.context ?? {}, inputs.config) };
+    }
+    case 'cmp_request_template': {
+      const { composeRequestTemplate } = await import('./module-impls/compose-impls');
+      const body = inputs.body ?? {};
+      const template = typeof inputs.template === 'string' ? inputs.template : config.template ?? '';
+      return { result: composeRequestTemplate(body, template) };
+    }
 
-    // ═══════ Execute modules (iteration 5) ═══════
+    // ═══════ Execute modules ═══════
+    case 'exe_llm_call': {
+      const { executeLlmCall } = await import('./module-impls/execute-impls');
+      const msgs = Array.isArray(inputs.messages) ? inputs.messages : [];
+      const apiCfg = inputs.api_config ?? config;
+      const genOpts = inputs.gen_options ?? {};
+      const behavior = inputs.behavior ?? {};
+      return { raw_response: await executeLlmCall(msgs, apiCfg, genOpts, behavior) };
+    }
+    case 'exe_response_extract': {
+      const { executeResponseExtract } = await import('./module-impls/execute-impls');
+      const raw = typeof inputs.raw === 'string' ? inputs.raw : '';
+      return { extracted: executeResponseExtract(raw, config.pattern ?? '') };
+    }
+    case 'exe_response_remove': {
+      const { executeResponseRemove } = await import('./module-impls/execute-impls');
+      const raw = typeof inputs.raw === 'string' ? inputs.raw : '';
+      return { cleaned: executeResponseRemove(raw, config.pattern ?? '') };
+    }
     case 'exe_json_parse': {
       const text = typeof inputs.text === 'string' ? inputs.text : '';
       if (!text.trim()) return { parsed: {} };
@@ -295,6 +335,43 @@ async function executeModule(
         console.warn(`[GraphExecutor] Node ${node.id}: failed to parse JSON`);
         return { parsed: {} };
       }
+    }
+    case 'exe_response_normalize': {
+      const { executeResponseNormalize } = await import('./module-impls/execute-impls');
+      const raw = inputs.raw ?? {};
+      return { normalized: executeResponseNormalize(raw) };
+    }
+    case 'exe_stream_sse': {
+      const { executeStreamSse } = await import('./module-impls/execute-impls');
+      return { full_text: await executeStreamSse(inputs.response) };
+    }
+
+    // ═══════ Output modules ═══════
+    case 'out_worldbook_write': {
+      const { outputWorldbookWrite } = await import('./module-impls/output-impls');
+      const ops = Array.isArray(inputs.operations) ? inputs.operations : [];
+      await outputWorldbookWrite(ops);
+      return {};
+    }
+    case 'out_floor_bind': {
+      const { outputFloorBind } = await import('./module-impls/output-impls');
+      await outputFloorBind(inputs.result ?? {}, inputs.message_id);
+      return {};
+    }
+    case 'out_snapshot_save': {
+      const { outputSnapshotSave } = await import('./module-impls/output-impls');
+      await outputSnapshotSave(inputs.snapshot ?? {}, config);
+      return {};
+    }
+    case 'out_reply_inject': {
+      const { outputReplyInject } = await import('./module-impls/output-impls');
+      outputReplyInject(typeof inputs.instruction === 'string' ? inputs.instruction : '');
+      return {};
+    }
+    case 'out_merge_results': {
+      const { outputMergeResults } = await import('./module-impls/output-impls');
+      const results = Array.isArray(inputs.results) ? inputs.results : [];
+      return { merged_plan: outputMergeResults(results) };
     }
 
     // ═══════ Fallback: pass-through ═══════
