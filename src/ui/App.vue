@@ -668,6 +668,11 @@
                 @save-slots="(slots: any[]) => { store.settings.graph_canvas_slots = slots; }"
                 @update:flows="(flows: any[]) => { store.settings.flows = flows; }"
               />
+              <div style="padding: 12px 0; text-align: center">
+                <button type="button" class="ew-btn" style="font-size: 13px; padding: 8px 24px" @click="workbenchVisible = true">
+                  🧩 打开模块工作台
+                </button>
+              </div>
             </template>
 
             <template v-else-if="store.activeTab === 'history'">
@@ -682,6 +687,14 @@
       </div>
     </EwPanelShell>
   </transition>
+
+  <!-- Module Workbench (full-screen overlay, outside panel) -->
+  <EwModuleWorkbench
+    :visible="workbenchVisible"
+    :graphs="workbenchGraphs"
+    @close="workbenchVisible = false"
+    @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
+  />
 
   <!-- ── 写入角色卡弹窗 ── -->
   <transition name="ew-modal">
@@ -794,6 +807,7 @@ import EwPanelShell from "./components/EwPanelShell.vue";
 import EwSectionCard from "./components/EwSectionCard.vue";
 import { getFieldHelp, PANEL_TABS } from "./help-meta";
 import EwGraphEditor from "./components/graph/EwGraphEditor.vue";
+import EwModuleWorkbench from "./components/graph/EwModuleWorkbench.vue";
 import { replaceWorldbook } from "../runtime/compat/worldbook";
 import { showEwNotice } from "./notice";
 import { useEwStore } from "./store";
@@ -804,6 +818,10 @@ const importFileInputRef = ref<HTMLInputElement | null>(null);
 const flowImportRef = ref<HTMLInputElement | null>(null);
 const migratingSnapshots = ref(false);
 const crossfadeRef = ref<HTMLDivElement | null>(null);
+
+// ── Module Workbench state ──
+const workbenchVisible = ref(false);
+const workbenchGraphs = computed(() => (store.settings as any).workbench_graphs ?? []);
 
 let crossfadePrevHeight = 0;
 let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;

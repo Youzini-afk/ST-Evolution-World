@@ -2,6 +2,7 @@
 /* All 44 atomic modules + composite packages */
 
 import type { ModuleBlueprint, ModulePortDef } from './module-types';
+export type { ModuleBlueprint, ModulePortDef };
 
 // ── Helper for common port patterns ──
 
