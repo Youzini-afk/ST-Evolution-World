@@ -103,6 +103,7 @@
           @port-drag-start="onPortDragStart"
           @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
           @bring-to-front="bringToFront(node.id)"
+          @select="onNodeSelect"
         >
           <div class="ew-graph-node__type-label">{{ node.moduleId }}</div>
         </EwGraphNode>
@@ -362,6 +363,21 @@ let zCounter = 1;
 function bringToFront(nodeId: string) {
   zCounter++;
   nodeZIndex.set(nodeId, zCounter);
+}
+
+function onNodeSelect(nodeId: string, shiftKey: boolean) {
+  if (shiftKey) {
+    // Toggle in multi-select
+    if (selectedNodes.has(nodeId)) {
+      selectedNodes.delete(nodeId);
+    } else {
+      selectedNodes.add(nodeId);
+    }
+  } else {
+    // Single select: clear others, select this one
+    selectedNodes.clear();
+    selectedNodes.add(nodeId);
+  }
 }
 
 // ── Canvas Slots ──

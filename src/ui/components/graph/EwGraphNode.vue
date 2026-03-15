@@ -77,6 +77,7 @@ const emit = defineEmits<{
   (e: 'toggle-collapse'): void;
   (e: 'port-drag-start', nodeId: string, portId: string, event: PointerEvent): void;
   (e: 'bring-to-front'): void;
+  (e: 'select', nodeId: string, shiftKey: boolean): void;
 }>();
 
 const nodeEl = ref<HTMLElement>();
@@ -121,20 +122,27 @@ function onHeaderPointerDown(e: PointerEvent) {
   if (e.button !== 0) return;
   emit('bring-to-front');
   isDragging = true;
+  let didMove = false;
   dragStartX = e.clientX;
   dragStartY = e.clientY;
   nodeStartX = props.node.position.x;
   nodeStartY = props.node.position.y;
+  const shiftKey = e.shiftKey;
 
   const onMove = (ev: PointerEvent) => {
     if (!isDragging) return;
     const dx = (ev.clientX - dragStartX) / props.zoom;
     const dy = (ev.clientY - dragStartY) / props.zoom;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didMove = true;
     emit('move', props.node.id, nodeStartX + dx, nodeStartY + dy);
   };
 
   const onUp = () => {
     isDragging = false;
+    // If the pointer didn't move, treat as click → select
+    if (!didMove) {
+      emit('select', props.node.id, shiftKey);
+    }
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
   };
