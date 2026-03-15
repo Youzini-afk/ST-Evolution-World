@@ -97,7 +97,7 @@ const outPorts = computed(() =>
 );
 
 const nodeStyle = computed(() => ({
-  transform: `translate(${props.node.position.x}px, ${props.node.position.y}px)`,
+  transform: `translate3d(${Math.round(props.node.position.x)}px, ${Math.round(props.node.position.y)}px, 0)`,
   '--node-color': blueprint.value?.color ?? '#6366f1',
   zIndex: props.zIndex ?? 1,
 }));
@@ -166,15 +166,21 @@ defineExpose({ nodeEl, getPortCenter });
   width: 240px;
   min-height: 60px;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--node-color, #6366f1) 8%, rgba(20, 20, 30, 0.85));
+  background: color-mix(in srgb, var(--node-color, #6366f1) 8%, rgba(20, 20, 30, 0.92));
   border: 1px solid color-mix(in srgb, var(--node-color, #6366f1) 30%, transparent);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   box-shadow:
     0 4px 24px rgba(0, 0, 0, 0.3),
     0 0 0 1px rgba(255, 255, 255, 0.06) inset;
   cursor: default;
   user-select: none;
   transition: box-shadow 0.2s ease;
+  will-change: transform;
+  transform: translateZ(0);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 .ew-graph-node.is-selected {
@@ -215,10 +221,11 @@ defineExpose({ nodeEl, getPortCenter });
   flex: 1;
   font-size: 13px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.95);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: 0.01em;
 }
 
 .ew-graph-node__collapse {
@@ -252,7 +259,7 @@ defineExpose({ nodeEl, getPortCenter });
 .ew-graph-node__body {
   padding: 4px 12px 8px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.5);
   overflow: hidden;
   min-width: 0;
 }
