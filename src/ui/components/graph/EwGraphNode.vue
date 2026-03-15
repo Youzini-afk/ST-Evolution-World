@@ -95,6 +95,7 @@ const emit = defineEmits<{
   (e: 'group-move', dx: number, dy: number): void;
   (e: 'toggle-collapse'): void;
   (e: 'port-drag-start', nodeId: string, portId: string, event: PointerEvent): void;
+  (e: 'bring-to-front'): void;
 }>();
 
 const nodeEl = ref<HTMLElement>();
@@ -138,6 +139,7 @@ let nodeStartY = 0;
 
 function onHeaderPointerDown(e: PointerEvent) {
   if (e.button !== 0) return;
+  emit('bring-to-front');
   isDragging = true;
   dragStartX = e.clientX;
   dragStartY = e.clientY;

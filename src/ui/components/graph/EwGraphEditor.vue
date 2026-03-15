@@ -102,7 +102,7 @@
           @toggle-collapse="graph.toggleCollapse(node.id)"
           @port-drag-start="onPortDragStart"
           @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
-          @pointerdown.capture="bringToFront(node.id)"
+          @bring-to-front="bringToFront(node.id)"
         >
           <div class="ew-graph-node__type-label">{{ node.type }}</div>
         </EwGraphNode>
