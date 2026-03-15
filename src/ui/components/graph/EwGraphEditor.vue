@@ -153,42 +153,53 @@
       <div v-if="ctxMenu" class="ew-graph-ctx-overlay" @pointerdown="ctxMenu = null" />
 
       <!-- Minimap -->
-      <div class="ew-graph-minimap" @pointerdown.stop="onMinimapClick">
+      <div
+        class="ew-graph-minimap"
+        @pointerdown.stop="onMinimapPointerDown"
+      >
         <svg :viewBox="minimapViewBox" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">
-          <!-- Edges -->
-          <line
-            v-for="edge in graph.state.edges"
+          <!-- Edges as cubic Bézier curves -->
+          <path
+            v-for="edge in minimapEdges"
             :key="'mm-e-' + edge.id"
-            :x1="getEdgeSourceX(edge)"
-            :y1="getEdgeSourceY(edge)"
-            :x2="getEdgeTargetX(edge)"
-            :y2="getEdgeTargetY(edge)"
-            stroke="rgba(99, 102, 241, 0.3)"
+            :d="edge.path"
+            fill="none"
+            :stroke="edge.color"
             stroke-width="2"
+            stroke-opacity="0.5"
           />
-          <!-- Nodes -->
-          <rect
-            v-for="node in graph.state.nodes"
-            :key="'mm-' + node.id"
-            :x="node.position.x"
-            :y="node.position.y"
-            :width="180"
-            :height="node.collapsed ? 36 : 100"
-            rx="4"
-            fill="rgba(99, 102, 241, 0.5)"
-            stroke="rgba(255,255,255,0.2)"
-            stroke-width="1"
-          />
+          <!-- Nodes with type-specific colors -->
+          <g v-for="node in graph.state.nodes" :key="'mm-' + node.id">
+            <rect
+              :x="node.position.x"
+              :y="node.position.y"
+              :width="180"
+              :height="node.collapsed ? 36 : 100"
+              rx="4"
+              :fill="getMinimapNodeColor(node.type) + '55'"
+              :stroke="getMinimapNodeColor(node.type)"
+              stroke-width="1.5"
+            />
+            <text
+              :x="node.position.x + 90"
+              :y="node.position.y + (node.collapsed ? 22 : 16)"
+              text-anchor="middle"
+              fill="rgba(255,255,255,0.7)"
+              font-size="11"
+              font-family="sans-serif"
+            >{{ node.label.slice(0, 8) }}</text>
+          </g>
           <!-- Viewport indicator -->
           <rect
             :x="viewportRect.x"
             :y="viewportRect.y"
             :width="viewportRect.w"
             :height="viewportRect.h"
-            fill="rgba(255,255,255,0.06)"
-            stroke="rgba(255,255,255,0.5)"
-            stroke-width="3"
-            rx="2"
+            fill="rgba(255,255,255,0.04)"
+            stroke="rgba(255,255,255,0.6)"
+            stroke-width="4"
+            stroke-dasharray="8 4"
+            rx="3"
           />
         </svg>
       </div>
@@ -547,6 +558,24 @@ const minimapViewBox = computed(() => {
   return `${minX - PAD} ${minY - PAD} ${maxX - minX + PAD * 2} ${maxY - minY + PAD * 2}`;
 });
 
+const minimapEdges = computed(() => {
+  return graph.state.edges.map(edge => {
+    const sx = getEdgeSourceX(edge);
+    const sy = getEdgeSourceY(edge);
+    const tx = getEdgeTargetX(edge);
+    const ty = getEdgeTargetY(edge);
+    const dx = Math.abs(tx - sx);
+    const cp = Math.max(80, dx * 0.4);
+    const path = `M ${sx} ${sy} C ${sx + cp} ${sy}, ${tx - cp} ${ty}, ${tx} ${ty}`;
+    const color = getNodeColor(edge.source);
+    return { id: edge.id, path, color };
+  });
+});
+
+function getMinimapNodeColor(type: string): string {
+  return NODE_TYPE_REGISTRY[type as NodeType]?.color || '#6366f1';
+}
+
 const viewportRect = computed(() => {
   const el = canvasContainer.value;
   const vp = graph.state.viewport;
@@ -558,24 +587,55 @@ const viewportRect = computed(() => {
   return { x, y, w, h };
 });
 
-function onMinimapClick(e: PointerEvent) {
-  const target = e.currentTarget as HTMLElement;
-  const svg = target.querySelector('svg');
-  if (!svg) return;
+function minimapScreenToWorld(e: PointerEvent): { worldX: number; worldY: number } | null {
+  const target = (e.currentTarget || e.target) as HTMLElement;
+  const minimapEl = target.closest('.ew-graph-minimap') as HTMLElement;
+  if (!minimapEl) return null;
+  const svg = minimapEl.querySelector('svg');
+  if (!svg) return null;
   const rect = svg.getBoundingClientRect();
   const xRatio = (e.clientX - rect.left) / rect.width;
   const yRatio = (e.clientY - rect.top) / rect.height;
-
-  // Convert ratio to world coords using viewBox
   const vb = minimapViewBox.value.split(' ').map(Number);
-  const worldX = vb[0] + xRatio * vb[2];
-  const worldY = vb[1] + yRatio * vb[3];
+  return {
+    worldX: vb[0] + xRatio * vb[2],
+    worldY: vb[1] + yRatio * vb[3],
+  };
+}
 
+function navigateToWorld(worldX: number, worldY: number) {
   const el = canvasContainer.value;
   if (!el) return;
   const zoom = graph.state.viewport.zoom;
   graph.state.viewport.x = -(worldX * zoom) + el.clientWidth / 2;
   graph.state.viewport.y = -(worldY * zoom) + el.clientHeight / 2;
+}
+
+function onMinimapPointerDown(e: PointerEvent) {
+  const pos = minimapScreenToWorld(e);
+  if (!pos) return;
+  navigateToWorld(pos.worldX, pos.worldY);
+
+  const minimapEl = (e.currentTarget as HTMLElement);
+  minimapEl.setPointerCapture(e.pointerId);
+
+  const onMove = (me: PointerEvent) => {
+    const svg = minimapEl.querySelector('svg');
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const xRatio = (me.clientX - rect.left) / rect.width;
+    const yRatio = (me.clientY - rect.top) / rect.height;
+    const vb = minimapViewBox.value.split(' ').map(Number);
+    navigateToWorld(vb[0] + xRatio * vb[2], vb[1] + yRatio * vb[3]);
+  };
+
+  const onUp = () => {
+    minimapEl.removeEventListener('pointermove', onMove);
+    minimapEl.removeEventListener('pointerup', onUp);
+  };
+
+  minimapEl.addEventListener('pointermove', onMove);
+  minimapEl.addEventListener('pointerup', onUp);
 }
 
 // ── Edge position helpers ──
