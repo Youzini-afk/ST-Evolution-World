@@ -332,4 +332,4 @@ npm run build
 
 ## 📄 License
 
-MIT
+[Aladdin Free Public License (AFPL)](./LICENSE) v9
