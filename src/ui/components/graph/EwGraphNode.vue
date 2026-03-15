@@ -3,7 +3,6 @@
     class="ew-graph-node"
     :class="{ 'is-selected': selected }"
     :style="nodeStyle"
-    :data-type="node.type"
     :data-collapsed="node.collapsed ? '1' : '0'"
     ref="nodeEl"
     @pointerdown="emit('bring-to-front')"
@@ -13,8 +12,8 @@
       class="ew-graph-node__header"
       @pointerdown.stop="onHeaderPointerDown"
     >
-      <span class="ew-graph-node__icon">{{ nodeInfo.icon }}</span>
-      <span class="ew-graph-node__title">{{ node.label }}</span>
+      <span class="ew-graph-node__icon">{{ blueprint?.icon ?? '?' }}</span>
+      <span class="ew-graph-node__title">{{ node.config?._label ?? blueprint?.label ?? node.moduleId }}</span>
       <button
         type="button"
         class="ew-graph-node__collapse"
@@ -39,8 +38,9 @@
 
       <!-- Body (collapsed hides content) -->
       <div v-if="!node.collapsed" class="ew-graph-node__body">
-        <component :is="contentComponent" v-if="contentComponent" :data="node.data" />
-        <slot v-else />
+        <div class="ew-graph-node__summary">
+          {{ blueprint?.description ?? '' }}
+        </div>
       </div>
 
       <div class="ew-graph-node__ports-out">
@@ -58,33 +58,13 @@
 </template>
 
 <script setup lang="ts">
-import type { GraphNode, GraphEdge, PortDefinition, NodeType } from './graph-types';
-import { NODE_TYPE_REGISTRY } from './graph-types';
+import type { WorkbenchNode, WorkbenchEdge, ModulePortDef } from './module-types';
+import { MODULE_REGISTRY } from './module-registry';
 import EwGraphPort from './EwGraphPort.vue';
-import { markRaw } from 'vue';
-import FlowEntryNode from './nodes/FlowEntryNode.vue';
-import GenerationNode from './nodes/GenerationNode.vue';
-import BehaviorNode from './nodes/BehaviorNode.vue';
-import PromptOrderNode from './nodes/PromptOrderNode.vue';
-import ContextRulesNode from './nodes/ContextRulesNode.vue';
-import RequestBuilderNode from './nodes/RequestBuilderNode.vue';
-import ResponseNode from './nodes/ResponseNode.vue';
-import WorldbookOutputNode from './nodes/WorldbookOutputNode.vue';
-
-const NODE_CONTENT_MAP: Record<string, any> = {
-  flow_entry: markRaw(FlowEntryNode),
-  generation_params: markRaw(GenerationNode),
-  behavior_params: markRaw(BehaviorNode),
-  prompt_ordering: markRaw(PromptOrderNode),
-  context_rules: markRaw(ContextRulesNode),
-  request_builder: markRaw(RequestBuilderNode),
-  response_processor: markRaw(ResponseNode),
-  worldbook_output: markRaw(WorldbookOutputNode),
-};
 
 const props = defineProps<{
-  node: GraphNode;
-  edges: GraphEdge[];
+  node: WorkbenchNode;
+  edges: WorkbenchEdge[];
   zoom: number;
   selected?: boolean;
   selectedNodes?: Set<string>;
@@ -106,20 +86,19 @@ function registerPortRef(portId: string, comp: any) {
   if (comp) portRefs.set(portId, comp);
 }
 
-const nodeInfo = computed(() => NODE_TYPE_REGISTRY[props.node.type]);
-const contentComponent = computed(() => NODE_CONTENT_MAP[props.node.type] || null);
+const blueprint = computed(() => MODULE_REGISTRY.get(props.node.moduleId) ?? null);
 
 const inPorts = computed(() =>
-  props.node.ports.filter((p: PortDefinition) => p.direction === 'in')
+  (blueprint.value?.ports ?? []).filter((p: ModulePortDef) => p.direction === 'in')
 );
 
 const outPorts = computed(() =>
-  props.node.ports.filter((p: PortDefinition) => p.direction === 'out')
+  (blueprint.value?.ports ?? []).filter((p: ModulePortDef) => p.direction === 'out')
 );
 
 const nodeStyle = computed(() => ({
   transform: `translate(${props.node.position.x}px, ${props.node.position.y}px)`,
-  '--node-color': nodeInfo.value.color,
+  '--node-color': blueprint.value?.color ?? '#6366f1',
   zIndex: props.zIndex ?? 1,
 }));
 
@@ -271,152 +250,22 @@ defineExpose({ nodeEl, getPortCenter });
 }
 
 .ew-graph-node__body {
-  padding: 8px 12px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
   overflow: hidden;
   min-width: 0;
+}
+
+.ew-graph-node__summary {
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .ew-graph-node[data-collapsed="1"] .ew-graph-node__ports {
   padding: 6px;
-}
-
-/* ── Shared node field styles ── */
-:deep(.node-fields) {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-:deep(.node-field) {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-:deep(.node-field--row) {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-:deep(.node-field label) {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-:deep(.node-field__val) {
-  float: right;
-  color: rgba(255, 255, 255, 0.7);
-  font-weight: 600;
-}
-
-:deep(.node-field input[type="text"]),
-:deep(.node-field input[type="number"]),
-:deep(.node-field input:not([type])),
-:deep(.node-field select),
-:deep(.node-field textarea) {
-  width: 100%;
-  padding: 4px 6px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.3);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 11px;
-  font-family: inherit;
-  outline: none;
-  transition: border-color 0.15s;
-  box-sizing: border-box;
-}
-
-:deep(.node-field input:focus),
-:deep(.node-field select:focus),
-:deep(.node-field textarea:focus) {
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-:deep(.node-field textarea) {
-  resize: vertical;
-  min-height: 40px;
-  line-height: 1.4;
-}
-
-:deep(.node-field input[type="range"]) {
-  width: 100%;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 2px;
-  outline: none;
-  border: none;
-}
-
-:deep(.node-field input[type="range"]::-webkit-slider-thumb) {
-  -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--node-color, #6366f1);
-  cursor: pointer;
-}
-
-:deep(.node-field input[type="checkbox"]) {
-  width: 14px;
-  height: 14px;
-  accent-color: var(--node-color, #6366f1);
-}
-
-:deep(.node-field__list-header) {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
-  padding-bottom: 2px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-:deep(.node-field__list-item) {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.65);
-  padding: 1px 0;
-  min-width: 0;
-}
-
-:deep(.node-field__list-dot) {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--node-color, #6366f1);
-  flex-shrink: 0;
-}
-
-:deep(.node-field__list-text) {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-:deep(.node-field__list-role) {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.4);
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-:deep(.node-field__empty) {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.25);
-  font-style: italic;
-  text-align: center;
-  padding: 4px;
 }
 </style>

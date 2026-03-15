@@ -194,10 +194,14 @@ export function transformWiBucket(entries: WiEntry[]): {
  */
 export function transformEntryNameInject(
   messages: ChatMessage[],
-  _snapshots?: any,
+  snapshots?: Array<{ entry_name: string; content: string }>,
 ): ChatMessage[] {
-  // This is a pass-through for now —
-  // The actual entry name injection is done during prompt assembly
-  // where entries have metadata available.
-  return messages;
+  if (!snapshots || snapshots.length === 0) return messages;
+  return messages.map(msg => {
+    const snap = snapshots.find(s => msg.content.includes(s.content));
+    if (snap && snap.entry_name) {
+      return { ...msg, content: `[${snap.entry_name}]\n${msg.content}` };
+    }
+    return msg;
+  });
 }

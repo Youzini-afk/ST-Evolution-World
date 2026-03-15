@@ -9,13 +9,13 @@
  *  - Layout uses a simple top-down grid
  */
 
-import type { EwFlowConfig, EwPromptOrderEntry } from './types';
+import type { EwFlowConfig } from './types';
 import type { WorkbenchGraph, WorkbenchNode, WorkbenchEdge } from '../ui/components/graph/module-types';
 
-let nodeCounter = 0;
+let globalMigSeq = 0;
 
 function makeId(): string {
-  return `mig_${Date.now()}_${(nodeCounter++).toString(36)}`;
+  return `mig_${(globalMigSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function makeNode(
@@ -52,7 +52,6 @@ function makeEdge(
  * Convert a single EwFlowConfig into a WorkbenchGraph.
  */
 export function migrateFlowToGraph(flow: EwFlowConfig): WorkbenchGraph {
-  nodeCounter = 0;
   const nodes: WorkbenchNode[] = [];
   const edges: WorkbenchEdge[] = [];
 

@@ -226,8 +226,11 @@ let dragOffsetY = 0;
 function onNodePointerDown(e: PointerEvent, node: WorkbenchNode) {
   selectedNodeId.value = node.id;
   draggingNodeId = node.id;
-  dragOffsetX = e.clientX / viewport.zoom - node.position.x;
-  dragOffsetY = e.clientY / viewport.zoom - node.position.y;
+  const rect = canvasRef.value?.getBoundingClientRect();
+  const rx = rect?.left ?? 0;
+  const ry = rect?.top ?? 0;
+  dragOffsetX = (e.clientX - rx - viewport.x) / viewport.zoom - node.position.x;
+  dragOffsetY = (e.clientY - ry - viewport.y) / viewport.zoom - node.position.y;
   window.addEventListener('pointermove', onNodeDragMove);
   window.addEventListener('pointerup', onNodeDragEnd);
 }
@@ -236,8 +239,11 @@ function onNodeDragMove(e: PointerEvent) {
   if (!draggingNodeId || !activeGraph.value) return;
   const node = activeGraph.value.nodes.find(n => n.id === draggingNodeId);
   if (!node) return;
-  node.position.x = e.clientX / viewport.zoom - dragOffsetX;
-  node.position.y = e.clientY / viewport.zoom - dragOffsetY;
+  const rect = canvasRef.value?.getBoundingClientRect();
+  const rx = rect?.left ?? 0;
+  const ry = rect?.top ?? 0;
+  node.position.x = (e.clientX - rx - viewport.x) / viewport.zoom - dragOffsetX;
+  node.position.y = (e.clientY - ry - viewport.y) / viewport.zoom - dragOffsetY;
 }
 
 function onNodeDragEnd() {

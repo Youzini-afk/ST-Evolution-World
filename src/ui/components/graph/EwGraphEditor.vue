@@ -2,7 +2,7 @@
   <Teleport to="body" :disabled="!isFullscreen">
   <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
     <!-- Left palette -->
-    <EwGraphPalette :flows="paletteFlows" @add-flow="$emit('add-flow')" />
+    <EwModulePalette />
 
     <!-- Main canvas area -->
     <div
@@ -104,7 +104,7 @@
           @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
           @bring-to-front="bringToFront(node.id)"
         >
-          <div class="ew-graph-node__type-label">{{ node.type }}</div>
+          <div class="ew-graph-node__type-label">{{ node.moduleId }}</div>
         </EwGraphNode>
       </div>
 
@@ -188,8 +188,8 @@
               :width="180"
               :height="node.collapsed ? 36 : 100"
               rx="4"
-              :fill="getMinimapNodeColor(node.type) + '55'"
-              :stroke="getMinimapNodeColor(node.type)"
+              :fill="getMinimapNodeColor(node.moduleId) + '55'"
+              :stroke="getMinimapNodeColor(node.moduleId)"
               stroke-width="1.5"
             />
             <text
@@ -199,7 +199,7 @@
               fill="rgba(255,255,255,0.7)"
               font-size="11"
               font-family="sans-serif"
-            >{{ node.label.slice(0, 8) }}</text>
+            >{{ (node.config?._label ?? node.moduleId).slice(0, 8) }}</text>
           </g>
           <!-- Viewport indicator -->
           <rect
@@ -223,28 +223,128 @@
 <script setup lang="ts">
 import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
-import EwGraphPalette from "./EwGraphPalette.vue";
-import { createGraphState } from "./graph-state";
-import { flowsToGraph, graphToFlows } from "./graph-serializer";
-import type { GraphEdge, NodeType } from "./graph-types";
-import { NODE_TYPE_REGISTRY } from "./graph-types";
+import EwModulePalette from "./EwModulePalette.vue";
+import { MODULE_REGISTRY } from "./module-registry";
+import type { WorkbenchNode, WorkbenchEdge, WorkbenchGraph } from "./module-types";
+import { wouldCreateCycle } from "./module-types";
 
 const props = defineProps<{
-  flows?: Array<{ id: string; name: string; enabled: boolean }>;
-  apiPresets?: Array<{ id: string; name: string }>;
+  graphs: WorkbenchGraph[];
   savedSlots?: Array<any>;
 }>();
 
 const emit = defineEmits<{
-  (e: 'add-flow'): void;
-  (e: 'update:flows', flows: any[]): void;
+  (e: 'update:graphs', graphs: WorkbenchGraph[]): void;
   (e: 'save-slots', slots: any[]): void;
 }>();
 
-const paletteFlows = computed(() => props.flows || []);
+// ── Inline reactive graph state (replaces createGraphState) ──
+const graphState = reactive({
+  nodes: [] as WorkbenchNode[],
+  edges: [] as WorkbenchEdge[],
+  viewport: { x: 0, y: 0, zoom: 1 },
+});
+
+const graphNodeMap = computed(() => {
+  const m = new Map<string, WorkbenchNode>();
+  for (const n of graphState.nodes) m.set(n.id, n);
+  return m;
+});
+
+function graphAddNode(moduleId: string, x: number, y: number, extraConfig?: Record<string, any>): WorkbenchNode {
+  const bp = MODULE_REGISTRY.get(moduleId);
+  const node: WorkbenchNode = {
+    id: `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    moduleId,
+    position: { x, y },
+    config: { ...(bp?.defaultConfig ?? {}), ...(extraConfig ?? {}) },
+    collapsed: false,
+  };
+  graphState.nodes.push(node);
+  return node;
+}
+
+function graphRemoveNode(nodeId: string) {
+  graphState.edges = graphState.edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+  graphState.nodes = graphState.nodes.filter(n => n.id !== nodeId);
+}
+
+function graphAddEdge(source: string, sourcePort: string, target: string, targetPort: string) {
+  if (wouldCreateCycle(graphState.edges, source, target)) return;
+  const dup = graphState.edges.some(e =>
+    e.source === source && e.sourcePort === sourcePort &&
+    e.target === target && e.targetPort === targetPort
+  );
+  if (dup) return;
+  graphState.edges.push({
+    id: `e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    source, sourcePort, target, targetPort,
+  });
+}
+
+function graphRemoveEdge(edgeId: string) {
+  graphState.edges = graphState.edges.filter(e => e.id !== edgeId);
+}
+
+function graphMoveNode(nodeId: string, x: number, y: number) {
+  const node = graphNodeMap.value.get(nodeId);
+  if (node) { node.position.x = x; node.position.y = y; }
+}
+
+function graphToggleCollapse(nodeId: string) {
+  const node = graphNodeMap.value.get(nodeId);
+  if (node) node.collapsed = !node.collapsed;
+}
+
+function graphPanTo(x: number, y: number) {
+  graphState.viewport.x = x;
+  graphState.viewport.y = y;
+}
+
+function graphZoomTo(newZoom: number, cx?: number, cy?: number) {
+  const clamped = Math.max(0.1, Math.min(3, newZoom));
+  if (cx !== undefined && cy !== undefined) {
+    const ratio = clamped / graphState.viewport.zoom;
+    graphState.viewport.x = cx - (cx - graphState.viewport.x) * ratio;
+    graphState.viewport.y = cy - (cy - graphState.viewport.y) * ratio;
+  }
+  graphState.viewport.zoom = clamped;
+}
+
+function graphFitToView(width: number, height: number) {
+  if (graphState.nodes.length === 0) return;
+  const PAD = 80;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of graphState.nodes) {
+    minX = Math.min(minX, n.position.x);
+    minY = Math.min(minY, n.position.y);
+    maxX = Math.max(maxX, n.position.x + 240);
+    maxY = Math.max(maxY, n.position.y + 120);
+  }
+  const contentW = maxX - minX + PAD * 2;
+  const contentH = maxY - minY + PAD * 2;
+  const z = Math.min(1.5, Math.min(width / contentW, height / contentH));
+  graphState.viewport.zoom = Math.max(0.1, z);
+  graphState.viewport.x = (width - contentW * graphState.viewport.zoom) / 2 - minX * graphState.viewport.zoom + PAD * graphState.viewport.zoom;
+  graphState.viewport.y = (height - contentH * graphState.viewport.zoom) / 2 - minY * graphState.viewport.zoom + PAD * graphState.viewport.zoom;
+}
+
+// Wrap into graph object to preserve template & downstream API compatibility
+const graph = {
+  state: graphState,
+  nodeMap: graphNodeMap,
+  addNode: graphAddNode,
+  removeNode: graphRemoveNode,
+  addEdge: graphAddEdge,
+  removeEdge: graphRemoveEdge,
+  moveNode: graphMoveNode,
+  toggleCollapse: graphToggleCollapse,
+  panTo: graphPanTo,
+  zoomTo: graphZoomTo,
+  fitToView: graphFitToView,
+};
 
 const canvasContainer = ref<HTMLElement>();
-const graph = createGraphState();
 const selectedEdge = ref<string | null>(null);
 const selectedNodes = reactive(new Set<string>());
 const isFullscreen = ref(false);
@@ -307,7 +407,7 @@ function switchSlot(slotId: string) {
 
   if (slotId === 'overview') {
     // Overview always reloads from flows
-    loadFlowsIntoGraph();
+    loadFromGraphs();
   } else {
     // Load saved state
     const slot = canvasSlots.value.find(s => s.id === slotId);
@@ -347,7 +447,7 @@ function removeSlot(slotId: string) {
 
 function reloadCurrentSlot() {
   if (activeSlotId.value === 'overview') {
-    loadFlowsIntoGraph();
+    loadFromGraphs();
   } else {
     const slot = canvasSlots.value.find(s => s.id === activeSlotId.value);
     if (slot) {
@@ -484,15 +584,16 @@ function onTouchEnd() {
 // ── Palette drag-drop ──
 
 function onDragOver(e: DragEvent) {
-  if (e.dataTransfer?.types.includes('application/ew-graph-node')) {
+  if (e.dataTransfer?.types.includes('application/ew-module')) {
     e.dataTransfer.dropEffect = 'copy';
   }
 }
 
 function onDrop(e: DragEvent) {
-  const raw = e.dataTransfer?.getData('application/ew-graph-node');
-  if (!raw) return;
-  const { kind, payload } = JSON.parse(raw) as { kind: string; payload: string };
+  const moduleId = e.dataTransfer?.getData('application/ew-module');
+  if (!moduleId) return;
+  const bp = MODULE_REGISTRY.get(moduleId);
+  if (!bp) return;
   const rect = canvasContainer.value?.getBoundingClientRect();
   if (!rect) return;
 
@@ -500,33 +601,7 @@ function onDrop(e: DragEvent) {
   const worldX = (e.clientX - rect.left - graph.state.viewport.x) / zoom;
   const worldY = (e.clientY - rect.top - graph.state.viewport.y) / zoom;
 
-  if (kind === 'module') {
-    const nodeType = payload as NodeType;
-    if (NODE_TYPE_REGISTRY[nodeType]) {
-      graph.addNode(nodeType, worldX, worldY);
-    }
-  } else if (kind === 'flow') {
-    // Drop a flow: create the full chain of 7 nodes + 6 edges
-    const CHAIN: NodeType[] = [
-      'flow_entry', 'generation_params', 'behavior_params',
-      'prompt_ordering', 'context_rules', 'request_builder', 'response_processor',
-    ];
-    const H_SPACING = 300;
-    const V_STAGGER = 30;
-    const nodes: ReturnType<typeof graph.addNode>[] = [];
-
-    for (let i = 0; i < CHAIN.length; i++) {
-      const data = i === 0 ? { _flowId: payload } : {};
-      const nx = worldX + i * H_SPACING;
-      const ny = worldY + (i % 2 === 0 ? 0 : V_STAGGER);
-      nodes.push(graph.addNode(CHAIN[i], nx, ny, data));
-    }
-
-    // Connect consecutive nodes: out → in
-    for (let i = 0; i < nodes.length - 1; i++) {
-      graph.addEdge(nodes[i].id, 'out', nodes[i + 1].id, 'in');
-    }
-  }
+  graph.addNode(moduleId, worldX, worldY);
 }
 const nodeRefs = new Map<string, any>();
 let fitViewRaf: number | null = null;
@@ -593,8 +668,8 @@ const minimapEdges = computed(() => {
   });
 });
 
-function getMinimapNodeColor(type: string): string {
-  return NODE_TYPE_REGISTRY[type as NodeType]?.color || '#6366f1';
+function getMinimapNodeColor(moduleId: string): string {
+  return MODULE_REGISTRY.get(moduleId)?.color ?? '#6366f1';
 }
 
 const viewportRect = computed(() => {
@@ -702,7 +777,7 @@ function onMinimapDragStart(e: PointerEvent) {
 function getNodeColor(nodeId: string): string {
   const node = graph.nodeMap.value.get(nodeId);
   if (!node) return "#6366f1";
-  return NODE_TYPE_REGISTRY[node.type]?.color || "#6366f1";
+  return MODULE_REGISTRY.get(node.moduleId)?.color ?? "#6366f1";
 }
 
 function getPortWorldPosition(
@@ -718,16 +793,16 @@ function getPortWorldPosition(
   return { x, y };
 }
 
-function getEdgeSourceX(edge: GraphEdge): number {
+function getEdgeSourceX(edge: WorkbenchEdge): number {
   return getPortWorldPosition(edge.source, edge.sourcePort, "out").x;
 }
-function getEdgeSourceY(edge: GraphEdge): number {
+function getEdgeSourceY(edge: WorkbenchEdge): number {
   return getPortWorldPosition(edge.source, edge.sourcePort, "out").y;
 }
-function getEdgeTargetX(edge: GraphEdge): number {
+function getEdgeTargetX(edge: WorkbenchEdge): number {
   return getPortWorldPosition(edge.target, edge.targetPort, "in").x;
 }
-function getEdgeTargetY(edge: GraphEdge): number {
+function getEdgeTargetY(edge: WorkbenchEdge): number {
   return getPortWorldPosition(edge.target, edge.targetPort, "in").y;
 }
 
@@ -1125,7 +1200,8 @@ function onFullscreenKeydown(event: KeyboardEvent) {
 function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
   // Determine if we're dragging from an 'in' or 'out' port
   const sourceNode = graph.nodeMap.value.get(nodeId);
-  const sourcePortDef = sourceNode?.ports.find((p: any) => p.id === portId);
+  const sourceBp = MODULE_REGISTRY.get(sourceNode?.moduleId ?? '');
+  const sourcePortDef = sourceBp?.ports.find(p => p.id === portId);
   const sourceDir = sourcePortDef?.direction || "out";
 
   const pos = getPortWorldPosition(nodeId, portId, sourceDir);
@@ -1164,7 +1240,9 @@ function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
 
     for (const node of graph.state.nodes) {
       if (node.id === nodeId) continue; // skip self
-      for (const port of node.ports) {
+      const nodeBp = MODULE_REGISTRY.get(node.moduleId);
+      if (!nodeBp) continue;
+      for (const port of nodeBp.ports) {
         // Only connect out→in or in→out
         if (port.direction === sourceDir) continue;
         const portPos = getPortWorldPosition(node.id, port.id, port.direction);
@@ -1195,30 +1273,33 @@ function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
   window.addEventListener("pointerup", onUp);
 }
 
-// ── Load real flow data ──
+// ── Load graph data from props ──
 
-function loadFlowsIntoGraph() {
+function loadFromGraphs() {
   graph.state.nodes = [];
   graph.state.edges = [];
 
-  const flows = props.flows || [];
-  if (flows.length === 0) return;
+  const graphs = props.graphs || [];
+  if (graphs.length === 0) return;
 
-  const { nodes, edges } = flowsToGraph(flows);
-  graph.state.nodes = nodes;
-  graph.state.edges = edges;
+  // Load the first graph
+  const g = graphs[0];
+  if (g) {
+    graph.state.nodes = JSON.parse(JSON.stringify(g.nodes));
+    graph.state.edges = JSON.parse(JSON.stringify(g.edges));
+    if (g.viewport) {
+      graph.state.viewport.x = g.viewport.x;
+      graph.state.viewport.y = g.viewport.y;
+      graph.state.viewport.zoom = g.viewport.zoom;
+    }
+  }
   nextTick(() => fitView());
 }
 
-// Alias for toolbar button
-function addTestNodes() {
-  loadFlowsIntoGraph();
-}
-
-// Reload when flows data changes
-watch(() => props.flows, (newFlows) => {
-  if (newFlows && newFlows.length > 0 && graph.state.nodes.length === 0) {
-    loadFlowsIntoGraph();
+// Reload when graphs data changes
+watch(() => props.graphs, (newGraphs) => {
+  if (newGraphs && newGraphs.length > 0 && graph.state.nodes.length === 0) {
+    loadFromGraphs();
   }
 }, { deep: false });
 
@@ -1226,23 +1307,32 @@ watch(() => props.flows, (newFlows) => {
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
-  () => graph.state.nodes.map(n => n.data),
+  () => [graph.state.nodes.length, graph.state.edges.length],
   () => {
     if (activeSlotId.value !== 'overview') return;
-    if (!props.flows || props.flows.length === 0) return;
+    if (!props.graphs || props.graphs.length === 0) return;
     if (syncTimer) clearTimeout(syncTimer);
     syncTimer = setTimeout(() => {
-      const updated = graphToFlows(graph.state.nodes, props.flows as any[]);
-      emit('update:flows', updated);
+      const updated = props.graphs.map((g, i) => {
+        if (i === 0) {
+          return {
+            ...g,
+            nodes: JSON.parse(JSON.stringify(graph.state.nodes)),
+            edges: JSON.parse(JSON.stringify(graph.state.edges)),
+          };
+        }
+        return g;
+      });
+      emit('update:graphs', updated);
     }, 500);
   },
   { deep: true },
 );
 
-// Initialize with test nodes
+// Initialize
 onMounted(() => {
   initSlots();
-  loadFlowsIntoGraph();
+  loadFromGraphs();
   containerResizeObserver = new ResizeObserver(() => {
     if (isFullscreen.value) {
       scheduleFitView(2);

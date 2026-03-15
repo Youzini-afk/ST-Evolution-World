@@ -12,10 +12,10 @@
 </template>
 
 <script setup lang="ts">
-import type { PortDefinition } from './graph-types';
+import type { ModulePortDef } from './module-types';
 
 defineProps<{
-  port: PortDefinition;
+  port: ModulePortDef;
   connected?: boolean;
 }>();
 

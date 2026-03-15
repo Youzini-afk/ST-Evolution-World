@@ -161,7 +161,7 @@ export function filterBlockedContentStrip(
   let result = text;
   for (const entry of blockedEntries) {
     if (entry.content && result.includes(entry.content)) {
-      result = result.replace(entry.content, '');
+      result = result.split(entry.content).join('');
     }
   }
   return result.trim();
@@ -175,8 +175,13 @@ export function filterBlockedContentStrip(
  * system is applied at the framework level.
  */
 export function filterRegexProcess(text: string): string {
-  // ST's regex system is applied at the framework level, not here.
-  // This node exists for graph composition transparency.
+  try {
+    const stContext = (globalThis as any).SillyTavern?.getContext?.();
+    const runRegex = stContext?.runRegexScript;
+    if (typeof runRegex === 'function') {
+      return runRegex(text) ?? text;
+    }
+  } catch { /* no-op */ }
   return text;
 }
 

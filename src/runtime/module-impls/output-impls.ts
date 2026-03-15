@@ -26,18 +26,14 @@ export async function outputWorldbookWrite(
   let success = 0;
   let failed = 0;
 
+  const stContext = (globalThis as any).SillyTavern?.getContext?.();
+  if (!stContext) return { success: 0, failed: operations.length };
+  const worldInfoApi = stContext.worldInfoApi ?? (globalThis as any).worldInfoApi;
+
   for (const op of operations) {
     try {
-      const stContext = (globalThis as any).SillyTavern?.getContext?.();
-      if (!stContext) {
-        failed++;
-        continue;
-      }
-
       switch (op.action) {
         case 'upsert': {
-          // Try to find existing entry by key and update, or create new
-          const worldInfoApi = stContext.worldInfoApi ?? (globalThis as any).worldInfoApi;
           if (worldInfoApi?.upsertEntry) {
             await worldInfoApi.upsertEntry(op.bookName ?? '', {
               key: op.entryKey ? [op.entryKey] : [],
@@ -49,7 +45,6 @@ export async function outputWorldbookWrite(
           break;
         }
         case 'delete': {
-          const worldInfoApi = stContext.worldInfoApi ?? (globalThis as any).worldInfoApi;
           if (worldInfoApi?.deleteEntry) {
             await worldInfoApi.deleteEntry(op.bookName ?? '', op.entryKey ?? '');
           }
@@ -57,7 +52,6 @@ export async function outputWorldbookWrite(
           break;
         }
         case 'toggle': {
-          const worldInfoApi = stContext.worldInfoApi ?? (globalThis as any).worldInfoApi;
           if (worldInfoApi?.toggleEntry) {
             await worldInfoApi.toggleEntry(op.bookName ?? '', op.entryKey ?? '');
           }

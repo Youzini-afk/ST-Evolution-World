@@ -43,6 +43,15 @@ export interface ModulePortDef {
   optional?: boolean;
 }
 
+/** Schema for a single config field (used by property panel) */
+export interface ConfigFieldSchema {
+  key: string;
+  label: string;
+  type: 'text' | 'number' | 'boolean' | 'select' | 'textarea' | 'json' | 'slider';
+  options?: string[];        // for select
+  min?: number; max?: number; step?: number; // for slider/number
+}
+
 /** Blueprint definition for a module type (registered in the registry) */
 export interface ModuleBlueprint {
   /** Unique module type ID, e.g. 'src_char_fields' */
@@ -61,6 +70,8 @@ export interface ModuleBlueprint {
   ports: ModulePortDef[];
   /** Default config values for this module */
   defaultConfig: Record<string, any>;
+  /** Optional schema for config field rendering */
+  configSchema?: ConfigFieldSchema[];
   /** If true, this is a composite module (contains sub-graph) */
   isComposite?: boolean;
   /** For composite modules: the pre-wired sub-graph template */
@@ -167,3 +178,31 @@ export const MODULE_CATEGORIES: CategoryInfo[] = [
   { id: 'output',    label: '输出写入', icon: '📤', color: '#14b8a6', order: 5 },
   { id: 'config',    label: '配置参数', icon: '⚙',  color: '#6366f1', order: 6 },
 ];
+
+// ── Graph Utilities ──
+
+/**
+ * Check whether adding an edge from `source` to `target` would create a cycle.
+ * Uses iterative BFS reachability from target → source.
+ */
+export function wouldCreateCycle(
+  edges: WorkbenchEdge[],
+  source: string,
+  target: string,
+): boolean {
+  // If target can reach source through existing edges, adding source→target creates cycle
+  const visited = new Set<string>();
+  const queue = [source];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (current === target) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    for (const edge of edges) {
+      if (edge.source === current) {
+        queue.push(edge.target);
+      }
+    }
+  }
+  return false;
+}

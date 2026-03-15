@@ -28,10 +28,10 @@
 </template>
 
 <script setup lang="ts">
-import type { GraphEdge } from './graph-types';
+import type { WorkbenchEdge } from './module-types';
 
 const props = defineProps<{
-  edge: GraphEdge;
+  edge: WorkbenchEdge;
   sourceX: number;
   sourceY: number;
   targetX: number;

@@ -121,14 +121,13 @@ export function composeRequestTemplate(
     return current != null ? String(current) : '';
   });
 
-  try {
-    // If the template is a full JSON replacement
-    if (rendered.trim().startsWith('{')) {
-      const parsed = JSON.parse(rendered);
-      return { ...body, ...parsed };
+  const trimmed = rendered.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      return { ...body, ...JSON.parse(trimmed) };
+    } catch (e) {
+      console.debug('[ComposeImpl:request_template] Template produced invalid JSON:', e);
     }
-  } catch {
-    // Not valid JSON, that's fine
   }
 
   return { ...body, rendered_template: rendered };

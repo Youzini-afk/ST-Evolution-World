@@ -662,11 +662,10 @@
 
             <template v-else-if="store.activeTab === 'graph'">
               <EwGraphEditor
-                :flows="store.settings.flows"
-                :api-presets="store.settings.api_presets"
+                :graphs="workbenchGraphs"
                 :saved-slots="store.settings.graph_canvas_slots"
                 @save-slots="(slots: any[]) => { store.settings.graph_canvas_slots = slots; }"
-                @update:flows="(flows: any[]) => { store.settings.flows = flows; }"
+                @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
               />
             </template>
 

@@ -19,20 +19,22 @@ export async function executeLlmCall(
   apiConfig: Record<string, any>,
   genOptions?: Record<string, any>,
   behaviorOptions?: Record<string, any>,
+  signal?: AbortSignal,
 ): Promise<string> {
   const mode = apiConfig.mode ?? 'workflow_http';
 
   if (mode === 'llm_connector' || apiConfig.use_main_api) {
-    return executeLlmViaConnector(messages, genOptions, behaviorOptions);
+    return executeLlmViaConnector(messages, genOptions, behaviorOptions, signal);
   }
 
-  return executeLlmViaHttp(messages, apiConfig, genOptions);
+  return executeLlmViaHttp(messages, apiConfig, genOptions, signal);
 }
 
 async function executeLlmViaConnector(
   messages: Array<{ role: string; content: string }>,
   genOptions?: Record<string, any>,
   _behaviorOptions?: Record<string, any>,
+  signal?: AbortSignal,
 ): Promise<string> {
   try {
     const endpoint = '/api/backends/chat-completions/generate';
@@ -51,6 +53,7 @@ async function executeLlmViaConnector(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     });
 
     if (!response.ok) {
@@ -69,6 +72,7 @@ async function executeLlmViaHttp(
   messages: Array<{ role: string; content: string }>,
   apiConfig: Record<string, any>,
   genOptions?: Record<string, any>,
+  signal?: AbortSignal,
 ): Promise<string> {
   const apiUrl = apiConfig.api_url;
   if (!apiUrl) throw new Error('API URL 未配置');
@@ -104,6 +108,7 @@ async function executeLlmViaHttp(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) {
@@ -187,11 +192,29 @@ export function executeResponseNormalize(
 export async function executeStreamSse(
   response: any,
 ): Promise<string> {
-  // In practice, SSE streaming is handled by the LLM connector or
-  // the fetch response reader. This node provides a composability
-  // point in the graph.
   if (typeof response === 'string') return response;
-  if (response?.text) return response.text;
-  if (response?.content) return response.content;
-  return '';
+  if (!response?.body) return response?.text ?? response?.content ?? '';
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    // Parse SSE format: data: ... lines
+    for (const line of chunk.split('\n')) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content ?? '';
+          accumulated += delta;
+        } catch { accumulated += data; }
+      }
+    }
+  }
+  return accumulated;
 }

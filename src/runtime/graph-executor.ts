@@ -309,7 +309,7 @@ async function executeModule(
       const apiCfg = inputs.api_config ?? config;
       const genOpts = inputs.gen_options ?? {};
       const behavior = inputs.behavior ?? {};
-      return { raw_response: await executeLlmCall(msgs, apiCfg, genOpts, behavior) };
+      return { raw_response: await executeLlmCall(msgs, apiCfg, genOpts, behavior, context.abortSignal) };
     }
     case 'exe_response_extract': {
       const { executeResponseExtract } = await import('./module-impls/execute-impls');
