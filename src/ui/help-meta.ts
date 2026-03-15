@@ -17,8 +17,8 @@ export type FieldHelpMeta = {
 export const PANEL_TABS: TabMeta[] = [
   { key: 'overview', label: '总览' },
   { key: 'api', label: 'API配置' },
-  { key: 'global', label: '全局配置' },
-  { key: 'flows', label: '工作流配置' },
+  { key: 'global', label: '运行设置' },
+  { key: 'flows', label: '工作流清单' },
   { key: 'graph', label: '工作流图' },
   { key: 'workbench', label: '工作台' },
   { key: 'history', label: '历史' },

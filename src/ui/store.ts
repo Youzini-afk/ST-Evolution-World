@@ -45,6 +45,10 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   const importText = ref('');
   const busy = ref(false);
 
+  // ── 工作流编辑上下文（跨标签共享）──
+  const selectedGraphId = ref<string | null>(null);
+  const selectedNodeId = ref<string | null>(null);
+
   // ── 角色卡绑定工作流 ──
   const charFlows = ref<EwFlowConfig[]>([]);
   const activeCharName = ref<string>('');
@@ -264,6 +268,15 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function setExpandedFlow(flowId: string | null) {
     expandedFlowId.value = flowId;
+  }
+
+  function selectGraph(graphId: string | null) {
+    selectedGraphId.value = graphId;
+    selectedNodeId.value = null;
+  }
+
+  function selectNode(nodeId: string | null) {
+    selectedNodeId.value = nodeId;
   }
 
   async function runManual(message: string) {
@@ -724,6 +737,8 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     expandedFlowId,
     importText,
     busy,
+    selectedGraphId,
+    selectedNodeId,
     charFlows,
     activeCharName,
     flowScope,
@@ -741,6 +756,8 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     toggleFlowExpanded,
     setExpandedApiPreset,
     setExpandedFlow,
+    selectGraph,
+    selectNode,
     runManual,
     rollbackController,
     exportConfig,

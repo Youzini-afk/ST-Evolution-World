@@ -666,12 +666,15 @@
                 :saved-slots="store.settings.graph_canvas_slots"
                 @save-slots="(slots: any[]) => { store.settings.graph_canvas_slots = slots; }"
                 @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
+                @select-node="(id: string | null) => store.selectNode(id)"
               />
             </template>
 
             <template v-else-if="store.activeTab === 'workbench'">
               <EwModuleWorkbench
                 :graphs="workbenchGraphs"
+                :selected-graph-id="store.selectedGraphId"
+                :selected-node-id="store.selectedNodeId"
                 @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
               />
             </template>

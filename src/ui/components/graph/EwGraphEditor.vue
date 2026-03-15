@@ -236,6 +236,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:graphs', graphs: WorkbenchGraph[]): void;
   (e: 'save-slots', slots: any[]): void;
+  (e: 'select-node', nodeId: string | null): void;
 }>();
 
 // ── Inline reactive graph state (replaces createGraphState) ──
@@ -348,6 +349,11 @@ const canvasContainer = ref<HTMLElement>();
 const selectedEdge = ref<string | null>(null);
 const selectedNodes = reactive(new Set<string>());
 const isFullscreen = ref(false);
+
+// Forward primary node selection to parent
+watch(() => [...selectedNodes], (ids) => {
+  emit('select-node', ids.length === 1 ? ids[0] : null);
+});
 
 // ── Z-index (bring to front on click) ──
 const nodeZIndex = reactive(new Map<string, number>());
