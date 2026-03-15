@@ -1,0 +1,169 @@
+/* ═══ Module Workbench — Type Definitions ═══ */
+
+// ── Module System Core Types ──
+
+/** Category of a module */
+export type ModuleCategory =
+  | 'source'    // 数据源
+  | 'filter'    // 过滤 / 处理
+  | 'transform' // 渲染 / 转换
+  | 'compose'   // 编排
+  | 'execute'   // 执行
+  | 'output'    // 输出
+  | 'config';   // 配置
+
+/** Data type that flows through ports */
+export type PortDataType =
+  | 'any'
+  | 'text'
+  | 'messages'      // Array<{ role, content }>
+  | 'entries'        // WI entries array
+  | 'json'           // arbitrary JSON object
+  | 'api_config'     // API preset config
+  | 'gen_options'    // generation parameters
+  | 'behavior_options'
+  | 'flow_context'   // { chat_id, message_id, trigger }
+  | 'results'        // DispatchFlowResult[]
+  | 'operations'     // worldbook operations
+  | 'snapshot'       // floor binding snapshot
+  | 'http_response'  // raw HTTP response
+  | 'timing'         // before_reply | after_reply
+  | 'boolean'
+  | 'number';
+
+/** Definition of a port on a module blueprint */
+export interface ModulePortDef {
+  id: string;
+  label: string;
+  direction: 'in' | 'out';
+  dataType: PortDataType;
+  /** If true, this port can accept multiple connections */
+  multiple?: boolean;
+  /** If true, this port is optional (module can execute without it) */
+  optional?: boolean;
+}
+
+/** Blueprint definition for a module type (registered in the registry) */
+export interface ModuleBlueprint {
+  /** Unique module type ID, e.g. 'src_char_fields' */
+  moduleId: string;
+  /** Display name */
+  label: string;
+  /** Category for palette grouping */
+  category: ModuleCategory;
+  /** Color accent */
+  color: string;
+  /** Emoji icon */
+  icon: string;
+  /** Short description */
+  description: string;
+  /** Port definitions */
+  ports: ModulePortDef[];
+  /** Default config values for this module */
+  defaultConfig: Record<string, any>;
+  /** If true, this is a composite module (contains sub-graph) */
+  isComposite?: boolean;
+  /** For composite modules: the pre-wired sub-graph template */
+  compositeTemplate?: {
+    nodes: WorkbenchNode[];
+    edges: WorkbenchEdge[];
+  };
+}
+
+// ── Workbench Instance Types ──
+
+/** A node instance in the workbench graph */
+export interface WorkbenchNode {
+  id: string;
+  /** References a ModuleBlueprint.moduleId */
+  moduleId: string;
+  position: { x: number; y: number };
+  /** Per-instance configuration, merged over blueprint defaults */
+  config: Record<string, any>;
+  collapsed: boolean;
+}
+
+/** An edge in the workbench graph */
+export interface WorkbenchEdge {
+  id: string;
+  source: string;       // source node ID
+  sourcePort: string;   // source port ID
+  target: string;       // target node ID
+  targetPort: string;   // target port ID
+}
+
+/** Viewport state */
+export interface WorkbenchViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+/** A complete workbench graph (replaces one EwFlowConfig) */
+export interface WorkbenchGraph {
+  id: string;
+  name: string;
+  enabled: boolean;
+  timing: 'default' | 'before_reply' | 'after_reply';
+  priority: number;
+  nodes: WorkbenchNode[];
+  edges: WorkbenchEdge[];
+  viewport: WorkbenchViewport;
+}
+
+// ── Execution Types ──
+
+/** The data packet flowing between modules during execution */
+export type ModuleOutput = Record<string, any>;
+
+/** Context available to all modules during execution */
+export interface ExecutionContext {
+  requestId: string;
+  chatId: string;
+  messageId: number;
+  userInput: string;
+  trigger?: any;
+  settings: any; // EwSettings
+  abortSignal?: AbortSignal;
+  isCancelled?: () => boolean;
+  onProgress?: (update: any) => void;
+}
+
+/** Result of executing a single module */
+export interface ModuleExecutionResult {
+  nodeId: string;
+  moduleId: string;
+  outputs: Record<string, any>; // keyed by output port ID
+  elapsedMs: number;
+  error?: string;
+}
+
+/** Result of executing the entire graph */
+export interface GraphExecutionResult {
+  ok: boolean;
+  reason?: string;
+  requestId: string;
+  moduleResults: ModuleExecutionResult[];
+  finalOutputs: Record<string, any>;
+  elapsedMs: number;
+}
+
+// ── Category Metadata ──
+
+export interface CategoryInfo {
+  id: ModuleCategory;
+  label: string;
+  icon: string;
+  color: string;
+  order: number;
+}
+
+export const MODULE_CATEGORIES: CategoryInfo[] = [
+  { id: 'source',    label: '数据源',   icon: '🔌', color: '#f59e0b', order: 0 },
+  { id: 'filter',    label: '过滤处理', icon: '🔍', color: '#3b82f6', order: 1 },
+  { id: 'transform', label: '渲染转换', icon: '🔮', color: '#8b5cf6', order: 2 },
+  { id: 'compose',   label: '编排组装', icon: '📝', color: '#10b981', order: 3 },
+  { id: 'execute',   label: '执行调用', icon: '🚀', color: '#ef4444', order: 4 },
+  { id: 'output',    label: '输出写入', icon: '📤', color: '#14b8a6', order: 5 },
+  { id: 'config',    label: '配置参数', icon: '⚙',  color: '#6366f1', order: 6 },
+];
