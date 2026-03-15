@@ -87,6 +87,7 @@ const props = defineProps<{
   zoom: number;
   selected?: boolean;
   selectedNodes?: Set<string>;
+  zIndex?: number;
 }>();
 
 const emit = defineEmits<{
@@ -117,6 +118,7 @@ const outPorts = computed(() =>
 const nodeStyle = computed(() => ({
   transform: `translate(${props.node.position.x}px, ${props.node.position.y}px)`,
   '--node-color': nodeInfo.value.color,
+  zIndex: props.zIndex ?? 1,
 }));
 
 function isPortConnected(portId: string): boolean {

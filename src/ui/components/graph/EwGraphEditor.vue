@@ -96,11 +96,13 @@
           :zoom="graph.state.viewport.zoom"
           :selected="selectedNodes.has(node.id)"
           :selected-nodes="selectedNodes"
+          :z-index="nodeZIndex.get(node.id) || 1"
           @move="onNodeMove"
           @group-move="onGroupMove"
           @toggle-collapse="graph.toggleCollapse(node.id)"
           @port-drag-start="onPortDragStart"
           @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
+          @pointerdown="bringToFront(node.id)"
         >
           <div class="ew-graph-node__type-label">{{ node.type }}</div>
         </EwGraphNode>
@@ -246,6 +248,15 @@ const graph = createGraphState();
 const selectedEdge = ref<string | null>(null);
 const selectedNodes = reactive(new Set<string>());
 const isFullscreen = ref(false);
+
+// ── Z-index (bring to front on click) ──
+const nodeZIndex = reactive(new Map<string, number>());
+let zCounter = 1;
+
+function bringToFront(nodeId: string) {
+  zCounter++;
+  nodeZIndex.set(nodeId, zCounter);
+}
 
 // ── Canvas Slots ──
 interface CanvasSlot {
