@@ -6,6 +6,7 @@
     :data-type="node.type"
     :data-collapsed="node.collapsed ? '1' : '0'"
     ref="nodeEl"
+    @pointerdown="emit('bring-to-front')"
   >
     <!-- Header (draggable) -->
     <header
