@@ -273,6 +273,8 @@ defineExpose({ nodeEl, getPortCenter });
   padding: 8px 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  min-width: 0;
 }
 
 .ew-graph-node[data-collapsed="1"] .ew-graph-node__ports {
@@ -381,6 +383,7 @@ defineExpose({ nodeEl, getPortCenter });
   font-size: 10px;
   color: rgba(255, 255, 255, 0.65);
   padding: 1px 0;
+  min-width: 0;
 }
 
 :deep(.node-field__list-dot) {
@@ -404,6 +407,8 @@ defineExpose({ nodeEl, getPortCenter });
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 :deep(.node-field__empty) {
