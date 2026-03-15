@@ -3,6 +3,7 @@ import { getChatId } from "./compat/character";
 import { FlowTriggerV1 } from "./contracts";
 import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
+import { executeGraph, validateGraph } from "./graph-executor";
 import { uuidv4 } from "./helpers";
 import { injectReplyInstructionOnce } from "./injection";
 import { mergeFlowResults } from "./merger";
@@ -15,6 +16,7 @@ import {
   RunSummarySchema,
   WorkflowProgressUpdate,
 } from "./types";
+import type { WorkbenchGraph } from "../ui/components/graph/module-types";
 
 type RunWorkflowInput = {
   message_id: number;
@@ -123,6 +125,92 @@ function throwIfWorkflowCancelled(
   }
 }
 
+// ── Graph Execution Path (Module Workbench) ──
+
+async function runGraphWorkflow(
+  input: RunWorkflowInput,
+  settings: any,
+  enabledGraphs: WorkbenchGraph[],
+  requestId: string,
+  startedAt: number,
+): Promise<RunWorkflowOutput> {
+  const currentChatId = String(getChatId() ?? "unknown");
+
+  input.onProgress?.({
+    phase: "preparing",
+    request_id: requestId,
+    message: `正在准备图工作流（${enabledGraphs.length} 个图）…`,
+  });
+
+  // Sort by priority (lower = earlier)
+  const sorted = [...enabledGraphs].sort((a, b) => a.priority - b.priority);
+  const allResults: DispatchFlowResult[] = [];
+
+  for (const graph of sorted) {
+    if (isWorkflowCancelled(input)) {
+      throw new Error("workflow cancelled by user");
+    }
+
+    // Validate before execution
+    const errors = validateGraph(graph);
+    if (errors.length > 0) {
+      const msg = errors.map(e => e.message).join('; ');
+      console.warn(`[EW] Graph "${graph.name}" validation failed: ${msg}`);
+      continue; // Skip invalid graphs
+    }
+
+    input.onProgress?.({
+      phase: "dispatching",
+      request_id: requestId,
+      message: `正在执行图工作流「${graph.name}」…`,
+    });
+
+    const graphResult = await executeGraph(graph, {
+      requestId,
+      chatId: currentChatId,
+      messageId: input.message_id,
+      userInput: input.user_input ?? '',
+      trigger: input.trigger,
+      settings,
+      abortSignal: input.abortSignal,
+      isCancelled: input.isCancelled,
+      onProgress: input.onProgress,
+    });
+
+    if (!graphResult.ok) {
+      return {
+        ok: false,
+        reason: graphResult.reason,
+        request_id: requestId,
+        attempts: [],
+        results: allResults,
+      };
+    }
+  }
+
+  const summary = RunSummarySchema.parse({
+    at: Date.now(),
+    ok: true,
+    reason: "",
+    request_id: requestId,
+    chat_id: currentChatId,
+    flow_count: sorted.length,
+    elapsed_ms: Date.now() - startedAt,
+    mode: input.mode,
+    diagnostics: {},
+  });
+  setLastRun(summary);
+
+  return {
+    ok: true,
+    request_id: requestId,
+    attempts: [],
+    results: allResults,
+  };
+}
+
+// ── Legacy Flow Execution Path ──
+
 export async function runWorkflow(
   input: RunWorkflowInput,
 ): Promise<RunWorkflowOutput> {
@@ -135,6 +223,16 @@ export async function runWorkflow(
 
   try {
     throwIfWorkflowCancelled(input);
+
+    // ── Graph execution path (Module Workbench) ──
+    // If workbench_graphs exist, route to the new graph-driven executor.
+    const workbenchGraphs: WorkbenchGraph[] = (settings as any).workbench_graphs ?? [];
+    const enabledGraphs = workbenchGraphs.filter(g => g.enabled);
+    if (enabledGraphs.length > 0 && !input.flow_ids?.length) {
+      return await runGraphWorkflow(input, settings, enabledGraphs, requestId, startedAt);
+    }
+
+    // ── Legacy flow execution path ──
     input.onProgress?.({
       phase: "preparing",
       request_id: requestId,
