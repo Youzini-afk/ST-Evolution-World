@@ -155,9 +155,17 @@
       <!-- Minimap -->
       <div
         class="ew-graph-minimap"
-        @pointerdown.stop="onMinimapPointerDown"
+        :style="{ right: minimapPos.x + 'px', bottom: minimapPos.y + 'px' }"
       >
-        <svg :viewBox="minimapViewBox" preserveAspectRatio="xMidYMid meet" width="100%" height="100%">
+        <div class="ew-graph-minimap__handle" @pointerdown.stop="onMinimapDragStart">
+          <span>⡇</span>
+        </div>
+        <svg
+          :viewBox="minimapViewBox"
+          preserveAspectRatio="xMidYMid meet"
+          width="100%" height="100%"
+          @pointerdown.stop="onMinimapPointerDown"
+        >
           <!-- Edges as cubic Bézier curves -->
           <path
             v-for="edge in minimapEdges"
@@ -616,12 +624,13 @@ function onMinimapPointerDown(e: PointerEvent) {
   if (!pos) return;
   navigateToWorld(pos.worldX, pos.worldY);
 
-  const minimapEl = (e.currentTarget as HTMLElement);
+  const minimapEl = (e.currentTarget as HTMLElement).closest('.ew-graph-minimap') as HTMLElement;
+  if (!minimapEl) return;
   minimapEl.setPointerCapture(e.pointerId);
 
+  const svg = minimapEl.querySelector('svg')!;
+
   const onMove = (me: PointerEvent) => {
-    const svg = minimapEl.querySelector('svg');
-    if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const xRatio = (me.clientX - rect.left) / rect.width;
     const yRatio = (me.clientY - rect.top) / rect.height;
@@ -630,12 +639,49 @@ function onMinimapPointerDown(e: PointerEvent) {
   };
 
   const onUp = () => {
-    minimapEl.removeEventListener('pointermove', onMove);
-    minimapEl.removeEventListener('pointerup', onUp);
+    svg.removeEventListener('pointermove', onMove);
+    svg.removeEventListener('pointerup', onUp);
   };
 
-  minimapEl.addEventListener('pointermove', onMove);
-  minimapEl.addEventListener('pointerup', onUp);
+  svg.addEventListener('pointermove', onMove);
+  svg.addEventListener('pointerup', onUp);
+}
+
+// ── Minimap position (draggable) ──
+const minimapPos = ref({ x: 12, y: 90 });
+
+function onMinimapDragStart(e: PointerEvent) {
+  e.preventDefault();
+  const handle = e.currentTarget as HTMLElement;
+  const minimap = handle.closest('.ew-graph-minimap') as HTMLElement;
+  if (!minimap) return;
+
+  const container = minimap.parentElement;
+  if (!container) return;
+
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startRight = minimapPos.value.x;
+  const startBottom = minimapPos.value.y;
+  const containerRect = container.getBoundingClientRect();
+
+  handle.setPointerCapture(e.pointerId);
+
+  const onMove = (me: PointerEvent) => {
+    const dx = me.clientX - startX;
+    const dy = me.clientY - startY;
+    // right/bottom positioning: moving right on screen decreases 'right', moving down decreases 'bottom'
+    minimapPos.value.x = Math.max(0, Math.min(containerRect.width - 190, startRight - dx));
+    minimapPos.value.y = Math.max(0, Math.min(containerRect.height - 140, startBottom - dy));
+  };
+
+  const onUp = () => {
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+  };
+
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
 }
 
 // ── Edge position helpers ──
@@ -1474,21 +1520,47 @@ onUnmounted(() => {
 
 .ew-graph-minimap {
   position: absolute;
-  bottom: 90px;
-  right: 12px;
   width: 180px;
-  height: 120px;
+  height: 140px;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(8px);
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 35;
   overflow: hidden;
-  cursor: crosshair;
-  transition: opacity 0.2s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 .ew-graph-minimap:hover {
   border-color: rgba(255, 255, 255, 0.2);
+}
+
+.ew-graph-minimap__handle {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 10px;
+  letter-spacing: 2px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.ew-graph-minimap__handle:hover {
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ew-graph-minimap__handle:active {
+  cursor: grabbing;
+}
+
+.ew-graph-minimap svg {
+  flex: 1;
+  min-height: 0;
+  cursor: crosshair;
 }
 </style>
