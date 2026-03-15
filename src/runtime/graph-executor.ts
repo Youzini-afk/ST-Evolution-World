@@ -141,27 +141,127 @@ async function executeModule(
   const moduleId = node.moduleId;
   const config = node.config;
 
-  // Module dispatch table
-  // Each case returns the outputs keyed by output port ID
   switch (moduleId) {
-    // ── Source modules ──
-    case 'src_char_fields':
-      return executeSourceCharFields(config, context);
-    case 'src_chat_history':
-      return executeSourceChatHistory(config, context);
+    // ═══════ Source modules ═══════
+    case 'src_char_fields': {
+      const { collectCharFields } = await import('./module-impls/source-impls');
+      return collectCharFields();
+    }
+    case 'src_chat_history': {
+      const { collectChatHistory } = await import('./module-impls/source-impls');
+      return { messages: collectChatHistory(config.context_turns ?? 8) };
+    }
+    case 'src_worldbook_raw': {
+      const { collectWorldbookRaw } = await import('./module-impls/source-impls');
+      return { entries: collectWorldbookRaw(config) };
+    }
+    case 'src_extension_prompts': {
+      const { collectExtensionPrompts } = await import('./module-impls/source-impls');
+      return collectExtensionPrompts();
+    }
     case 'src_user_input':
       return { text: context.userInput ?? '' };
-    case 'src_flow_context':
-      return {
-        context: {
-          chat_id: context.chatId,
-          message_id: context.messageId,
-          trigger: context.trigger,
-          request_id: context.requestId,
-        },
-      };
+    case 'src_flow_context': {
+      const { collectFlowContext } = await import('./module-impls/source-impls');
+      return { context: collectFlowContext(context) };
+    }
+    case 'src_serial_results': {
+      const { collectSerialResults } = await import('./module-impls/source-impls');
+      return { results: collectSerialResults((context as any).previousResults) };
+    }
 
-    // ── Config modules (pure output, no execution) ──
+    // ═══════ Filter modules ═══════
+    case 'flt_wi_keyword_match': {
+      const { filterWiKeywordMatch } = await import('./module-impls/filter-impls');
+      const entries = Array.isArray(inputs.entries) ? inputs.entries : [];
+      const chatTexts = typeof inputs.chat_texts === 'string'
+        ? inputs.chat_texts
+        : Array.isArray(inputs.chat_texts)
+          ? inputs.chat_texts.map((m: any) => m.content ?? '').join('\n')
+          : '';
+      return { activated: filterWiKeywordMatch(entries, chatTexts) };
+    }
+    case 'flt_wi_probability': {
+      const { filterWiProbability } = await import('./module-impls/filter-impls');
+      return { entries_out: filterWiProbability(Array.isArray(inputs.entries_in) ? inputs.entries_in : []) };
+    }
+    case 'flt_wi_mutex_group': {
+      const { filterWiMutexGroup } = await import('./module-impls/filter-impls');
+      return { entries_out: filterWiMutexGroup(Array.isArray(inputs.entries_in) ? inputs.entries_in : []) };
+    }
+    case 'flt_mvu_strip': {
+      const { filterMvuStrip } = await import('./module-impls/filter-impls');
+      const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
+      return { text_out: await filterMvuStrip(text) };
+    }
+    case 'flt_mvu_detect': {
+      const { filterMvuDetect } = await import('./module-impls/filter-impls');
+      const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
+      const result = filterMvuDetect(text);
+      return { text_out: result.text, is_mvu: result.isMvu };
+    }
+    case 'flt_blocked_content_strip': {
+      const { filterBlockedContentStrip } = await import('./module-impls/filter-impls');
+      const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
+      const blocked = Array.isArray(inputs.blocked) ? inputs.blocked : [];
+      return { text_out: filterBlockedContentStrip(text, blocked) };
+    }
+    case 'flt_regex_process': {
+      const { filterRegexProcess } = await import('./module-impls/filter-impls');
+      const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
+      return { text_out: filterRegexProcess(text) };
+    }
+    case 'flt_context_extract': {
+      const { filterContextExtract } = await import('./module-impls/filter-impls');
+      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
+      return { msgs_out: filterContextExtract(msgs, config.rules ?? []) };
+    }
+    case 'flt_context_exclude': {
+      const { filterContextExclude } = await import('./module-impls/filter-impls');
+      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
+      return { msgs_out: filterContextExclude(msgs, config.rules ?? []) };
+    }
+    case 'flt_custom_regex': {
+      const { filterCustomRegex } = await import('./module-impls/filter-impls');
+      const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
+      return { text_out: filterCustomRegex(text, config.rules ?? []) };
+    }
+    case 'flt_hide_messages': {
+      const { filterHideMessages } = await import('./module-impls/filter-impls');
+      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
+      return { msgs_out: filterHideMessages(msgs, config) };
+    }
+
+    // ═══════ Transform modules ═══════
+    case 'tfm_ejs_render': {
+      const { transformEjsRender } = await import('./module-impls/transform-impls');
+      const template = typeof inputs.template === 'string' ? inputs.template : '';
+      const ctx = inputs.context ?? {};
+      return { rendered: await transformEjsRender(template, ctx) };
+    }
+    case 'tfm_macro_replace': {
+      const { transformMacroReplace } = await import('./module-impls/transform-impls');
+      const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
+      return { text_out: transformMacroReplace(text) };
+    }
+    case 'tfm_controller_expand': {
+      const { transformControllerExpand } = await import('./module-impls/transform-impls');
+      const entries = Array.isArray(inputs.controller) ? inputs.controller : [];
+      return { expanded: await transformControllerExpand(entries) };
+    }
+    case 'tfm_wi_bucket': {
+      const { transformWiBucket } = await import('./module-impls/transform-impls');
+      const entries = Array.isArray(inputs.entries_in) ? inputs.entries_in : [];
+      const buckets = transformWiBucket(entries);
+      return { before: buckets.before, after: buckets.after, at_depth: buckets.atDepth };
+    }
+    case 'tfm_entry_name_inject': {
+      const { transformEntryNameInject } = await import('./module-impls/transform-impls');
+      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
+      return { msgs_out: transformEntryNameInject(msgs, inputs.snapshots) };
+    }
+
+    // ═══════ Config modules (pure output, no execution) ═══════
     case 'cfg_api_preset':
       return { config: { ...config } };
     case 'cfg_generation':
@@ -173,31 +273,34 @@ async function executeModule(
     case 'cfg_system_prompt':
       return { prompt: config.content ?? '' };
 
-    // ── Filter modules ──
-    case 'flt_mvu_strip':
-      return executeFilterMvuStrip(inputs);
-    case 'flt_hide_messages':
-      return executeFilterHideMessages(inputs, config);
+    // ═══════ Compose modules (iteration 5) ═══════
+    case 'cmp_message_concat': {
+      const a = Array.isArray(inputs.a) ? inputs.a : [];
+      const b = Array.isArray(inputs.b) ? inputs.b : [];
+      return { msgs_out: [...a, ...b] };
+    }
 
-    // ── Transform modules ──
-    case 'tfm_macro_replace':
-      return executeTransformMacroReplace(inputs, context);
+    // ═══════ Execute modules (iteration 5) ═══════
+    case 'exe_json_parse': {
+      const text = typeof inputs.text === 'string' ? inputs.text : '';
+      if (!text.trim()) return { parsed: {} };
+      try {
+        return { parsed: JSON.parse(text.trim()) };
+      } catch {
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          try { return { parsed: JSON.parse(text.slice(start, end + 1)) }; } catch { /* fall */ }
+        }
+        console.warn(`[GraphExecutor] Node ${node.id}: failed to parse JSON`);
+        return { parsed: {} };
+      }
+    }
 
-    // ── Compose modules ──
-    case 'cmp_message_concat':
-      return executeComposeMessageConcat(inputs);
-
-    // ── Execute modules ──
-    case 'exe_json_parse':
-      return executeJsonParse(inputs, node.id);
-
-    // ── Fallback: pass-through or empty ──
+    // ═══════ Fallback: pass-through ═══════
     default: {
-      // For unimplemented modules, collect any 'in'-direction values and forward them
-      // to the first 'out' port. This allows the graph to still "work" structurally.
       const blueprint = getModuleBlueprint(moduleId);
       const outPorts = blueprint.ports.filter(p => p.direction === 'out');
-
       if (outPorts.length > 0) {
         const firstInValue = Object.values(inputs)[0];
         const result: ModuleOutput = {};
@@ -209,107 +312,6 @@ async function executeModule(
       return {};
     }
   }
-}
-
-// ── Module Implementations (Iteration 2 stubs + critical paths) ──
-
-async function executeSourceCharFields(
-  _config: Record<string, any>,
-  _context: ExecutionContext,
-): Promise<ModuleOutput> {
-  // Lazy import to avoid circular dependencies
-  // Full implementation will call getRuntimeCharacterFields() from prompt-assembler
-  try {
-    const { collectCharFields } = await import('./module-impls/source-impls');
-    return collectCharFields();
-  } catch {
-    return {
-      main: '', description: '', personality: '',
-      scenario: '', persona: '', examples: '', jailbreak: '',
-    };
-  }
-}
-
-async function executeSourceChatHistory(
-  config: Record<string, any>,
-  _context: ExecutionContext,
-): Promise<ModuleOutput> {
-  try {
-    const { collectChatHistory } = await import('./module-impls/source-impls');
-    return { messages: collectChatHistory(config.context_turns ?? 8) };
-  } catch {
-    return { messages: [] };
-  }
-}
-
-function executeFilterMvuStrip(
-  inputs: Record<string, any>,
-): ModuleOutput {
-  const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
-  // Lazy: will call stripMvuPromptArtifacts in iteration 4
-  // For now, pass through
-  return { text_out: text };
-}
-
-function executeFilterHideMessages(
-  inputs: Record<string, any>,
-  config: Record<string, any>,
-): ModuleOutput {
-  const messages = Array.isArray(inputs.msgs_in) ? [...inputs.msgs_in] : [];
-  const hideN = config.hide_last_n ?? 0;
-  if (hideN > 0 && messages.length > hideN) {
-    return { msgs_out: messages.slice(0, -hideN) };
-  }
-  return { msgs_out: messages };
-}
-
-function executeTransformMacroReplace(
-  inputs: Record<string, any>,
-  _context: ExecutionContext,
-): ModuleOutput {
-  const text = typeof inputs.text_in === 'string' ? inputs.text_in : '';
-  // Full macro replacement will be implemented in iteration 4
-  return { text_out: text };
-}
-
-function executeComposeMessageConcat(
-  inputs: Record<string, any>,
-): ModuleOutput {
-  const a = Array.isArray(inputs.a) ? inputs.a : [];
-  const b = Array.isArray(inputs.b) ? inputs.b : [];
-  return { msgs_out: [...a, ...b] };
-}
-
-function executeJsonParse(
-  inputs: Record<string, any>,
-  nodeId: string,
-): ModuleOutput {
-  const text = typeof inputs.text === 'string' ? inputs.text : '';
-  if (!text.trim()) {
-    return { parsed: {} };
-  }
-
-  try {
-    // Try direct parse
-    const direct = JSON.parse(text.trim());
-    if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
-      return { parsed: direct };
-    }
-  } catch {
-    // Try extracting JSON from text
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        return { parsed: JSON.parse(text.slice(start, end + 1)) };
-      } catch {
-        // Fall through
-      }
-    }
-  }
-
-  console.warn(`[GraphExecutor] Node ${nodeId}: failed to parse JSON from text`);
-  return { parsed: {} };
 }
 
 // ── Main Executor ──
