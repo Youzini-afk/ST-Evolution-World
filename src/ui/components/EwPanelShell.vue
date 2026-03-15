@@ -1,5 +1,5 @@
 <template>
-  <div class="ew-overlay" @click.self="$emit('close')">
+  <div class="ew-overlay">
     <section class="ew-panel" :data-busy="busy ? '1' : '0'" @dragstart="onPanelDragStart">
       <header class="ew-panel__header">
         <div class="ew-panel__title-wrap">
