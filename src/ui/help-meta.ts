@@ -39,6 +39,48 @@ const FIELD_HELP_LIST: FieldHelpMeta[] = [
     detailHelp: '串行模式下后续工作流可读取前序结果；并行模式更快，但冲突由优先级和顺序合并。',
   },
   {
+    key: 'after_reply_delay_seconds',
+    label: '回复后延迟',
+    shortHelp: 'AI 回复完成后，等待多少秒再开始这一轮 EW 工作流。',
+    detailHelp: '仅对“回复后更新”链路生效。可用于降低多条工作流同时打满接口时的瞬时压力，支持小数秒。',
+    placeholder: '0',
+    isAdvanced: true,
+  },
+  {
+    key: 'auto_reroll_max_attempts',
+    label: '自动重roll次数',
+    shortHelp: '工作流失败后，最多再自动重roll多少次。',
+    detailHelp:
+      '仅在失败策略选择“自动重roll”时生效，表示首次失败后还会额外补跑多少次。设为 1 等价于旧版“失败重试一次”；设为 3 则最多会尝试 1 次首跑 + 3 次自动重roll。',
+    placeholder: '1',
+    isAdvanced: true,
+  },
+  {
+    key: 'auto_reroll_interval_seconds',
+    label: '自动重roll间隔',
+    shortHelp: '两次自动重roll之间额外等待多少秒。',
+    detailHelp:
+      '仅在失败策略选择“自动重roll”时生效。设为 0 表示失败后立即重roll；设为 5 则每次失败后等待 5 秒再进行下一次自动重roll，用于给模型或网关一点缓冲时间。',
+    placeholder: '0',
+    isAdvanced: true,
+  },
+  {
+    key: 'parallel_dispatch_interval_seconds',
+    label: '并行发出间隔',
+    shortHelp: '并行模式下，每条工作流请求相对前一条错开发出的秒数。',
+    detailHelp: '0 表示真正同时发出；例如设为 1，则第 1 条立即发、第 2 条 1 秒后发、第 3 条 2 秒后发，用于削峰。',
+    placeholder: '0',
+    isAdvanced: true,
+  },
+  {
+    key: 'serial_dispatch_interval_seconds',
+    label: '串行发出间隔',
+    shortHelp: '串行模式下，每条工作流完成后到下一条发出前再额外等待多少秒。',
+    detailHelp: '适合严格限速的接口。该间隔只加在串行相邻两条之间，首条仍按“回复后延迟”或立即执行。',
+    placeholder: '0',
+    isAdvanced: true,
+  },
+  {
     key: 'total_timeout_ms',
     label: '总超时',
     shortHelp: '整轮工作流的最大耗时上限（毫秒）。',
@@ -82,7 +124,7 @@ const FIELD_HELP_LIST: FieldHelpMeta[] = [
     label: '失败策略',
     shortHelp: '工作流失败时的处理方式。',
     detailHelp:
-      '失败即中止：停止 AI 生成并提示错误。静默继续：显示警告但 AI 照常生成。失败重试一次：自动重试一次，仍失败则中止。仅通知：仅弹出提示，不影响生成。',
+      '失败即中止：停止 AI 生成并提示错误。静默继续：显示警告但 AI 照常生成。自动重roll：按配置的次数与间隔自动补跑，仍失败则中止。仅通知：仅弹出提示，不影响生成。',
     isAdvanced: true,
   },
   {
@@ -96,9 +138,9 @@ const FIELD_HELP_LIST: FieldHelpMeta[] = [
   {
     key: 'reroll_scope',
     label: '重roll范围',
-    shortHelp: '控制“重roll当前楼”时，是重跑全部工作流，还是仅重跑上次失败的工作流。',
+    shortHelp: '控制重roll按钮是重跑当前楼全部、当前楼失败部分，还是批量重跑当前聊天里所有失败楼层。',
     detailHelp:
-      '全部重roll会从头重跑当前楼关联的全部工作流，结果最完整也最稳。仅失败工作流会保留当前楼上次成功的结果，只重试失败的部分；如果该楼没有失败记录，按钮会直接提示无需重跑。旧楼层若还没有执行记录，会回退为全部重roll。',
+      '全部工作流：从头重跑当前楼关联的全部工作流，结果最完整也最稳。仅失败工作流：保留当前楼上次成功的结果，只重试失败部分；如果该楼没有失败记录，按钮会直接提示无需重跑。失败队列：批量扫描当前聊天里所有仍记录为失败的回复后楼层，并依次只重试它们失败的部分，适合长队列跑完后统一补救。',
     isAdvanced: true,
   },
   {
@@ -178,6 +220,13 @@ const FIELD_HELP_LIST: FieldHelpMeta[] = [
     label: '优先级',
     shortHelp: '用于多工作流结果合并冲突决策。',
     detailHelp: '按优先级降序合并；同优先级按工作流顺序后者覆盖前者。',
+  },
+  {
+    key: 'flow.run_every_n_floors',
+    label: '自动执行楼层间隔',
+    shortHelp: '控制该工作流每隔多少个对应楼层自动执行一次，1 表示每个对应楼层都执行。',
+    detailHelp:
+      '只对自动触发生效，手动运行、重roll都不会参与这个间隔判断。回复后更新时按 AI 回复楼计数；回复前拦截时按用户楼计数。例如设为 3，则只会在第 3、6、9 个对应楼层自动执行。',
   },
   {
     key: 'flow.timeout_ms',

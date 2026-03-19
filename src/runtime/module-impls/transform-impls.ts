@@ -4,8 +4,7 @@
  * These render, convert, and restructure data.
  */
 
-import type { ModuleOutput } from '../../ui/components/graph/module-types';
-import type { WiEntry, ChatMessage } from './filter-impls';
+import type { ChatMessage, WiEntry } from "./filter-impls";
 
 // ── EJS Template Render ──
 
@@ -17,13 +16,13 @@ export async function transformEjsRender(
   template: string,
   context: Record<string, any>,
 ): Promise<string> {
-  if (!template) return '';
+  if (!template) return "";
 
   try {
-    const { renderEjsContent } = await import('../ejs-internal');
+    const { renderEjsContent } = await import("../ejs-internal");
     return await renderEjsContent(template, context);
   } catch (e) {
-    console.debug('[TransformImpl:ejs_render] EJS render error:', e);
+    console.debug("[TransformImpl:ejs_render] EJS render error:", e);
     // Fallback: return template unmodified
     return template;
   }
@@ -36,13 +35,15 @@ export async function transformEjsRender(
  * Uses ST's global runtime variables.
  */
 export function transformMacroReplace(text: string): string {
-  if (!text) return '';
+  if (!text) return "";
 
   try {
     const stContext = (globalThis as any).SillyTavern?.getContext?.();
-    const charName = stContext?.name2 ?? (globalThis as any).name2 ?? '{{char}}';
-    const userName = stContext?.name1 ?? (globalThis as any).name1 ?? '{{user}}';
-    const personaDesc = stContext?.persona ?? '';
+    const charName =
+      stContext?.name2 ?? (globalThis as any).name2 ?? "{{char}}";
+    const userName =
+      stContext?.name1 ?? (globalThis as any).name1 ?? "{{user}}";
+    const personaDesc = stContext?.persona ?? "";
 
     let result = text;
     result = result.replace(/\{\{char\}\}/gi, charName);
@@ -54,7 +55,10 @@ export function transformMacroReplace(text: string): string {
     result = result.replace(/\{\{date\}\}/gi, now.toLocaleDateString());
     result = result.replace(/\{\{time\}\}/gi, now.toLocaleTimeString());
     result = result.replace(/\{\{datetime\}\}/gi, now.toLocaleString());
-    result = result.replace(/\{\{weekday\}\}/gi, now.toLocaleDateString(undefined, { weekday: 'long' }));
+    result = result.replace(
+      /\{\{weekday\}\}/gi,
+      now.toLocaleDateString(undefined, { weekday: "long" }),
+    );
 
     return result;
   } catch {
@@ -74,20 +78,32 @@ export async function transformControllerExpand(
   if (!entries || entries.length === 0) return [];
 
   try {
-    const { renderControllerTemplate } = await import('../controller-renderer');
+    const { renderControllerTemplate } = await import("../controller-renderer");
 
     const expanded: WiEntry[] = [];
     for (const entry of entries) {
       // Check if it's a controller entry (contains EW/Controller pattern)
-      const isController = entry.comment?.includes('EW/Controller') ||
-        entry.content?.includes('<%') ||
-        entry.key?.some(k => k.startsWith('EW/'));
+      const isController =
+        entry.comment?.includes("EW/Controller") ||
+        entry.content?.includes("<%") ||
+        entry.key?.some((k) => k.startsWith("EW/"));
 
       if (isController && entry.content) {
         try {
           const rendered = await renderControllerTemplate(
-            { content: entry.content, uid: entry.uid ?? 0, key: entry.key ?? [] },
-            'EW/Dyn/',
+            {
+              template_id: "entry_selector_v1",
+              variables: [],
+              rules: [],
+              fallback_entries: [],
+              decorators: [],
+              skip_floor_zero: false,
+              set_variables: [],
+              activate_entries: [],
+              inject_text: [entry.content],
+              for_each: [],
+            },
+            "EW/Dyn/",
           );
 
           // If rendered content differs, it was a controller
@@ -105,7 +121,7 @@ export async function transformControllerExpand(
                   parts[parts.length - 1].content = prevContent;
                 }
               }
-              parts.push({ name: match[1], content: '' });
+              parts.push({ name: match[1], content: "" });
               lastIdx = match.index + match[0].length;
             }
 
@@ -120,7 +136,7 @@ export async function transformControllerExpand(
                     ...entry,
                     key: [part.name],
                     content: part.content,
-                    comment: `${entry.comment ?? ''} [展开自 Controller]`,
+                    comment: `${entry.comment ?? ""} [展开自 Controller]`,
                   });
                 }
               }
@@ -128,7 +144,7 @@ export async function transformControllerExpand(
             }
           }
         } catch (e) {
-          console.debug('[TransformImpl:controller_expand] Error:', e);
+          console.debug("[TransformImpl:controller_expand] Error:", e);
         }
       }
 
@@ -178,7 +194,8 @@ export function transformWiBucket(entries: WiEntry[]): {
   }
 
   // Sort each bucket by order
-  const byOrder = (a: WiEntry, b: WiEntry) => (a.order ?? 100) - (b.order ?? 100);
+  const byOrder = (a: WiEntry, b: WiEntry) =>
+    (a.order ?? 100) - (b.order ?? 100);
   before.sort(byOrder);
   after.sort(byOrder);
   atDepth.sort(byOrder);
@@ -197,8 +214,8 @@ export function transformEntryNameInject(
   snapshots?: Array<{ entry_name: string; content: string }>,
 ): ChatMessage[] {
   if (!snapshots || snapshots.length === 0) return messages;
-  return messages.map(msg => {
-    const snap = snapshots.find(s => msg.content.includes(s.content));
+  return messages.map((msg) => {
+    const snap = snapshots.find((s) => msg.content.includes(s.content));
     if (snap && snap.entry_name) {
       return { ...msg, content: `[${snap.entry_name}]\n${msg.content}` };
     }

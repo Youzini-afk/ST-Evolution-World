@@ -1,5 +1,6 @@
 import { validateEjsTemplate } from './controller-renderer';
 import { rerollCurrentAfterReplyWorkflow } from './events';
+import { localizeSnapshotsForCurrentChat } from './floor-binding';
 import { resolveControllerSnapshotEntryName } from './helpers';
 import { runWorkflow } from './pipeline';
 import { getLastIo, getLastRun, getSettings, patchSettings, readControllerBackup } from './settings';
@@ -20,6 +21,36 @@ declare global {
       validateControllerSyntax: () => Promise<{ ok: boolean; reason?: string }>;
       rollbackController: () => Promise<{ ok: boolean; reason?: string }>;
       rerollCurrentAfterReply: () => Promise<{ ok: boolean; reason?: string }>;
+      rederiveWorkflowAtFloor: (input: {
+        message_id: number;
+        timing: 'before_reply' | 'after_reply' | 'manual';
+        target_version_key?: string;
+        confirm_legacy?: boolean;
+        capsule_mode?: 'full' | 'light';
+      }) => Promise<{
+        ok: boolean;
+        reason?: string;
+        result?: {
+          message_id: number;
+          anchor_message_id: number;
+          legacy_approx: boolean;
+          writeback_applied: number;
+          writeback_conflicts: number;
+          writeback_conflict_names: string[];
+        };
+      }>;
+      localizeSnapshots: () => Promise<{
+        ok: boolean;
+        reason?: string;
+        result?: {
+          localized: number;
+          uplifted: number;
+          unresolved: number;
+          skipped: number;
+          mutated_messages: number;
+          warnings: string[];
+        };
+      }>;
     };
   }
 }
@@ -28,6 +59,9 @@ async function validateControllerSyntax(): Promise<{ ok: boolean; reason?: strin
   try {
     const settings = getSettings();
     const target = await resolveTargetWorldbook(settings);
+    if (!target) {
+      return { ok: false, reason: 'no worldbook found for current character' };
+    }
     const controllerEntries = target.entries.filter(entry => entry.name.startsWith(settings.controller_entry_prefix));
     if (controllerEntries.length === 0) {
       return { ok: false, reason: `no controller entries found with prefix: ${settings.controller_entry_prefix}` };
@@ -122,6 +156,31 @@ async function rollbackController(): Promise<{ ok: boolean; reason?: string }> {
   }
 }
 
+async function rederiveWorkflowAtFloor(_input: {
+  message_id: number;
+  timing: 'before_reply' | 'after_reply' | 'manual';
+  target_version_key?: string;
+  confirm_legacy?: boolean;
+  capsule_mode?: 'full' | 'light';
+}): Promise<{
+  ok: boolean;
+  reason?: string;
+  result?: {
+    message_id: number;
+    anchor_message_id: number;
+    legacy_approx: boolean;
+    writeback_applied: number;
+    writeback_conflicts: number;
+    writeback_conflict_names: string[];
+  };
+}> {
+  return {
+    ok: false,
+    reason:
+      'rederiveWorkflowAtFloor 尚未在插件版 runtime 完整实现；当前已同步 floor snapshot 版本化与 localizeSnapshots，历史重推导仍需继续补齐 events/pipeline 底座。',
+  };
+}
+
 export function initGlobalApi() {
   window.EvolutionWorldAPI = {
     getConfig: () => getSettings(),
@@ -155,6 +214,15 @@ export function initGlobalApi() {
     validateControllerSyntax,
     rollbackController,
     rerollCurrentAfterReply: () => rerollCurrentAfterReplyWorkflow(),
+    rederiveWorkflowAtFloor,
+    localizeSnapshots: async () => {
+      try {
+        const result = await localizeSnapshotsForCurrentChat(getSettings());
+        return { ok: true, result };
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+    },
   };
 }
 

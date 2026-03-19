@@ -82,6 +82,15 @@
                 @input="setFlowNumber('timeout_ms', $event)"
               />
             </EwFieldRow>
+            <EwFieldRow label="每多少个对应楼层自动执行一次" :help="help('flow.run_every_n_floors')">
+              <input
+                :value="flow.run_every_n_floors"
+                type="number"
+                min="1"
+                step="1"
+                @input="setFlowNumber('run_every_n_floors', $event)"
+              />
+            </EwFieldRow>
             <EwFieldRow label="上下文楼层数" :help="help('flow.context_turns')">
               <input
                 :value="flow.context_turns"
@@ -600,7 +609,7 @@ import EwRulesEditor from './EwRulesEditor.vue';
 import { useEwStore } from '../store';
 
 const ewStore = useEwStore();
-type FlowNumberKey = 'priority' | 'timeout_ms' | 'context_turns';
+type FlowNumberKey = 'priority' | 'timeout_ms' | 'context_turns' | 'run_every_n_floors';
 type GenerationNumberKey =
   | 'max_context_tokens'
   | 'max_reply_tokens'
@@ -811,6 +820,13 @@ function setRequestTemplateDraft(event: Event) {
   }, 160);
 }
 function setFlowNumber(key: FlowNumberKey, event: Event) {
+  if (key === 'run_every_n_floors') {
+    patch({
+      run_every_n_floors: Math.max(1, Math.trunc(toNumber((event.target as HTMLInputElement).value, 1))),
+    });
+    return;
+  }
+
   patch({
     [key]: Math.trunc(toNumber((event.target as HTMLInputElement).value, flow.value[key] as number)),
   } as Partial<EwFlowConfig>);
@@ -824,6 +840,10 @@ function setTiming(event: Event) {
 const timingLabel = computed(() => {
   const global = ewStore.settings.workflow_timing;
   return global === 'before_reply' ? '回复前拦截' : '回复后更新';
+});
+const floorIntervalLabel = computed(() => {
+  const interval = Math.max(1, Math.trunc(Number(flow.value.run_every_n_floors ?? 1) || 1));
+  return interval <= 1 ? '每个对应楼层都会自动执行' : `每 ${interval} 个对应楼层自动执行一次`;
 });
 function setGenerationNumber(key: GenerationNumberKey, event: Event) {
   const raw = toNumber((event.target as HTMLInputElement).value, flow.value.generation_options[key]);

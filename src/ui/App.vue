@@ -318,18 +318,72 @@
                       <option value="before_reply">回复前拦截</option>
                     </select>
                   </EwFieldRow>
+                  <EwFieldRow label="回复后延迟(秒)" :help="help('after_reply_delay_seconds')">
+                    <input
+                      v-model.number="store.settings.after_reply_delay_seconds"
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      :placeholder="help('after_reply_delay_seconds')?.placeholder"
+                    />
+                  </EwFieldRow>
                   <EwFieldRow label="失败策略" :help="help('failure_policy')">
                     <select v-model="store.settings.failure_policy">
                       <option value="stop_generation">失败即中止发送</option>
                       <option value="continue_generation">静默继续生成</option>
-                      <option value="retry_once">失败重试一次</option>
+                      <option value="retry_once">自动重roll</option>
                       <option value="notify_only">仅通知（不中止）</option>
                     </select>
+                  </EwFieldRow>
+                  <EwFieldRow
+                    v-if="store.settings.failure_policy === 'retry_once'"
+                    label="自动重roll次数"
+                    :help="help('auto_reroll_max_attempts')"
+                  >
+                    <input
+                      v-model.number="store.settings.auto_reroll_max_attempts"
+                      type="number"
+                      min="1"
+                      step="1"
+                      :placeholder="help('auto_reroll_max_attempts')?.placeholder"
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow
+                    v-if="store.settings.failure_policy === 'retry_once'"
+                    label="自动重roll间隔(秒)"
+                    :help="help('auto_reroll_interval_seconds')"
+                  >
+                    <input
+                      v-model.number="store.settings.auto_reroll_interval_seconds"
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      :placeholder="help('auto_reroll_interval_seconds')?.placeholder"
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow label="并行间隔(秒)" :help="help('parallel_dispatch_interval_seconds')">
+                    <input
+                      v-model.number="store.settings.parallel_dispatch_interval_seconds"
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      :placeholder="help('parallel_dispatch_interval_seconds')?.placeholder"
+                    />
+                  </EwFieldRow>
+                  <EwFieldRow label="串行间隔(秒)" :help="help('serial_dispatch_interval_seconds')">
+                    <input
+                      v-model.number="store.settings.serial_dispatch_interval_seconds"
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      :placeholder="help('serial_dispatch_interval_seconds')?.placeholder"
+                    />
                   </EwFieldRow>
                   <EwFieldRow label="重roll范围" :help="help('reroll_scope')">
                     <select v-model="store.settings.reroll_scope">
                       <option value="all">全部工作流</option>
                       <option value="failed_only">仅失败工作流</option>
+                      <option value="queued_failed">失败队列</option>
                     </select>
                   </EwFieldRow>
                   <EwFieldRow
@@ -664,18 +718,27 @@
               <EwGraphEditor
                 :graphs="workbenchGraphs"
                 :saved-slots="store.settings.graph_canvas_slots"
-                @save-slots="(slots: any[]) => { store.settings.graph_canvas_slots = slots; }"
-                @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
-                @select-node="(id: string | null) => store.selectNode(id)"
+                @save-slots="
+                  (slots: any[]) => {
+                    store.settings.graph_canvas_slots = slots;
+                  }
+                "
+                @update:graphs="
+                  (g: any[]) => {
+                    (store.settings as any).workbench_graphs = g;
+                  }
+                "
               />
             </template>
 
             <template v-else-if="store.activeTab === 'workbench'">
-              <EwNodeInspector
+              <EwModuleWorkbench
                 :graphs="workbenchGraphs"
-                :selected-graph-id="store.selectedGraphId"
-                :selected-node-id="store.selectedNodeId"
-                @update:graphs="(g: any[]) => { (store.settings as any).workbench_graphs = g; }"
+                @update:graphs="
+                  (g: any[]) => {
+                    (store.settings as any).workbench_graphs = g;
+                  }
+                "
               />
             </template>
 
@@ -691,8 +754,6 @@
       </div>
     </EwPanelShell>
   </transition>
-
-
 
   <!-- ── 写入角色卡弹窗 ── -->
   <transition name="ew-modal">
@@ -785,6 +846,7 @@
 </template>
 
 <script setup lang="ts">
+import { replaceWorldbook } from "../runtime/compat/worldbook";
 import { checkEjsSyntax, renderEjsContent } from "../runtime/ejs-internal";
 import { migrateSnapshots } from "../runtime/floor-binding";
 import { resolveControllerEntryNameMap } from "../runtime/helpers";
@@ -803,10 +865,9 @@ import EwFlowCard from "./components/EwFlowCard.vue";
 import EwHistoryPanel from "./components/EwHistoryPanel.vue";
 import EwPanelShell from "./components/EwPanelShell.vue";
 import EwSectionCard from "./components/EwSectionCard.vue";
-import { getFieldHelp, PANEL_TABS } from "./help-meta";
 import EwGraphEditor from "./components/graph/EwGraphEditor.vue";
-import EwNodeInspector from "./components/graph/EwNodeInspector.vue";
-import { replaceWorldbook } from "../runtime/compat/worldbook";
+import EwModuleWorkbench from "./components/graph/EwModuleWorkbench.vue";
+import { getFieldHelp, PANEL_TABS } from "./help-meta";
 import { showEwNotice } from "./notice";
 import { useEwStore } from "./store";
 
@@ -818,7 +879,9 @@ const migratingSnapshots = ref(false);
 const crossfadeRef = ref<HTMLDivElement | null>(null);
 
 // ── Module Workbench state ──
-const workbenchGraphs = computed(() => (store.settings as any).workbench_graphs ?? []);
+const workbenchGraphs = computed(
+  () => (store.settings as any).workbench_graphs ?? [],
+);
 
 let crossfadePrevHeight = 0;
 let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1014,9 +1077,14 @@ const rerollButtonTitle = computed(() => {
   if (store.settings.workflow_timing !== "after_reply") {
     return "仅在“回复后更新”模式下可用";
   }
-  return store.settings.reroll_scope === "failed_only"
-    ? "仅重跑当前楼上次失败的回复后工作流"
-    : "重跑当前楼的全部回复后工作流";
+  switch (store.settings.reroll_scope) {
+    case "failed_only":
+      return "仅重跑当前楼上次失败的回复后工作流";
+    case "queued_failed":
+      return "批量重跑当前聊天里所有仍失败的回复后工作流";
+    default:
+      return "重跑当前楼的全部回复后工作流";
+  }
 });
 const bindCountByPresetId = computed<Record<string, number>>(() => {
   const counts: Record<string, number> = {};
@@ -1074,9 +1142,15 @@ async function onRerollCurrentFloor() {
 
   const result = await api.rerollCurrentAfterReply();
   if (result.ok) {
+    const successMessage =
+      store.settings.reroll_scope === "failed_only"
+        ? "当前楼失败的回复后工作流已重跑完成。"
+        : store.settings.reroll_scope === "queued_failed"
+          ? "失败队列已重跑完成。"
+          : "当前楼的回复后工作流已重跑完成。";
     showEwNotice({
       title: "Evolution World",
-      message: "当前楼的回复后工作流已重跑完成。",
+      message: successMessage,
       level: "success",
     });
     return;

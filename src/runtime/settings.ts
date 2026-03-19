@@ -1,8 +1,10 @@
-import { readExtensionSettings, writeExtensionSettings } from '../st-adapter';
-import { createDefaultApiPreset, createDefaultFlow } from './factory';
-import { migrateAllFlows } from './flow-migrator';
-import { simpleHash } from './helpers';
-import { readSharedSettings, writeSharedSettings } from './shared-settings-storage';
+import { createDefaultApiPreset, createDefaultFlow } from "./factory";
+import { migrateAllFlows } from "./flow-migrator";
+import { simpleHash } from "./helpers";
+import {
+  readSharedSettings,
+  writeSharedSettings,
+} from "./shared-settings-storage";
 import {
   ControllerEntrySnapshot,
   DEFAULT_PROMPT_ORDER,
@@ -17,32 +19,46 @@ import {
   LastIoSummarySchema,
   RunSummary,
   RunSummarySchema,
-} from './types';
+} from "./types";
 
 type SettingsListener = (settings: EwSettings) => void;
 type RunListener = (summary: RunSummary | null) => void;
 type IoListener = (summary: LastIoSummary | null) => void;
 
+type WorkflowRoundCounterEntry = {
+  before_reply: number;
+  after_reply: number;
+  updated_at: number;
+};
+
 type ScriptStorageShape = {
   settings?: EwSettings;
   last_run?: RunSummary | null;
   last_io?: LastIoSummary | null;
+  workflow_round_counters?: Record<
+    string,
+    Partial<WorkflowRoundCounterEntry> | undefined
+  >;
   backups?: Record<
     string,
     {
       at: number;
       worldbook_name: string;
-      controller_content: string | Record<string, string> | ControllerEntrySnapshot[];
+      controller_content:
+        | string
+        | Record<string, string>
+        | ControllerEntrySnapshot[];
     }
   >;
 };
 
-const SCRIPT_STORAGE_KEY = 'evolution_world_assistant';
+const LOCAL_STORAGE_KEY = "evolution_world_assistant";
 
 const settingsListeners = new Set<SettingsListener>();
 const runListeners = new Set<RunListener>();
 const ioListeners = new Set<IoListener>();
-const SHARED_SETTINGS_WRITE_DELAY_MS = 240;
+const SHARED_SETTINGS_WRITE_DELAY_MS = 120;
+const MAX_WORKFLOW_ROUND_COUNTER_CHATS = 40;
 
 let cachedSettings: EwSettings | null = null;
 let cachedLastRun: RunSummary | null | undefined = undefined;
@@ -51,27 +67,104 @@ let sharedSettingsHydrationPromise: Promise<EwSettings> | null = null;
 let sharedSettingsWriteTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingSharedSettings: EwSettings | null = null;
 let sharedSettingsWritePromise: Promise<void> = Promise.resolve();
+let hydrationComplete = false;
 
 // M-3: 使用 factory.ts 中的共享工厂函数。
 const makeDefaultApiPreset = createDefaultApiPreset;
 const makeDefaultFlow = createDefaultFlow;
 
 function readScriptStorage(): ScriptStorageShape {
-  const raw = readExtensionSettings();
-  if (!_.isPlainObject(raw)) {
+  try {
+    const raw = globalThis.localStorage?.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (!_.isPlainObject(parsed)) {
+      return {};
+    }
+    return parsed as ScriptStorageShape;
+  } catch (error) {
+    console.warn(
+      "[Evolution World] Failed to read local storage cache:",
+      error,
+    );
     return {};
   }
-  return raw as ScriptStorageShape;
 }
 
-function writeScriptStorage(updater: (storage: ScriptStorageShape) => ScriptStorageShape) {
+function writeScriptStorage(
+  updater: (storage: ScriptStorageShape) => ScriptStorageShape,
+) {
   const previous = readScriptStorage();
   const nextStorage = updater(previous);
-  writeExtensionSettings(nextStorage as Record<string, any>);
+
+  try {
+    globalThis.localStorage?.setItem(
+      LOCAL_STORAGE_KEY,
+      JSON.stringify(nextStorage),
+    );
+  } catch (error) {
+    console.warn(
+      "[Evolution World] Failed to write local storage cache:",
+      error,
+    );
+  }
 }
 
 function persistLocalSettings(settings: EwSettings) {
-  writeScriptStorage(previous => ({ ...previous, settings }));
+  writeScriptStorage((previous) => ({ ...previous, settings }));
+}
+
+function normalizeWorkflowRoundCounterEntry(
+  raw: Partial<WorkflowRoundCounterEntry> | undefined,
+): WorkflowRoundCounterEntry {
+  return {
+    before_reply: Math.max(0, Math.trunc(Number(raw?.before_reply ?? 0) || 0)),
+    after_reply: Math.max(0, Math.trunc(Number(raw?.after_reply ?? 0) || 0)),
+    updated_at: Math.max(0, Math.trunc(Number(raw?.updated_at ?? 0) || 0)),
+  };
+}
+
+export function advanceWorkflowRoundCounter(
+  chatId: string,
+  timing: "before_reply" | "after_reply",
+): number {
+  let nextValue = 1;
+
+  writeScriptStorage((previous) => {
+    const counters = {
+      ...(previous.workflow_round_counters ?? {}),
+    };
+    const entry = normalizeWorkflowRoundCounterEntry(counters[chatId]);
+    nextValue = entry[timing] + 1;
+    counters[chatId] = {
+      ...entry,
+      [timing]: nextValue,
+      updated_at: Date.now(),
+    };
+
+    const entries = Object.entries(counters);
+    if (entries.length > MAX_WORKFLOW_ROUND_COUNTER_CHATS) {
+      entries.sort(
+        (left, right) =>
+          (Number(right[1]?.updated_at ?? 0) || 0) -
+          (Number(left[1]?.updated_at ?? 0) || 0),
+      );
+      for (const [staleChatId] of entries.slice(
+        MAX_WORKFLOW_ROUND_COUNTER_CHATS,
+      )) {
+        delete counters[staleChatId];
+      }
+    }
+
+    return {
+      ...previous,
+      workflow_round_counters: counters,
+    };
+  });
+
+  return nextValue;
 }
 
 function queueSharedSettingsPersist(settings: EwSettings) {
@@ -94,14 +187,23 @@ function queueSharedSettingsPersist(settings: EwSettings) {
       .then(async () => {
         await writeSharedSettings(nextSettings);
       })
-      .catch(error => {
-        console.warn('[Evolution World] Failed to persist shared settings:', error);
+      .catch((error) => {
+        console.warn(
+          "[Evolution World] Failed to persist shared settings:",
+          error,
+        );
       });
   }, SHARED_SETTINGS_WRITE_DELAY_MS);
 }
 
-function ensurePresetId(rawId: string, index: number, usedIds: Set<string>): string {
-  let nextId = rawId.trim() || `api_${index + 1}_${simpleHash(`api-${index}-${Date.now()}`)}`;
+function ensurePresetId(
+  rawId: string,
+  index: number,
+  usedIds: Set<string>,
+): string {
+  let nextId =
+    rawId.trim() ||
+    `api_${index + 1}_${simpleHash(`api-${index}-${Date.now()}`)}`;
   while (usedIds.has(nextId)) {
     nextId = `${nextId}_${usedIds.size + 1}`;
   }
@@ -110,7 +212,7 @@ function ensurePresetId(rawId: string, index: number, usedIds: Set<string>): str
 }
 
 function ensurePresetName(baseName: string, usedNames: Set<string>): string {
-  const trimmed = baseName.trim() || 'API配置';
+  const trimmed = baseName.trim() || "API配置";
   if (!usedNames.has(trimmed)) {
     usedNames.add(trimmed);
     return trimmed;
@@ -138,10 +240,10 @@ function normalizeApiPresets(rawPresets: EwApiPreset[]): EwApiPreset[] {
       ...parsed,
       id,
       name,
-      mode: parsed.mode ?? 'workflow_http',
-      use_main_api: parsed.use_main_api ?? false,
-      model: parsed.model ?? '',
-      api_source: parsed.api_source ?? 'openai',
+      mode: parsed.mode ?? "workflow_http",
+      use_main_api: parsed.use_main_api ?? parsed.mode === "llm_connector",
+      model: parsed.model ?? "",
+      api_source: parsed.api_source ?? "openai",
       model_candidates: parsed.model_candidates ?? [],
     });
   });
@@ -150,10 +252,13 @@ function normalizeApiPresets(rawPresets: EwApiPreset[]): EwApiPreset[] {
     return normalized;
   }
 
-  return [makeDefaultApiPreset(1)];
+  return [];
 }
 
-function findPresetByLegacyFields(presets: EwApiPreset[], flow: EwFlowConfig): EwApiPreset | null {
+function findPresetByLegacyFields(
+  presets: EwApiPreset[],
+  flow: EwFlowConfig,
+): EwApiPreset | null {
   const legacyUrl = flow.api_url.trim();
   const legacyKey = flow.api_key.trim();
   const legacyHeaders = flow.headers_json.trim();
@@ -162,7 +267,7 @@ function findPresetByLegacyFields(presets: EwApiPreset[], flow: EwFlowConfig): E
   }
 
   return (
-    presets.find(preset => {
+    presets.find((preset) => {
       return (
         preset.api_url.trim() === legacyUrl &&
         preset.api_key.trim() === legacyKey &&
@@ -177,7 +282,9 @@ function migratePromptItems(flow: EwFlowConfig): EwFlowConfig {
   if (flow.prompt_order.length !== DEFAULT_PROMPT_ORDER.length) return flow;
 
   // 检查 prompt_order 是否仍为默认值（从未被用户配置）
-  const isDefault = flow.prompt_order.every((entry, idx) => entry.identifier === DEFAULT_PROMPT_ORDER[idx].identifier);
+  const isDefault = flow.prompt_order.every(
+    (entry, idx) => entry.identifier === DEFAULT_PROMPT_ORDER[idx].identifier,
+  );
   if (!isDefault) return flow;
 
   // 如果存在 prompt_items，将其作为自定义条目追加到 prompt_order
@@ -186,20 +293,20 @@ function migratePromptItems(flow: EwFlowConfig): EwFlowConfig {
   const migratedOrder: EwPromptOrderEntry[] = [...flow.prompt_order];
   for (const item of flow.prompt_items) {
     // 避免重复 —— 检查 identifier 是否已存在
-    if (migratedOrder.some(e => e.identifier === item.id)) continue;
+    if (migratedOrder.some((e) => e.identifier === item.id)) continue;
     const oldItem = item as any; // may carry legacy depth field
     migratedOrder.push({
       identifier: item.id,
-      name: item.name || '迁移提示词',
+      name: item.name || "迁移提示词",
       enabled: item.enabled,
-      type: 'prompt',
-      role: item.role as 'system' | 'user' | 'assistant',
+      type: "prompt",
+      role: item.role as "system" | "user" | "assistant",
       content: item.content,
-      injection_position: item.position === 'in_chat' ? 'in_chat' : 'relative',
+      injection_position: item.position === "in_chat" ? "in_chat" : "relative",
       injection_depth:
-        typeof oldItem.injection_depth === 'number'
+        typeof oldItem.injection_depth === "number"
           ? oldItem.injection_depth
-          : typeof oldItem.depth === 'number'
+          : typeof oldItem.depth === "number"
             ? oldItem.depth
             : 0,
     });
@@ -209,27 +316,34 @@ function migratePromptItems(flow: EwFlowConfig): EwFlowConfig {
 
 function normalizeSettings(raw: unknown): EwSettings {
   // Migrate legacy controller_entry_name → controller_entry_prefix.
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const obj = raw as Record<string, unknown>;
-    if (typeof obj['controller_entry_name'] === 'string' && !obj['controller_entry_prefix']) {
-      const oldName = obj['controller_entry_name'] as string;
-      obj['controller_entry_prefix'] = oldName.endsWith('/') ? oldName : oldName + '/';
-      delete obj['controller_entry_name'];
+    if (
+      typeof obj["controller_entry_name"] === "string" &&
+      !obj["controller_entry_prefix"]
+    ) {
+      const oldName = obj["controller_entry_name"] as string;
+      obj["controller_entry_prefix"] = oldName.endsWith("/")
+        ? oldName
+        : oldName + "/";
+      delete obj["controller_entry_name"];
     }
   }
 
   const parsed = EwSettingsSchema.safeParse(raw);
   const base = parsed.success ? parsed.data : EwSettingsSchema.parse({});
   const apiPresets = normalizeApiPresets(base.api_presets ?? []);
-  const usedPresetNames = new Set(apiPresets.map(preset => preset.name));
-  const defaultPresetId = apiPresets[0].id;
-  const flowSeed = base.flows.length > 0 ? base.flows : [makeDefaultFlow(1, defaultPresetId)];
+  const usedPresetNames = new Set(apiPresets.map((preset) => preset.name));
+  const defaultPresetId = apiPresets[0]?.id ?? "";
+  const flowSeed = base.flows;
 
-  const normalizedFlows = flowSeed.map(flow => {
+  const normalizedFlows = flowSeed.map((flow) => {
     let nextFlow = EwFlowConfigSchema.parse(flow);
     // FEAT-2: 将旧的 prompt_items 迁移到 prompt_order
     nextFlow = migratePromptItems(nextFlow);
-    const boundPreset = apiPresets.find(preset => preset.id === nextFlow.api_preset_id);
+    const boundPreset = apiPresets.find(
+      (preset) => preset.id === nextFlow.api_preset_id,
+    );
     if (boundPreset) {
       return nextFlow;
     }
@@ -243,18 +357,27 @@ function normalizeSettings(raw: unknown): EwSettings {
     }
 
     const hasLegacyApiConfig = Boolean(
-      nextFlow.api_url.trim() || nextFlow.api_key.trim() || nextFlow.headers_json.trim(),
+      nextFlow.api_url.trim() ||
+      nextFlow.api_key.trim() ||
+      nextFlow.headers_json.trim(),
     );
     if (hasLegacyApiConfig) {
       const createdPreset = EwApiPresetSchema.parse({
-        id: ensurePresetId('', apiPresets.length, new Set(apiPresets.map(preset => preset.id))),
-        name: ensurePresetName(`${nextFlow.name || '工作流'} API`, usedPresetNames),
-        mode: 'workflow_http',
+        id: ensurePresetId(
+          "",
+          apiPresets.length,
+          new Set(apiPresets.map((preset) => preset.id)),
+        ),
+        name: ensurePresetName(
+          `${nextFlow.name || "工作流"} API`,
+          usedPresetNames,
+        ),
+        mode: "workflow_http",
         use_main_api: false,
         api_url: nextFlow.api_url,
         api_key: nextFlow.api_key,
-        model: '',
-        api_source: 'openai',
+        model: "",
+        api_source: "openai",
         model_candidates: [],
         headers_json: nextFlow.headers_json,
       });
@@ -286,9 +409,11 @@ function normalizeSettings(raw: unknown): EwSettings {
     try {
       // Direct import — flow-migrator is bundled by webpack
       (result as any).workbench_graphs = migrateAllFlows(normalizedFlows);
-      console.info(`[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs`);
+      console.info(
+        `[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs`,
+      );
     } catch (e) {
-      console.debug('[Evolution World] Auto-migration skipped:', e);
+      console.debug("[Evolution World] Auto-migration skipped:", e);
     }
   }
 
@@ -296,15 +421,15 @@ function normalizeSettings(raw: unknown): EwSettings {
 }
 
 function emitSettings(settings: EwSettings) {
-  settingsListeners.forEach(listener => listener(settings));
+  settingsListeners.forEach((listener) => listener(settings));
 }
 
 function emitRun(summary: RunSummary | null) {
-  runListeners.forEach(listener => listener(summary));
+  runListeners.forEach((listener) => listener(summary));
 }
 
 function emitIo(summary: LastIoSummary | null) {
-  ioListeners.forEach(listener => listener(summary));
+  ioListeners.forEach((listener) => listener(summary));
 }
 
 export function loadSettings(): EwSettings {
@@ -323,7 +448,8 @@ export async function hydrateSharedSettings(): Promise<EwSettings> {
 
   sharedSettingsHydrationPromise = (async () => {
     const localStorage = readScriptStorage();
-    const localNormalized = cachedSettings ?? normalizeSettings(localStorage.settings);
+    const localNormalized =
+      cachedSettings ?? normalizeSettings(localStorage.settings);
 
     try {
       const shared = await readSharedSettings();
@@ -335,23 +461,31 @@ export async function hydrateSharedSettings(): Promise<EwSettings> {
         if (changed) {
           emitSettings(klona(normalized));
         }
-        console.info('[Evolution World] Shared settings loaded from server file');
+        hydrationComplete = true;
+        console.info(
+          "[Evolution World] Shared settings loaded from server file",
+        );
         return klona(normalized);
       }
 
       cachedSettings = localNormalized;
       await writeSharedSettings(localNormalized);
       persistLocalSettings(localNormalized);
+      hydrationComplete = true;
       console.info(
         localStorage.settings
-          ? '[Evolution World] Migrated legacy local settings to shared server file'
-          : '[Evolution World] Initialized shared server settings file',
+          ? "[Evolution World] Migrated legacy local settings to shared server file"
+          : "[Evolution World] Initialized shared server settings file",
       );
       return klona(localNormalized);
     } catch (error) {
-      console.warn('[Evolution World] Shared settings hydration failed, using local cache:', error);
+      console.warn(
+        "[Evolution World] Shared settings hydration failed, using local cache:",
+        error,
+      );
       cachedSettings = localNormalized;
       persistLocalSettings(localNormalized);
+      hydrationComplete = true;
       return klona(localNormalized);
     }
   })();
@@ -366,11 +500,15 @@ export function getSettings(): EwSettings {
   return klona(cachedSettings);
 }
 
+export function isHydrationComplete(): boolean {
+  return hydrationComplete;
+}
+
 export function replaceSettings(nextSettings: EwSettings): EwSettings {
   const normalized = normalizeSettings(nextSettings);
   cachedSettings = normalized;
-  persistLocalSettings(normalized);
   queueSharedSettingsPersist(normalized);
+  persistLocalSettings(normalized);
   emitSettings(klona(normalized));
   return klona(normalized);
 }
@@ -378,8 +516,8 @@ export function replaceSettings(nextSettings: EwSettings): EwSettings {
 export function persistSettingsDraft(nextSettings: EwSettings) {
   const draft = klona(nextSettings);
   cachedSettings = draft;
-  persistLocalSettings(draft);
   queueSharedSettingsPersist(draft);
+  persistLocalSettings(draft);
 }
 
 export function patchSettings(partial: Partial<EwSettings>): EwSettings {
@@ -390,7 +528,9 @@ export function patchSettings(partial: Partial<EwSettings>): EwSettings {
   return replaceSettings(merged);
 }
 
-export function subscribeSettings(listener: SettingsListener): { stop: () => void } {
+export function subscribeSettings(listener: SettingsListener): {
+  stop: () => void;
+} {
   settingsListeners.add(listener);
   return { stop: () => settingsListeners.delete(listener) };
 }
@@ -412,7 +552,7 @@ export function getLastRun(): RunSummary | null {
 export function setLastRun(summary: RunSummary) {
   const normalized = RunSummarySchema.parse(summary);
   cachedLastRun = normalized;
-  writeScriptStorage(previous => ({ ...previous, last_run: normalized }));
+  writeScriptStorage((previous) => ({ ...previous, last_run: normalized }));
   emitRun(klona(normalized));
 }
 
@@ -438,7 +578,7 @@ export function getLastIo(): LastIoSummary | null {
 export function setLastIo(summary: LastIoSummary) {
   const normalized = LastIoSummarySchema.parse(summary);
   cachedLastIo = normalized;
-  writeScriptStorage(previous => ({ ...previous, last_io: normalized }));
+  writeScriptStorage((previous) => ({ ...previous, last_io: normalized }));
   emitIo(klona(normalized));
 }
 
@@ -453,7 +593,7 @@ export function saveControllerBackup(
   controllerContent: ControllerEntrySnapshot[],
 ) {
   const MAX_BACKUPS = 10;
-  writeScriptStorage(previous => {
+  writeScriptStorage((previous) => {
     const backups = { ...(previous.backups ?? {}) };
     backups[chatId] = {
       at: Date.now(),
@@ -465,7 +605,7 @@ export function saveControllerBackup(
     const entries = Object.entries(backups);
     if (entries.length > MAX_BACKUPS) {
       entries.sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0));
-      const keysToRemove = entries.slice(MAX_BACKUPS).map(e => e[0]);
+      const keysToRemove = entries.slice(MAX_BACKUPS).map((e) => e[0]);
       for (const key of keysToRemove) {
         delete backups[key];
       }
@@ -475,9 +615,11 @@ export function saveControllerBackup(
   });
 }
 
-export function readControllerBackup(
-  chatId: string,
-): { at: number; worldbook_name: string; controller_content: ControllerEntrySnapshot[] } | null {
+export function readControllerBackup(chatId: string): {
+  at: number;
+  worldbook_name: string;
+  controller_content: ControllerEntrySnapshot[];
+} | null {
   const storage = readScriptStorage();
   const backup = storage.backups?.[chatId];
   if (!backup) return null;
@@ -486,29 +628,42 @@ export function readControllerBackup(
   let controllers: ControllerEntrySnapshot[] = [];
   if (Array.isArray(content)) {
     controllers = content
-      .filter(entry => entry && typeof entry === 'object')
-      .map(entry => ({
-        entry_name: String((entry as ControllerEntrySnapshot).entry_name ?? ''),
-        content: String((entry as ControllerEntrySnapshot).content ?? ''),
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => ({
+        entry_name: String((entry as ControllerEntrySnapshot).entry_name ?? ""),
+        content: String((entry as ControllerEntrySnapshot).content ?? ""),
         flow_id: (entry as ControllerEntrySnapshot).flow_id,
         flow_name: (entry as ControllerEntrySnapshot).flow_name,
         legacy: Boolean((entry as ControllerEntrySnapshot).legacy),
       }))
-      .filter(entry => entry.content);
-  } else if (typeof content === 'string') {
-    controllers = content ? [{ entry_name: '', content, flow_name: 'Legacy Controller', legacy: true }] : [];
-  } else if (content && typeof content === 'object') {
+      .filter((entry) => entry.content);
+  } else if (typeof content === "string") {
+    controllers = content
+      ? [
+          {
+            entry_name: "",
+            content,
+            flow_name: "Legacy Controller",
+            legacy: true,
+          },
+        ]
+      : [];
+  } else if (content && typeof content === "object") {
     controllers = Object.entries(content).map(([entryName, value]) => ({
       entry_name: entryName,
-      content: String(value ?? ''),
+      content: String(value ?? ""),
     }));
   }
 
-  return klona({ at: backup.at, worldbook_name: backup.worldbook_name, controller_content: controllers });
+  return klona({
+    at: backup.at,
+    worldbook_name: backup.worldbook_name,
+    controller_content: controllers,
+  });
 }
 
 export function clearControllerBackup(chatId: string) {
-  writeScriptStorage(previous => {
+  writeScriptStorage((previous) => {
     const backups = { ...(previous.backups ?? {}) };
     delete backups[chatId];
     return { ...previous, backups };

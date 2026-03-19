@@ -4,16 +4,18 @@
  * 将工作流配置序列化到角色卡世界书的 `EW/Flows` 条目中，
  * 使工作流随角色卡导出/导入。
  *
- * 数据安全：EW/Flows 条目中不存储 API 配置（URL/Key/Model），
- * 角色卡工作流仅通过 api_preset_id 引用全局 API 预设。
+ * 数据安全：EW/Flows 条目中不存储 API 密钥 / URL / headers，
+ * 但会保留 api_preset_id，用于在刷新后继续绑定到同一个全局 API 预设。
  */
 
-import { EwFlowConfig, EwFlowConfigSchema, EwSettings } from './types';
-import { resolveTargetWorldbook, ensureDefaultEntry } from './worldbook-runtime';
 import { replaceWorldbook } from './compat/worldbook';
+import { getCurrentCharacterName } from './compat/character';
+import { EwFlowConfig, EwFlowConfigSchema, EwSettings } from './types';
+import { ensureDefaultEntry, resolveTargetWorldbook } from './worldbook-runtime';
 
 /** 角色卡工作流在世界书中的条目名称 */
 export const CHAR_FLOWS_ENTRY_NAME = 'EW/Flows';
+const CHAR_FLOW_DRAFT_STORAGE_PREFIX = 'ew_char_flow_draft:';
 
 /** 角色卡工作流 JSON 包装格式 */
 interface CharFlowsPayload {
@@ -24,7 +26,23 @@ interface CharFlowsPayload {
 // ── 敏感字段过滤 ────────────────────────────────────────────
 
 /** 写入 EW/Flows 时排除的字段（敏感 / 仅本地） */
-const EXCLUDED_FIELDS = new Set(['api_url', 'api_key', 'headers_json', 'api_preset_id']);
+const EXCLUDED_FIELDS = new Set(['api_url', 'api_key', 'headers_json']);
+
+function normalizeFlowName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function normalizeCharDraftName(name: string): string {
+  return name.trim();
+}
+
+function getCharFlowDraftStorageKey(charName: string): string | null {
+  const normalizedName = normalizeCharDraftName(charName);
+  if (!normalizedName) {
+    return null;
+  }
+  return `${CHAR_FLOW_DRAFT_STORAGE_PREFIX}${normalizedName}`;
+}
 
 /**
  * 从 flow 配置中去除敏感字段，返回安全的纯数据对象。
@@ -37,6 +55,65 @@ function sanitizeFlow(flow: EwFlowConfig): Record<string, unknown> {
     }
   }
   return obj;
+}
+
+export function readCharFlowDraft(charName: string): EwFlowConfig[] | null {
+  const storageKey = getCharFlowDraftStorageKey(charName);
+  if (!storageKey) {
+    return null;
+  }
+
+  try {
+    const raw = globalThis.localStorage?.getItem(storageKey);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 'ew-char-flow-draft/v1' || !Array.isArray(parsed.flows)) {
+      return null;
+    }
+
+    const flows: EwFlowConfig[] = [];
+    for (const item of parsed.flows) {
+      flows.push(EwFlowConfigSchema.parse(item));
+    }
+    return flows;
+  } catch (error) {
+    console.warn('[Evolution World] Failed to read char flow draft cache:', error);
+    return null;
+  }
+}
+
+export function writeCharFlowDraft(charName: string, flows: EwFlowConfig[]): void {
+  const storageKey = getCharFlowDraftStorageKey(charName);
+  if (!storageKey) {
+    return;
+  }
+
+  try {
+    const payload = {
+      version: 'ew-char-flow-draft/v1',
+      updated_at: Date.now(),
+      flows: flows.map(sanitizeFlow),
+    };
+    globalThis.localStorage?.setItem(storageKey, JSON.stringify(payload));
+  } catch (error) {
+    console.warn('[Evolution World] Failed to write char flow draft cache:', error);
+  }
+}
+
+export function clearCharFlowDraft(charName: string): void {
+  const storageKey = getCharFlowDraftStorageKey(charName);
+  if (!storageKey) {
+    return;
+  }
+
+  try {
+    globalThis.localStorage?.removeItem(storageKey);
+  } catch (error) {
+    console.warn('[Evolution World] Failed to clear char flow draft cache:', error);
+  }
 }
 
 // ── 读取 ─────────────────────────────────────────────────────
@@ -61,12 +138,28 @@ export async function readCharFlows(settings: EwSettings): Promise<EwFlowConfig[
       return [];
     }
 
+    const defaultPresetId = settings.api_presets[0]?.id ?? '';
+    const presetIds = new Set(settings.api_presets.map(preset => preset.id));
+    const globalPresetIdByName = new Map(
+      settings.flows
+        .map(flow => [normalizeFlowName(flow.name), flow.api_preset_id])
+        .filter((entry): entry is [string, string] => Boolean(entry[1])),
+    );
+
     const result: EwFlowConfig[] = [];
     for (const raw of (parsed as CharFlowsPayload).flows) {
       try {
-        result.push(EwFlowConfigSchema.parse(raw));
+        const flow = EwFlowConfigSchema.parse(raw);
+        if (!flow.api_preset_id || !presetIds.has(flow.api_preset_id)) {
+          const recoveredPresetId = globalPresetIdByName.get(normalizeFlowName(flow.name));
+          if (recoveredPresetId && presetIds.has(recoveredPresetId)) {
+            flow.api_preset_id = recoveredPresetId;
+          } else if (defaultPresetId) {
+            flow.api_preset_id = defaultPresetId;
+          }
+        }
+        result.push(flow);
       } catch {
-        // 跳过无效条目
         console.warn('[Evolution World] skipped invalid char flow entry');
       }
     }
@@ -83,10 +176,7 @@ export async function readCharFlows(settings: EwSettings): Promise<EwFlowConfig[
  * 将工作流配置写入当前角色卡世界书的 EW/Flows 条目。
  * 自动过滤敏感字段（api_url、api_key）。
  */
-export async function writeCharFlows(
-  settings: EwSettings,
-  flows: EwFlowConfig[],
-): Promise<void> {
+export async function writeCharFlows(settings: EwSettings, flows: EwFlowConfig[]): Promise<void> {
   const target = await resolveTargetWorldbook(settings);
 
   const payload: CharFlowsPayload = {
@@ -100,14 +190,14 @@ export async function writeCharFlows(
 
   if (existing) {
     existing.content = content;
-    existing.enabled = false; // 禁用以防注入上下文
+    existing.enabled = false;
   } else {
     const newEntry = ensureDefaultEntry(
       CHAR_FLOWS_ENTRY_NAME,
       content,
-      false, // disabled
+      false,
       nextEntries,
-      true,  // constant
+      true,
     );
     nextEntries.push(newEntry);
   }
@@ -124,7 +214,7 @@ const CHAR_FLOW_PRIORITY_BOOST = 1000;
  * 获取最终生效的工作流：全局 + 角色卡合并。
  *
  * - 角色卡工作流自动获得 priority + 1000 偏移
- * - 如果 ID 冲突，角色卡工作流覆盖全局工作流
+ * - 如果 ID 或名称冲突，角色卡工作流覆盖全局工作流
  * - 合并后按 priority 降序排列
  */
 export async function getEffectiveFlows(settings: EwSettings): Promise<EwFlowConfig[]> {
@@ -132,26 +222,27 @@ export async function getEffectiveFlows(settings: EwSettings): Promise<EwFlowCon
 
   let charFlows: EwFlowConfig[];
   try {
-    charFlows = (await readCharFlows(settings)).filter(f => f.enabled);
+    const currentCharName = String(getCurrentCharacterName() ?? '').trim();
+    const draftFlows = currentCharName ? readCharFlowDraft(currentCharName) : null;
+    charFlows = (draftFlows ?? (await readCharFlows(settings))).filter(f => f.enabled);
   } catch {
     charFlows = [];
   }
 
   if (charFlows.length === 0) return globalFlows;
 
-  // 角色卡流 ID 集合，用于覆盖同 ID 全局流
   const charFlowIds = new Set(charFlows.map(f => f.id));
+  const charFlowNames = new Set(charFlows.map(f => normalizeFlowName(f.name)));
 
-  // 过滤掉被角色卡流覆盖的全局流
-  const filteredGlobal = globalFlows.filter(f => !charFlowIds.has(f.id));
+  const filteredGlobal = globalFlows.filter(
+    flow => !charFlowIds.has(flow.id) && !charFlowNames.has(normalizeFlowName(flow.name)),
+  );
 
-  // 给角色卡流加优先级偏移
-  const boostedChar = charFlows.map(f => ({
-    ...f,
-    priority: f.priority + CHAR_FLOW_PRIORITY_BOOST,
+  const boostedChar = charFlows.map(flow => ({
+    ...flow,
+    priority: flow.priority + CHAR_FLOW_PRIORITY_BOOST,
   }));
 
-  // 合并并按优先级降序排列
   const merged = [...filteredGlobal, ...boostedChar];
   merged.sort((a, b) => b.priority - a.priority);
 

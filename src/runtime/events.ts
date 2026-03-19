@@ -38,8 +38,10 @@ import {
   wasAfterReplyHandled,
 } from "./state";
 import {
+  DispatchFlowAttempt,
   DispatchFlowResult,
   EwSettings,
+  WorkflowFailureDiagnostic,
   WorkflowProgressUpdate,
 } from "./types";
 
@@ -251,6 +253,135 @@ function formatReasonForDisplay(
     return text;
   }
   return `${text.slice(0, maxLen)}...`;
+}
+
+function getFailureStageLabel(
+  stage: WorkflowFailureDiagnostic["stage"] | undefined,
+): string {
+  switch (stage) {
+    case "dispatch":
+      return "请求阶段";
+    case "merge":
+      return "合并阶段";
+    case "commit":
+      return "写回阶段";
+    case "cancelled":
+      return "已取消";
+    case "config":
+      return "配置阶段";
+    case "unknown":
+    default:
+      return "未知阶段";
+  }
+}
+
+function buildFailureNoticeMessage(
+  failure: WorkflowFailureDiagnostic | null | undefined,
+  fallbackReason: string | undefined,
+  options?: { includeReleaseHint?: boolean; retrying?: boolean },
+): string {
+  if (!failure) {
+    return options?.retrying
+      ? `首次处理失败，正在重试… ${formatReasonForDisplay(fallbackReason, 120)}`
+      : `工作流失败：${formatReasonForDisplay(fallbackReason)}`;
+  }
+
+  const lines = [
+    options?.retrying
+      ? `首次处理失败，正在重试：${failure.summary}`
+      : `工作流失败：${failure.summary}`,
+    `阶段：${getFailureStageLabel(failure.stage)}`,
+  ];
+
+  if (failure.flow_name || failure.flow_id) {
+    lines.push(`工作流：${failure.flow_name || failure.flow_id}`);
+  }
+  if (failure.api_preset_name) {
+    lines.push(`接口：${failure.api_preset_name}`);
+  }
+  if (failure.suggestion) {
+    lines.push(`建议：${failure.suggestion}`);
+  }
+  if (options?.includeReleaseHint) {
+    lines.push("原消息是否继续发送取决于当前放行策略。");
+  }
+
+  return lines.join("\n");
+}
+
+function buildFailureToastMessage(
+  failure: WorkflowFailureDiagnostic | null | undefined,
+  fallbackReason: string | undefined,
+): string {
+  if (!failure) {
+    return formatReasonForDisplay(fallbackReason);
+  }
+
+  const parts = [failure.summary, getFailureStageLabel(failure.stage)];
+  if (failure.flow_name || failure.flow_id) {
+    parts.push(failure.flow_name || failure.flow_id);
+  }
+  if (failure.suggestion) {
+    parts.push(failure.suggestion);
+  }
+  return parts.join(" · ");
+}
+
+function collectSuccessfulDispatchResultsFromAttempts(
+  attempts: DispatchFlowAttempt[],
+): DispatchFlowResult[] {
+  return attempts
+    .filter((attempt) => attempt.ok && attempt.response)
+    .map((attempt) => ({
+      flow: attempt.flow,
+      flow_order: attempt.flow_order,
+      response: attempt.response as any,
+    }));
+}
+
+function mergePreservedDispatchResults(
+  current: DispatchFlowResult[],
+  next: DispatchFlowResult[],
+): DispatchFlowResult[] {
+  const resultByFlowId = new Map<string, DispatchFlowResult>();
+
+  for (const item of current) {
+    resultByFlowId.set(item.flow.id, item);
+  }
+
+  for (const item of next) {
+    resultByFlowId.set(item.flow.id, item);
+  }
+
+  return [...resultByFlowId.values()].sort(
+    (left, right) => left.flow_order - right.flow_order,
+  );
+}
+
+function resolveAutoRerollTarget(
+  result: Awaited<ReturnType<typeof runWorkflow>>,
+): { ok: true; flowIds: string[] } | { ok: false; reason: string } {
+  const failedFlowIds = [...new Set(
+    result.attempts
+      .filter((attempt) => !attempt.ok)
+      .map((attempt) => String(attempt.flow.id ?? "").trim())
+      .filter(Boolean),
+  )];
+
+  if (failedFlowIds.length > 0) {
+    return { ok: true, flowIds: failedFlowIds };
+  }
+
+  const stage = result.failure?.stage;
+  if (stage === "merge" || stage === "commit") {
+    return {
+      ok: false,
+      reason:
+        "失败发生在合并/写回阶段；自动重roll已跳过，避免重复请求已成功的工作流。",
+    };
+  }
+
+  return { ok: false, reason: "未定位到失败工作流；自动重roll已跳过。" };
 }
 
 function normalizeFloorWorkflowExecutionState(
@@ -639,6 +770,7 @@ async function executeWorkflowWithPolicy(
     settings,
     currentPreservedStoredResults,
   );
+  let currentFlowIds = options.flowIds;
 
   const trimPreview = (text: string | undefined, maxLength: number) => {
     const normalized = String(text ?? "")
@@ -849,7 +981,7 @@ async function executeWorkflowWithPolicy(
       trigger: options.trigger,
       mode: "auto",
       inject_reply: options.injectReply,
-      flow_ids: options.flowIds,
+      flow_ids: currentFlowIds,
       timing_filter: options.timingFilter,
       preserved_results: currentPreservedDispatchResults,
       abortSignal: workflowAbortController.signal,
@@ -884,74 +1016,145 @@ async function executeWorkflowWithPolicy(
     );
   }
 
+  if (result.skipped) {
+    reminderSettled = true;
+    stopCarousel();
+    processingReminder.dismiss();
+    return {
+      shouldAbortGeneration: false,
+      workflowSucceeded: true,
+      abortedByUser: false,
+    };
+  }
+
   if (!result.ok) {
     const policy = settings.failure_policy ?? "stop_generation";
+    const autoRerollMaxAttempts = Math.max(
+      1,
+      Math.trunc(Number(settings.auto_reroll_max_attempts ?? 1) || 1),
+    );
+    const autoRerollIntervalMs = Math.max(
+      0,
+      Math.round((settings.auto_reroll_interval_seconds ?? 0) * 1000),
+    );
+    let autoRerollCount = 0;
+    let autoRerollSkippedReason = "";
 
     if (policy === "retry_once") {
-      console.warn("[EW] retry_once: first attempt failed — retrying.");
-      const retryReason = formatReasonForDisplay(result.reason, 120);
-      processingReminder.update(
-        buildAbortableReminder(
-          `首次处理失败，正在重试… ${retryReason}`,
-          "warning",
-        ),
-      );
-      toastr.warning(
-        `工作流首次失败，正在重试… (${retryReason})`,
-        "Evolution World",
-      );
-      try {
-        result = await runWorkflow({
-          message_id: options.messageId,
-          user_input: options.userInput,
-          trigger: options.trigger,
-          mode: "auto",
-          inject_reply: options.injectReply,
-          flow_ids: options.flowIds,
-          timing_filter: options.timingFilter,
-          preserved_results: currentPreservedDispatchResults,
-          abortSignal: workflowAbortController.signal,
-          isCancelled: () => abortedByUser,
-          onProgress: handleWorkflowProgress,
-        });
-      } catch (error) {
+      while (!result.ok && autoRerollCount < autoRerollMaxAttempts) {
+        const rerollTarget = resolveAutoRerollTarget(result);
+        if (!rerollTarget.ok) {
+          autoRerollSkippedReason = rerollTarget.reason;
+          console.warn(`[EW] auto reroll skipped: ${rerollTarget.reason}`);
+          break;
+        }
+
+        currentFlowIds = rerollTarget.flowIds;
+        currentPreservedDispatchResults = mergePreservedDispatchResults(
+          currentPreservedDispatchResults,
+          collectSuccessfulDispatchResultsFromAttempts(result.attempts),
+        );
+
+        const nextAttemptNumber = autoRerollCount + 1;
+        const retryMessageBase = buildFailureNoticeMessage(
+          result.failure,
+          result.reason,
+          { retrying: true },
+        );
+        const intervalHint =
+          autoRerollIntervalMs > 0
+            ? `\n将在 ${settings.auto_reroll_interval_seconds} 秒后开始第 ${nextAttemptNumber} 次自动重roll。`
+            : `\n即将开始第 ${nextAttemptNumber} 次自动重roll。`;
+        console.warn(
+          `[EW] auto reroll: attempt ${nextAttemptNumber}/${autoRerollMaxAttempts} after failure.`,
+          result.reason,
+        );
+        processingReminder.update(
+          buildAbortableReminder(`${retryMessageBase}${intervalHint}`, "warning"),
+        );
+        toastr.warning(
+          `工作流失败，准备进行第 ${nextAttemptNumber}/${autoRerollMaxAttempts} 次自动重roll: ${buildFailureToastMessage(result.failure, result.reason)}`,
+          "Evolution World",
+        );
+
+        try {
+          if (autoRerollIntervalMs > 0) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, autoRerollIntervalMs),
+            );
+          }
+          result = await runWorkflow({
+            message_id: options.messageId,
+            user_input: options.userInput,
+            trigger: options.trigger,
+            mode: "auto",
+            inject_reply: options.injectReply,
+            flow_ids: currentFlowIds,
+            timing_filter: options.timingFilter,
+            preserved_results: currentPreservedDispatchResults,
+            abortSignal: workflowAbortController.signal,
+            isCancelled: () => abortedByUser,
+            onProgress: handleWorkflowProgress,
+          });
+          autoRerollCount = nextAttemptNumber;
+        } catch (error) {
+          if (abortedByUser) {
+            return finalizeUserAbort();
+          }
+          processingReminder.dismiss();
+          throw error;
+        }
+
         if (abortedByUser) {
           return finalizeUserAbort();
         }
-        processingReminder.dismiss();
-        throw error;
-      }
 
-      if (abortedByUser) {
-        return finalizeUserAbort();
-      }
-
-      if (options.trigger.timing === "after_reply") {
-        const assistantMessageId =
-          options.trigger.assistant_message_id ?? options.messageId;
-        const executionState = buildFloorWorkflowExecutionState(
-          result.request_id,
-          result.attempts,
-          currentPreservedStoredResults,
-        );
-        await writeFloorWorkflowExecution(assistantMessageId, executionState);
-        currentPreservedStoredResults = executionState.successful_results;
-        currentPreservedDispatchResults = await buildPreservedDispatchResults(
-          settings,
-          currentPreservedStoredResults,
-        );
+        if (options.trigger.timing === "after_reply") {
+          const assistantMessageId =
+            options.trigger.assistant_message_id ?? options.messageId;
+          const executionState = buildFloorWorkflowExecutionState(
+            result.request_id,
+            result.attempts,
+            currentPreservedStoredResults,
+          );
+          await writeFloorWorkflowExecution(assistantMessageId, executionState);
+          currentPreservedStoredResults = executionState.successful_results;
+          currentPreservedDispatchResults = await buildPreservedDispatchResults(
+            settings,
+            currentPreservedStoredResults,
+          );
+        }
       }
     }
 
     if (!result.ok) {
-      const displayReason = formatReasonForDisplay(result.reason);
+      const exhaustedAutoRerollSuffix = (() => {
+        if (policy !== "retry_once") {
+          return "";
+        }
+        if (autoRerollSkippedReason) {
+          return `\n${autoRerollSkippedReason}`;
+        }
+        if (autoRerollCount > 0) {
+          return `\n已自动重roll ${autoRerollCount} 次，仍未成功。`;
+        }
+        return "";
+      })();
+      const displayReason = `${buildFailureNoticeMessage(result.failure, result.reason)}${exhaustedAutoRerollSuffix}`;
+      const toastReason = `${buildFailureToastMessage(result.failure, result.reason)}${
+        policy === "retry_once" && autoRerollCount > 0
+          ? `（已自动重roll ${autoRerollCount} 次）`
+          : ""
+      }`;
       switch (policy) {
         case "continue_generation":
           reminderSettled = true;
           stopCarousel();
           processingReminder.update({
             title: "Evolution World",
-            message: `工作流失败：${displayReason}。原消息是否继续发送取决于放行策略。`,
+            message: buildFailureNoticeMessage(result.failure, result.reason, {
+              includeReleaseHint: true,
+            }),
             level: "warning",
             persist: false,
             busy: false,
@@ -960,7 +1163,7 @@ async function executeWorkflowWithPolicy(
             duration_ms: 5500,
           });
           toastr.warning(
-            `工作流失败，原消息是否继续发送取决于放行策略: ${displayReason}`,
+            `工作流失败，原消息是否继续发送取决于放行策略: ${toastReason}`,
             "Evolution World",
           );
           break;
@@ -970,7 +1173,7 @@ async function executeWorkflowWithPolicy(
           stopCarousel();
           processingReminder.update({
             title: "Evolution World",
-            message: `工作流失败：${displayReason}`,
+            message: displayReason,
             level: "warning",
             persist: false,
             busy: false,
@@ -978,7 +1181,7 @@ async function executeWorkflowWithPolicy(
             collapse_after_ms: 0,
             duration_ms: 5500,
           });
-          toastr.info(`工作流失败: ${displayReason}`, "Evolution World");
+          toastr.info(`工作流失败: ${toastReason}`, "Evolution World");
           break;
         case "stop_generation":
         case "retry_once":
@@ -988,7 +1191,7 @@ async function executeWorkflowWithPolicy(
           stopCarousel();
           processingReminder.update({
             title: "Evolution World",
-            message: `动态世界流程失败，本轮已中止：${displayReason}`,
+            message: displayReason,
             level: "error",
             persist: false,
             busy: false,
@@ -998,7 +1201,7 @@ async function executeWorkflowWithPolicy(
           });
           stopGenerationNow();
           toastr.error(
-            `动态世界流程失败，本轮已中止: ${displayReason}`,
+            `动态世界流程失败，本轮已中止: ${toastReason}`,
             "Evolution World",
           );
           return {

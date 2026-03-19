@@ -162,6 +162,33 @@
           </span>
           <span class="dbg-run-time">{{ formatTime(store.lastRun.at) }}</span>
         </div>
+        <div v-if="store.lastRun.failure" class="dbg-failure-card" :data-stage="store.lastRun.failure.stage">
+          <div class="dbg-failure-card__header">
+            <strong>{{ store.lastRun.failure.summary }}</strong>
+            <span class="dbg-failure-pill">{{ formatFailureStage(store.lastRun.failure.stage) }}</span>
+          </div>
+          <div class="dbg-failure-grid">
+            <span v-if="store.lastRun.failure.flow_name || store.lastRun.failure.flow_id">
+              工作流：{{ store.lastRun.failure.flow_name || store.lastRun.failure.flow_id }}
+            </span>
+            <span v-if="store.lastRun.failure.api_preset_name">接口：{{ store.lastRun.failure.api_preset_name }}</span>
+            <span>请求ID：{{ store.lastRun.failure.request_id || '未知' }}</span>
+            <span>
+              结果：{{ store.lastRun.failure.successful_flow_count }}/{{ store.lastRun.failure.attempted_flow_count }}
+              成功
+              <template v-if="store.lastRun.failure.whole_workflow_failed"> · 整轮失败</template>
+              <template v-else-if="store.lastRun.failure.partial_success"> · 局部失败</template>
+            </span>
+            <span v-if="store.lastRun.failure.http_status">HTTP：{{ store.lastRun.failure.http_status }}</span>
+          </div>
+          <div v-if="store.lastRun.failure.suggestion" class="dbg-failure-suggestion">
+            建议：{{ store.lastRun.failure.suggestion }}
+          </div>
+          <details class="dbg-failure-detail">
+            <summary>查看原始错误详情</summary>
+            <pre>{{ store.lastRun.failure.detail }}</pre>
+          </details>
+        </div>
         <div v-if="!store.lastRun.ok && store.lastRun.reason" class="dbg-run-error">
           {{ store.lastRun.reason }}
         </div>
@@ -184,6 +211,12 @@
             <span class="dbg-expand-icon">{{ expandedIos.has(idx) ? '▼' : '▶' }}</span>
           </div>
           <div v-if="flowIo.error" class="dbg-io-error">{{ flowIo.error }}</div>
+          <div v-if="flowIo.error" class="dbg-io-hint-grid">
+            <span>类型：{{ formatFailureKind(flowIo.error_kind) }}</span>
+            <span>阶段：{{ formatFailureStage(flowIo.error_stage) }}</span>
+            <span v-if="flowIo.error_status">HTTP：{{ flowIo.error_status }}</span>
+          </div>
+          <div v-if="flowIo.error_suggestion" class="dbg-io-suggestion">建议：{{ flowIo.error_suggestion }}</div>
           <div v-if="expandedIos.has(idx)" class="dbg-io-body">
             <div class="dbg-io-pair">
               <div class="dbg-io-block">
@@ -221,7 +254,12 @@ const expandedMsgs = ref(new Set<number>());
 const expandedIos = ref(new Set<number>());
 const promptRenderCount = ref(24);
 
-type DisplayPromptMessage = (typeof store.promptPreview extends Ref<infer T> ? NonNullable<T>[number] : never) & {
+type DisplayPromptMessage = {
+  role: string;
+  content: string;
+  name?: string;
+  debugOnly?: boolean;
+  previewTitle?: string;
   originalIndex: number;
   previewHtml: string;
 };
@@ -296,6 +334,66 @@ function formatTime(ts: number): string {
   if (!ts) return '';
   const d = new Date(ts);
   return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatFailureStage(stage: string): string {
+  switch (stage) {
+    case 'dispatch':
+      return '请求阶段';
+    case 'merge':
+      return '合并阶段';
+    case 'commit':
+      return '写回阶段';
+    case 'cancelled':
+      return '已取消';
+    case 'config':
+      return '配置阶段';
+    default:
+      return '未知阶段';
+  }
+}
+
+function formatFailureKind(kind: string): string {
+  switch (kind) {
+    case 'http_error':
+      return '接口请求失败';
+    case 'auth_error':
+      return '鉴权失败';
+    case 'permission_error':
+      return '权限不足';
+    case 'not_found':
+      return '地址或模型不存在';
+    case 'rate_limit':
+      return '触发限流';
+    case 'tls_error':
+      return 'TLS/证书错误';
+    case 'connection_reset':
+      return '连接被重置';
+    case 'timeout':
+      return '超时';
+    case 'empty_response':
+      return '空响应';
+    case 'response_parse':
+      return 'JSON解析失败';
+    case 'regex_extract':
+      return '提取正则未命中';
+    case 'schema_invalid':
+      return '响应结构不合法';
+    case 'template_invalid':
+      return '模板配置错误';
+    case 'config_invalid':
+      return '配置错误';
+    case 'worldbook_missing':
+      return '未绑定世界书';
+    case 'merge_failed':
+      return '结果合并失败';
+    case 'commit_failed':
+      return '写回失败';
+    case 'cancelled':
+      return '已取消';
+    default:
+      return '未知错误';
+  }
 }
 </script>
 
@@ -590,6 +688,87 @@ function formatTime(ts: number): string {
   color: #fca5a5;
 }
 
+.dbg-failure-card {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--ew-danger, #ef4444) 28%, transparent);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--ew-danger, #ef4444) 10%, transparent),
+    rgba(0, 0, 0, 0.08)
+  );
+}
+
+.dbg-failure-card[data-stage='commit'] {
+  border-color: color-mix(in srgb, #f97316 35%, transparent);
+}
+
+.dbg-failure-card[data-stage='merge'] {
+  border-color: color-mix(in srgb, #eab308 35%, transparent);
+}
+
+.dbg-failure-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dbg-failure-card__header strong {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor) 92%, transparent);
+  font-size: 0.82rem;
+}
+
+.dbg-failure-pill {
+  padding: 0.16rem 0.55rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ew-danger, #ef4444) 18%, transparent);
+  color: #fecaca;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.dbg-failure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.4rem 0.75rem;
+  margin-top: 0.6rem;
+  font-size: 0.73rem;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor) 75%, transparent);
+}
+
+.dbg-failure-suggestion,
+.dbg-io-suggestion {
+  margin-top: 0.55rem;
+  font-size: 0.74rem;
+  color: #fde68a;
+  line-height: 1.55;
+}
+
+.dbg-failure-detail {
+  margin-top: 0.65rem;
+}
+
+.dbg-failure-detail summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor) 58%, transparent);
+}
+
+.dbg-failure-detail pre {
+  margin: 0.45rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.71rem;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor) 72%, transparent);
+  font-family: 'Fira Code', 'Consolas', monospace;
+  max-height: 14rem;
+  overflow: auto;
+}
+
 /* ── IO Cards ── */
 .dbg-io-title {
   margin: 0 0 0.5rem;
@@ -639,6 +818,15 @@ function formatTime(ts: number): string {
   padding: 0.25rem 0.75rem 0.5rem;
   font-size: 0.72rem;
   color: #fca5a5;
+}
+
+.dbg-io-hint-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  padding: 0 0.75rem 0.25rem;
+  font-size: 0.68rem;
+  color: color-mix(in srgb, var(--SmartThemeBodyColor) 58%, transparent);
 }
 
 .dbg-io-body {

@@ -43,23 +43,8 @@ export function collectChatHistory(contextTurns: number): Array<{
 }> {
   try {
     const getChatMessages = (globalThis as any).getChatMessages;
-    if (typeof getChatMessages !== 'function') {
-      // Fallback: try ST context's chat array
-      const stContext = (globalThis as any).SillyTavern?.getContext?.();
-      const fallback = stContext?.chat?.slice?.(-(contextTurns * 2));
-      if (Array.isArray(fallback)) {
-        return fallback
-          .filter((msg: any) => msg && typeof msg.mes === 'string')
-          .map((msg: any) => ({
-            role: (msg.is_user ? 'user' : 'assistant') as 'system' | 'user' | 'assistant',
-            content: msg.mes,
-          }));
-      }
-      return [];
-    }
-
-    const range = contextTurns > 0 ? `0-${contextTurns * 2}` : '0-16';
-    try {
+    if (typeof getChatMessages === 'function') {
+      const range = contextTurns > 0 ? `0-${contextTurns * 2}` : '0-16';
       const messages = getChatMessages(range, { quiet: true });
       if (Array.isArray(messages)) {
         return messages
@@ -67,18 +52,6 @@ export function collectChatHistory(contextTurns: number): Array<{
           .map((msg: any) => ({
             role: (msg.role ?? (msg.is_user ? 'user' : 'assistant')) as 'system' | 'user' | 'assistant',
             content: msg.content,
-          }));
-      }
-    } catch {
-      // Fallback: try without range parameter
-      const stContext = (globalThis as any).SillyTavern?.getContext?.();
-      const fallback = stContext?.chat?.slice?.(-(contextTurns * 2));
-      if (Array.isArray(fallback)) {
-        return fallback
-          .filter((msg: any) => msg && typeof msg.mes === 'string')
-          .map((msg: any) => ({
-            role: (msg.is_user ? 'user' : 'assistant') as 'system' | 'user' | 'assistant',
-            content: msg.mes,
           }));
       }
     }

@@ -1,4 +1,10 @@
-import { readCharFlows, writeCharFlows } from '../runtime/char-flows';
+import {
+  clearCharFlowDraft,
+  readCharFlowDraft,
+  readCharFlows,
+  writeCharFlowDraft,
+  writeCharFlows,
+} from '../runtime/char-flows';
 import { createDefaultApiPreset, createDefaultFlow } from '../runtime/factory';
 import {
   collectAllFloorSnapshots,
@@ -45,22 +51,17 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   const importText = ref('');
   const busy = ref(false);
 
-  // ── 工作流编辑上下文（跨标签共享）──
-  const selectedGraphId = ref<string | null>(null);
-  const selectedNodeId = ref<string | null>(null);
-
-  // ── 角色卡绑定工作流 ──
   const charFlows = ref<EwFlowConfig[]>([]);
   const activeCharName = ref<string>('');
   const flowScope = ref<'global' | 'character'>('global');
   const charFlowsLoading = ref(false);
+  let suppressCharFlowDraftPersist = false;
+  let charFlowRefreshTimer: number | null = null;
 
-  // ── 调试预览 ──
   const promptPreview = ref<PromptPreviewMessage[] | null>(null);
   const snapshotPreview = ref<{ controllers: ControllerEntrySnapshot[]; dyn: Map<string, DynSnapshot> } | null>(null);
   const previewFlowId = ref<string>('');
 
-  // ── 历史记录 ──
   const floorSnapshots = ref<FloorSnapshot[]>([]);
   const selectedFloorId = ref<number | null>(null);
   const compareFloorId = ref<number | null>(null);
@@ -82,6 +83,37 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   function flushSettingsPersist() {
     clearScheduledPersist();
     persistSettingsDraft(settings.value);
+  }
+
+  function clearCharFlowRefreshTimer() {
+    if (charFlowRefreshTimer !== null) {
+      window.clearInterval(charFlowRefreshTimer);
+      charFlowRefreshTimer = null;
+    }
+  }
+
+  function isCharacterFlowPanelActive() {
+    return settings.value.ui_open && activeTab.value === 'flows' && flowScope.value === 'character';
+  }
+
+  function scheduleCharFlowRefreshWatch() {
+    clearCharFlowRefreshTimer();
+
+    if (!isCharacterFlowPanelActive()) {
+      return;
+    }
+
+    charFlowRefreshTimer = window.setInterval(() => {
+      if (!isCharacterFlowPanelActive() || charFlowsLoading.value) {
+        return;
+      }
+
+      const currentName = (getCurrentCharacterName?.() ?? '').trim();
+      const loadedName = activeCharName.value.trim();
+      if (currentName !== loadedName) {
+        void loadCharFlows();
+      }
+    }, 900);
   }
 
   function scheduleSettingsPersist() {
@@ -118,12 +150,12 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     lastIo.value = next;
   });
 
-  // L-3: 当 store 的作用域被销毁时，正确清理订阅。
   onScopeDispose(() => {
     syncFromRuntime.stop();
     syncRun.stop();
     syncIo.stop();
     clearScheduledPersist();
+    clearCharFlowRefreshTimer();
   });
 
   watch(
@@ -153,6 +185,40 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         expandedFlowId.value = null;
       }
     },
+  );
+
+  watch(
+    charFlows,
+    next => {
+      if (suppressCharFlowDraftPersist || charFlowsLoading.value) {
+        return;
+      }
+      if (flowScope.value !== 'character') {
+        return;
+      }
+      if (!activeCharName.value.trim()) {
+        return;
+      }
+      writeCharFlowDraft(activeCharName.value, next);
+    },
+    { deep: true, flush: 'post' },
+  );
+
+  watch(
+    () => [settings.value.ui_open, activeTab.value, flowScope.value] as const,
+    ([uiOpen, tab, scope], previous) => {
+      const [prevUiOpen, prevTab, prevScope] = previous ?? [undefined, undefined, undefined];
+      scheduleCharFlowRefreshWatch();
+
+      if (!uiOpen || tab !== 'flows' || scope !== 'character') {
+        return;
+      }
+
+      if (!prevUiOpen || prevTab !== 'flows' || prevScope !== 'character') {
+        void loadCharFlows();
+      }
+    },
+    { immediate: true },
   );
 
   function addApiPreset() {
@@ -244,6 +310,9 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function setActiveTab(tab: TabKey) {
     activeTab.value = tab;
+    if (tab === 'flows' && flowScope.value === 'character') {
+      void loadCharFlows();
+    }
   }
 
   function setGlobalAdvancedOpen(open: boolean) {
@@ -268,15 +337,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function setExpandedFlow(flowId: string | null) {
     expandedFlowId.value = flowId;
-  }
-
-  function selectGraph(graphId: string | null) {
-    selectedGraphId.value = graphId;
-    selectedNodeId.value = null;
-  }
-
-  function selectNode(nodeId: string | null) {
-    selectedNodeId.value = nodeId;
   }
 
   async function runManual(message: string) {
@@ -319,7 +379,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function exportConfig() {
-    // 安全导出：去除所有 API 敏感信息
     const safeSettings = klona(settings.value);
     for (const preset of safeSettings.api_presets) {
       preset.api_key = '';
@@ -339,6 +398,20 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       .catch(() => toastr.error('复制配置失败', 'Evolution World'));
   }
 
+  function sanitizeImportData(data: any): any {
+    if (!data || typeof data !== 'object') return data;
+    const clone = klona(data);
+    if (Array.isArray(clone.api_presets)) {
+      for (const preset of clone.api_presets) {
+        if (preset.mode === 'llm_connector') {
+          preset.mode = 'workflow_http';
+        }
+        delete preset.use_main_api;
+      }
+    }
+    return clone;
+  }
+
   function importConfig() {
     if (!importText.value.trim()) {
       showEwNotice({
@@ -352,9 +425,9 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
 
     try {
-      const parsed = JSON.parse(importText.value);
-      // CR-2: 替换前先校验 schema，确保无效 JSON 被明确捕获。
-      EwSettingsSchema.parse(parsed);
+      const raw = JSON.parse(importText.value);
+      const sanitized = sanitizeImportData(raw);
+      const parsed = EwSettingsSchema.parse(sanitized);
       replaceSettings(parsed as EwSettings);
       settings.value = getSettings();
       showEwNotice({
@@ -376,8 +449,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
   }
 
-  // ── 单工作流导入 / 导出 ──
-
   function downloadJson(data: unknown, filename: string) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -391,7 +462,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function buildFlowExportPayload(flows: EwFlowConfig[]) {
-    // 安全导出：去除每条 flow 的 api_url / api_key / headers_json 敏感字段
     const safeFlows = flows.map(flow => {
       const copy = klona(flow) as Record<string, unknown>;
       delete copy.api_url;
@@ -405,6 +475,41 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function sanitizeFilename(name: string) {
     return name.replace(/[<>:"/\\|?*]/g, '_').trim() || 'flow';
+  }
+
+  function ensureUniqueFlowIds(flows: EwFlowConfig[], existingIds: Set<string>) {
+    for (const flow of flows) {
+      if (existingIds.has(flow.id)) {
+        flow.id = `${flow.id}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      }
+      existingIds.add(flow.id);
+    }
+  }
+
+  function parseImportedFlows(jsonText: string, filename?: string) {
+    const parsed = JSON.parse(jsonText);
+
+    let validated: EwFlowConfig[];
+
+    if (parsed && parsed.ew_flow_export === true && Array.isArray(parsed.flows)) {
+      validated = [];
+      for (const raw of parsed.flows) {
+        validated.push(EwFlowConfigSchema.parse(raw));
+      }
+    } else if (isSillyTavernPreset(parsed)) {
+      const flowName = filename?.replace(/\.json$/i, '') || 'ST Preset';
+      const flow = EwFlowConfigSchema.parse(convertStPresetToFlow(parsed, flowName));
+      validated = [flow];
+      toastr.info('已识别为酒馆预设并转换', 'Evolution World');
+    } else {
+      throw new Error('无效的工作流导出文件，缺少 ew_flow_export 标识且非酒馆预设');
+    }
+
+    if (validated.length === 0) {
+      throw new Error('导出文件中没有工作流');
+    }
+
+    return validated;
   }
 
   function exportSingleFlow(flowId: string) {
@@ -435,40 +540,9 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
 
     try {
-      const parsed = JSON.parse(jsonText);
-
-      let validated: EwFlowConfig[];
-
-      if (parsed && parsed.ew_flow_export === true && Array.isArray(parsed.flows)) {
-        // ── EW 原生格式 ──
-        validated = [];
-        for (const raw of parsed.flows) {
-          validated.push(EwFlowConfigSchema.parse(raw));
-        }
-      } else if (isSillyTavernPreset(parsed)) {
-        // ── ST 预设 → 转换为单个 flow ──
-        const flowName = filename?.replace(/\.json$/i, '') || 'ST Preset';
-        const flow = EwFlowConfigSchema.parse(convertStPresetToFlow(parsed, flowName));
-        validated = [flow];
-        toastr.info('已识别为酒馆预设并转换', 'Evolution World');
-      } else {
-        toastr.error('无效的工作流导出文件，缺少 ew_flow_export 标识且非酒馆预设', 'Evolution World');
-        return;
-      }
-
-      if (validated.length === 0) {
-        toastr.warning('导出文件中没有工作流', 'Evolution World');
-        return;
-      }
-
-      // ID 去重：若冲突，追加时间戳后缀
+      const validated = parseImportedFlows(jsonText, filename);
       const existingIds = new Set(settings.value.flows.map(f => f.id));
-      for (const flow of validated) {
-        if (existingIds.has(flow.id)) {
-          flow.id = `${flow.id}_${Date.now()}`;
-        }
-        existingIds.add(flow.id);
-      }
+      ensureUniqueFlowIds(validated, existingIds);
 
       const next = klona(settings.value);
       next.flows.push(...validated);
@@ -480,19 +554,74 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
   }
 
+  function exportSingleCharFlow(flowId: string) {
+    const flow = charFlows.value.find(f => f.id === flowId);
+    if (!flow) {
+      toastr.error('找不到该角色卡工作流', 'Evolution World');
+      return;
+    }
+    const payload = buildFlowExportPayload([flow]);
+    downloadJson(payload, `ew_char_flow_${sanitizeFilename(flow.name)}.json`);
+    toastr.success(`已导出角色卡工作流「${flow.name}」`, 'Evolution World');
+  }
+
+  function exportAllCharFlows() {
+    if (charFlows.value.length === 0) {
+      toastr.warning('当前角色卡没有工作流可导出', 'Evolution World');
+      return;
+    }
+    const charName = sanitizeFilename(activeCharName.value || 'character');
+    const payload = buildFlowExportPayload(charFlows.value);
+    downloadJson(payload, `ew_char_flows_${charName}_${charFlows.value.length}.json`);
+    toastr.success(`已导出当前角色卡全部 ${charFlows.value.length} 条工作流`, 'Evolution World');
+  }
+
+  function importCharFlowsFromText(jsonText: string, filename?: string) {
+    if (!jsonText.trim()) {
+      toastr.warning('导入内容为空', 'Evolution World');
+      return;
+    }
+
+    try {
+      const validated = parseImportedFlows(jsonText, filename);
+      const next = [...charFlows.value];
+      const existingIds = new Set(next.map(f => f.id));
+      ensureUniqueFlowIds(validated, existingIds);
+      next.push(...validated);
+      charFlows.value = next;
+
+      showEwNotice({
+        title: 'Evolution World',
+        message: `已导入 ${validated.length} 条角色卡工作流。若要写回世界书，请继续点击“保存到绑定世界书”。`,
+        level: 'success',
+      });
+      toastr.success(`已导入 ${validated.length} 条角色卡工作流`, 'Evolution World');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toastr.error(`角色卡工作流导入失败: ${message}`, 'Evolution World');
+    }
+  }
+
   function validateConfig() {
-    const result = window.EvolutionWorldAPI?.validateConfig();
-    if (!result) {
-      toastr.error('EvolutionWorldAPI not ready', 'Evolution World');
-      return;
+    try {
+      const result = EwSettingsSchema.safeParse(settings.value);
+      if (result.success) {
+        toastr.success('配置校验通过 ✓', 'Evolution World');
+        showEwNotice({ title: '校验', message: '当前配置合法、完整。', level: 'success' });
+        return;
+      }
+      const errors = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`);
+      toastr.error(`配置校验失败 (${errors.length} 项)`, 'Evolution World');
+      showEwNotice({
+        title: '校验失败',
+        message: errors.join('\n'),
+        level: 'error',
+        duration_ms: 6000,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toastr.error(`校验异常: ${msg}`, 'Evolution World');
     }
-
-    if (result.ok) {
-      toastr.success('配置校验通过 ✓', 'Evolution World');
-      return;
-    }
-
-    toastr.error(result.errors.join('\n'), 'Evolution World');
   }
 
   async function validateControllerSyntax() {
@@ -527,14 +656,19 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     activeTab.value = 'overview';
   }
 
-  // ── 角色卡工作流操作 ──────────────────────────────────────────
-
   async function loadCharFlows() {
     charFlowsLoading.value = true;
     try {
-      const name = getCurrentCharacterName() ?? '';
+      const name = getCurrentCharacterName?.() ?? '';
       activeCharName.value = name;
-      charFlows.value = await readCharFlows(settings.value);
+      const savedFlows = await readCharFlows(settings.value);
+      const draftFlows = readCharFlowDraft(name);
+
+      suppressCharFlowDraftPersist = true;
+      charFlows.value = draftFlows ?? savedFlows;
+      queueMicrotask(() => {
+        suppressCharFlowDraftPersist = false;
+      });
     } catch (e) {
       console.warn('[Evolution World] loadCharFlows failed:', e);
       charFlows.value = [];
@@ -543,10 +677,46 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
   }
 
+  async function reloadCharFlowsFromWorldbook() {
+    charFlowsLoading.value = true;
+    try {
+      const name = getCurrentCharacterName?.() ?? '';
+      activeCharName.value = name;
+      const savedFlows = await readCharFlows(settings.value);
+
+      suppressCharFlowDraftPersist = true;
+      charFlows.value = savedFlows;
+      clearCharFlowDraft(name);
+      queueMicrotask(() => {
+        suppressCharFlowDraftPersist = false;
+      });
+
+      showEwNotice({
+        title: 'Evolution World',
+        message: `已从角色世界书重新读取 ${savedFlows.length} 条工作流，并覆盖当前角色卡草稿。`,
+        level: 'success',
+      });
+    } catch (e) {
+      console.error('[Evolution World] reloadCharFlowsFromWorldbook failed:', e);
+      showEwNotice({
+        title: 'Evolution World',
+        message: '从角色世界书读取工作流失败: ' + (e as Error).message,
+        level: 'error',
+      });
+    } finally {
+      charFlowsLoading.value = false;
+    }
+  }
+
   async function saveCharFlows() {
     try {
       await writeCharFlows(settings.value, charFlows.value);
-      showEwNotice({ title: 'Evolution World', message: '角色卡工作流已保存到世界书', level: 'success' });
+      writeCharFlowDraft(activeCharName.value, charFlows.value);
+      showEwNotice({
+        title: 'Evolution World',
+        message: '角色卡工作流已保存到当前绑定世界书。若要分享，请连同更新后的角色世界书一起导出。',
+        level: 'success',
+      });
     } catch (e) {
       console.error('[Evolution World] saveCharFlows failed:', e);
       showEwNotice({
@@ -566,7 +736,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       }
 
       const existing = await readCharFlows(settings.value);
-
       const merged = [...existing];
       let updatedCount = 0;
       let appendedCount = 0;
@@ -576,7 +745,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         delete (copy as any).api_url;
         delete (copy as any).api_key;
         delete (copy as any).headers_json;
-        delete (copy as any).api_preset_id;
 
         const trimmedName = copy.name.trim();
         const existingIndex = merged.findIndex(f => f.name.trim() === trimmedName);
@@ -594,6 +762,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       await writeCharFlows(settings.value, merged);
       charFlows.value = merged;
       activeCharName.value = getCurrentCharacterName?.() ?? '';
+      writeCharFlowDraft(activeCharName.value, merged);
 
       const parts: string[] = [];
       if (updatedCount > 0) parts.push(`更新 ${updatedCount} 条`);
@@ -648,15 +817,12 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   function setFlowScope(scope: 'global' | 'character') {
     flowScope.value = scope;
     if (scope === 'character') {
-      loadCharFlows();
+      void loadCharFlows();
     }
   }
 
-  // ── 调试预览 ──────────────────────────────────────────
-
   async function loadPromptPreview() {
     const flowId = previewFlowId.value;
-    // 从全局或角色工作流中查找目标 flow
     const allFlows = [...settings.value.flows, ...charFlows.value];
     const flow = allFlows.find(f => f.id === flowId) ?? allFlows.find(f => f.enabled) ?? allFlows[0];
     if (!flow) {
@@ -699,8 +865,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
   }
 
-  // ── 历史记录 ──────────────────────────────────────────────
-
   async function loadFloorSnapshots() {
     busy.value = true;
     try {
@@ -727,6 +891,68 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     }
   }
 
+  async function rederiveFloorWorkflow(
+    messageId: number,
+    timing: 'before_reply' | 'after_reply' | 'manual' = 'manual',
+  ): Promise<{ ok: boolean; reason?: string; result?: any }> {
+    busy.value = true;
+    try {
+      const api = window.EvolutionWorldAPI as
+        | (typeof window.EvolutionWorldAPI & {
+            rederiveWorkflowAtFloor?: (input: {
+              message_id: number;
+              timing: 'before_reply' | 'after_reply' | 'manual';
+              target_version_key?: string;
+              confirm_legacy?: boolean;
+              capsule_mode?: 'full' | 'light';
+            }) => Promise<{ ok: boolean; reason?: string; result?: any }>;
+          })
+        | undefined;
+      if (!api?.rederiveWorkflowAtFloor) {
+        return { ok: false, reason: 'EvolutionWorldAPI.rederiveWorkflowAtFloor 尚未就绪' };
+      }
+
+      const result = await api.rederiveWorkflowAtFloor({
+        message_id: messageId,
+        timing,
+        capsule_mode: 'full',
+      });
+
+      if (result.ok) {
+        const applied = Number(result.result?.writeback_applied ?? 0);
+        const conflicts = Number(result.result?.writeback_conflicts ?? 0);
+        const anchorId = Number(result.result?.anchor_message_id ?? messageId);
+        showEwNotice({
+          title: '历史',
+          message: `楼层 #${messageId} 已完成重推导：锚点 #${anchorId}，写回 ${applied} 项，冲突 ${conflicts} 项。`,
+          level: 'success',
+          duration_ms: 4200,
+        });
+        await loadFloorSnapshots();
+      } else if (result.reason && result.reason !== 'cancelled_by_user') {
+        showEwNotice({
+          title: '历史',
+          message: `楼层 #${messageId} 重推导失败：${result.reason}`,
+          level: 'error',
+          duration_ms: 5200,
+        });
+      }
+
+      return result;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      showEwNotice({
+        title: '历史',
+        message: `楼层 #${messageId} 重推导异常：${reason}`,
+        level: 'error',
+        duration_ms: 5200,
+      });
+      return { ok: false, reason };
+    } finally {
+      busy.value = false;
+    }
+  }
+
   return {
     settings,
     lastRun,
@@ -737,12 +963,16 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     expandedFlowId,
     importText,
     busy,
-    selectedGraphId,
-    selectedNodeId,
     charFlows,
     activeCharName,
     flowScope,
     charFlowsLoading,
+    promptPreview,
+    snapshotPreview,
+    previewFlowId,
+    floorSnapshots,
+    selectedFloorId,
+    compareFloorId,
     addApiPreset,
     duplicateApiPreset,
     removeApiPreset,
@@ -756,8 +986,6 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     toggleFlowExpanded,
     setExpandedApiPreset,
     setExpandedFlow,
-    selectGraph,
-    selectNode,
     runManual,
     rollbackController,
     exportConfig,
@@ -765,29 +993,26 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     exportSingleFlow,
     exportAllFlows,
     importFlowsFromText,
+    exportSingleCharFlow,
+    exportAllCharFlows,
+    importCharFlowsFromText,
     validateConfig,
     validateControllerSyntax,
     setOpen,
     openPanel,
     closePanel,
     loadCharFlows,
+    reloadCharFlowsFromWorldbook,
     saveCharFlows,
     mergeFlowsToCard,
     addCharFlow,
     duplicateCharFlow,
     removeCharFlow,
     setFlowScope,
-    // 调试
-    promptPreview,
-    snapshotPreview,
-    previewFlowId,
     loadPromptPreview,
     loadSnapshotPreview,
-    // 历史记录
-    floorSnapshots,
-    selectedFloorId,
-    compareFloorId,
     loadFloorSnapshots,
     doRollbackToFloor,
+    rederiveFloorWorkflow,
   };
 });
