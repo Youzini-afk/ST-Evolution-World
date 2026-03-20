@@ -3734,6 +3734,61 @@ export async function rederiveWorkflowAtFloor(
   }
 }
 
+function resolveAssistantFloorOrdinal(messageId: number): number {
+  const normalizedMessageId = Math.max(0, Math.trunc(Number(messageId) || 0));
+  let matchedCount = 0;
+
+  try {
+    const messages = getChatMessages(`0-${normalizedMessageId}`);
+    for (const message of Array.isArray(messages) ? messages : []) {
+      if (String(message?.role ?? "") === "assistant") {
+        matchedCount += 1;
+      }
+      if (Number(message?.message_id) === normalizedMessageId) {
+        return Math.max(1, matchedCount);
+      }
+    }
+  } catch {
+    // ignore and fall through to safe fallback
+  }
+
+  return Math.max(1, matchedCount || 1);
+}
+
+function shouldFlowRunOnAfterReplyFloor(
+  flow: any,
+  settings: EwSettings,
+  ordinal: number,
+): boolean {
+  const effectiveTiming =
+    flow?.timing === "default" ? settings.workflow_timing : flow?.timing;
+  if (effectiveTiming !== "after_reply") {
+    return false;
+  }
+
+  const interval = Math.max(
+    1,
+    Math.trunc(Number(flow?.run_every_n_floors ?? 1) || 1),
+  );
+  if (interval <= 1) {
+    return true;
+  }
+
+  return ordinal % interval === 0;
+}
+
+async function resolveEligibleAfterReplyRerollFlowIds(
+  settings: EwSettings,
+  messageId: number,
+): Promise<string[]> {
+  const ordinal = resolveAssistantFloorOrdinal(messageId);
+  const effectiveFlows = await getEffectiveFlows(settings);
+  return effectiveFlows
+    .filter((flow) => shouldFlowRunOnAfterReplyFloor(flow, settings, ordinal))
+    .map((flow) => String(flow.id ?? "").trim())
+    .filter(Boolean);
+}
+
 export async function rerollCurrentAfterReplyWorkflow(): Promise<{
   ok: boolean;
   reason?: string;
@@ -3783,6 +3838,14 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
     flowIds = resolved.flowIds;
     preservedResults = resolved.preservedResults;
     failedOnlyFallbackToAll = Boolean(resolved.fallbackToAll);
+  } else {
+    flowIds = await resolveEligibleAfterReplyRerollFlowIds(settings, messageId);
+    if (flowIds.length === 0) {
+      return {
+        ok: false,
+        reason: "当前楼层没有命中任何应执行的 after_reply 工作流",
+      };
+    }
   }
 
   try {
@@ -3822,13 +3885,13 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
                 ? failedOnlyFallbackToAll
                   ? `当前楼上次失败发生在合并或写回阶段，正在回退重跑该楼关联的 ${flowIds.length} 条工作流，请稍后…`
                   : `正在重跑当前楼失败的 ${flowIds.length} 条工作流，请稍后…`
-                : "正在重跑当前楼的回复后工作流，请稍后…",
+                : `正在重跑当前楼命中的 ${flowIds?.length ?? 0} 条回复后工作流，请稍后…`,
             successMessage:
               rerollScope === "failed_only" && flowIds?.length
                 ? failedOnlyFallbackToAll
                   ? "当前楼因整轮失败而回退重跑的工作流已完成。"
                   : "当前楼失败的工作流已重跑完成。"
-                : "当前楼的动态世界工作流已重跑完成。",
+                : `当前楼命中的 ${flowIds?.length ?? 0} 条回复后工作流已重跑完成。`,
           });
         } finally {
           setProcessing(false);
