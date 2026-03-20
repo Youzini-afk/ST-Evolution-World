@@ -318,13 +318,18 @@
                       <option value="before_reply">回复前拦截</option>
                     </select>
                   </EwFieldRow>
-                  <EwFieldRow label="回复后延迟(秒)" :help="help('after_reply_delay_seconds')">
+                  <EwFieldRow
+                    label="回复后延迟(秒)"
+                    :help="help('after_reply_delay_seconds')"
+                  >
                     <input
                       v-model.number="store.settings.after_reply_delay_seconds"
                       type="number"
                       min="0"
                       step="0.1"
-                      :placeholder="help('after_reply_delay_seconds')?.placeholder"
+                      :placeholder="
+                        help('after_reply_delay_seconds')?.placeholder
+                      "
                     />
                   </EwFieldRow>
                   <EwFieldRow label="失败策略" :help="help('failure_policy')">
@@ -345,7 +350,9 @@
                       type="number"
                       min="1"
                       step="1"
-                      :placeholder="help('auto_reroll_max_attempts')?.placeholder"
+                      :placeholder="
+                        help('auto_reroll_max_attempts')?.placeholder
+                      "
                     />
                   </EwFieldRow>
                   <EwFieldRow
@@ -354,29 +361,47 @@
                     :help="help('auto_reroll_interval_seconds')"
                   >
                     <input
-                      v-model.number="store.settings.auto_reroll_interval_seconds"
+                      v-model.number="
+                        store.settings.auto_reroll_interval_seconds
+                      "
                       type="number"
                       min="0"
                       step="0.1"
-                      :placeholder="help('auto_reroll_interval_seconds')?.placeholder"
+                      :placeholder="
+                        help('auto_reroll_interval_seconds')?.placeholder
+                      "
                     />
                   </EwFieldRow>
-                  <EwFieldRow label="并行间隔(秒)" :help="help('parallel_dispatch_interval_seconds')">
+                  <EwFieldRow
+                    label="并行间隔(秒)"
+                    :help="help('parallel_dispatch_interval_seconds')"
+                  >
                     <input
-                      v-model.number="store.settings.parallel_dispatch_interval_seconds"
+                      v-model.number="
+                        store.settings.parallel_dispatch_interval_seconds
+                      "
                       type="number"
                       min="0"
                       step="0.1"
-                      :placeholder="help('parallel_dispatch_interval_seconds')?.placeholder"
+                      :placeholder="
+                        help('parallel_dispatch_interval_seconds')?.placeholder
+                      "
                     />
                   </EwFieldRow>
-                  <EwFieldRow label="串行间隔(秒)" :help="help('serial_dispatch_interval_seconds')">
+                  <EwFieldRow
+                    label="串行间隔(秒)"
+                    :help="help('serial_dispatch_interval_seconds')"
+                  >
                     <input
-                      v-model.number="store.settings.serial_dispatch_interval_seconds"
+                      v-model.number="
+                        store.settings.serial_dispatch_interval_seconds
+                      "
                       type="number"
                       min="0"
                       step="0.1"
-                      :placeholder="help('serial_dispatch_interval_seconds')?.placeholder"
+                      :placeholder="
+                        help('serial_dispatch_interval_seconds')?.placeholder
+                      "
                     />
                   </EwFieldRow>
                   <EwFieldRow label="重roll范围" :help="help('reroll_scope')">
@@ -848,7 +873,10 @@
 <script setup lang="ts">
 import { replaceWorldbook } from "../runtime/compat/worldbook";
 import { checkEjsSyntax, renderEjsContent } from "../runtime/ejs-internal";
-import { migrateSnapshots } from "../runtime/floor-binding";
+import {
+  localizeSnapshotsForCurrentChat,
+  migrateSnapshots,
+} from "../runtime/floor-binding";
 import { resolveControllerEntryNameMap } from "../runtime/helpers";
 import {
   applyFloorLimit,
@@ -1098,6 +1126,7 @@ async function onMigrateSnapshots() {
   if (migratingSnapshots.value) return;
   migratingSnapshots.value = true;
   try {
+    const localization = await localizeSnapshotsForCurrentChat(store.settings);
     const direction =
       store.settings.snapshot_storage === "file"
         ? ("to_file" as const)
@@ -1105,7 +1134,7 @@ async function onMigrateSnapshots() {
     const { migrated } = await migrateSnapshots(direction);
     showEwNotice({
       title: "快照同步",
-      message: `已处理 ${migrated} 条消息`,
+      message: `本地化 ${localization.localized} 条、回填锚点 ${localization.uplifted} 条、同步处理 ${migrated} 条消息`,
       level: "success",
     });
   } catch (e) {
