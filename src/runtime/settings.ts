@@ -233,6 +233,26 @@ function ensurePresetName(baseName: string, usedNames: Set<string>): string {
   return nextName;
 }
 
+function ensureFlowId(
+  rawId: string,
+  index: number,
+  flowName: string,
+  usedIds: Set<string>,
+): string {
+  const trimmed = rawId.trim();
+  const baseId =
+    trimmed ||
+    `flow_${index + 1}_${simpleHash(`${index}:${flowName || "flow"}`)}`;
+  let nextId = baseId;
+  let counter = 2;
+  while (usedIds.has(nextId)) {
+    nextId = `${baseId}__${counter}`;
+    counter += 1;
+  }
+  usedIds.add(nextId);
+  return nextId;
+}
+
 function normalizeApiPresets(rawPresets: EwApiPreset[]): EwApiPreset[] {
   const usedIds = new Set<string>();
   const usedNames = new Set<string>();
@@ -347,9 +367,26 @@ function normalizeSettings(raw: unknown): EwSettings {
   const usedPresetNames = new Set(apiPresets.map((preset) => preset.name));
   const defaultPresetId = apiPresets[0]?.id ?? "";
   const flowSeed = base.flows;
+  const usedFlowIds = new Set<string>();
 
-  const normalizedFlows = flowSeed.map((flow) => {
+  const normalizedFlows = flowSeed.map((flow, index) => {
     let nextFlow = EwFlowConfigSchema.parse(flow);
+    // Ensure unique flow IDs — deduplicate collisions
+    const uniqueFlowId = ensureFlowId(
+      nextFlow.id,
+      index,
+      nextFlow.name,
+      usedFlowIds,
+    );
+    if (uniqueFlowId !== nextFlow.id) {
+      console.warn(
+        `[Evolution World] normalized duplicate flow id "${nextFlow.id}" -> "${uniqueFlowId}"`,
+      );
+      nextFlow = EwFlowConfigSchema.parse({
+        ...nextFlow,
+        id: uniqueFlowId,
+      });
+    }
     // FEAT-2: 将旧的 prompt_items 迁移到 prompt_order
     nextFlow = migratePromptItems(nextFlow);
     const boundPreset = apiPresets.find(

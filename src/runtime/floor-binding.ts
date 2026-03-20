@@ -26,6 +26,7 @@ import {
   buildSnapshotStoreOwner,
   cleanupSnapshotFiles,
   deleteSnapshot,
+  FILE_ARTIFACT_VERSION,
   readSnapshotStore,
   writeSnapshot,
   writeSnapshotStore,
@@ -546,9 +547,11 @@ function buildSnapshotStoreFromVersions(
   versions: Record<string, SnapshotData>,
 ): SnapshotVersionStore {
   return {
-    version: "ew-snapshot/v2",
+    version: FILE_ARTIFACT_VERSION,
     updated_at: Date.now(),
     versions: { ...versions },
+    workflow_execution: {},
+    replay_capsules: {},
     owner: buildSnapshotStoreOwner(getCharName(), getChatId()),
   };
 }
@@ -660,9 +663,11 @@ export async function pinMessageSnapshotToCurrentVersion(
       ? sourceFileName
       : buildFileName(getCharName(), getChatId(), messageId);
     const writableStore: SnapshotVersionStore = {
-      version: "ew-snapshot/v2",
+      version: FILE_ARTIFACT_VERSION,
       updated_at: Date.now(),
       versions: { ...sourceStore.versions },
+      workflow_execution: { ...(sourceStore.workflow_execution ?? {}) },
+      replay_capsules: { ...(sourceStore.replay_capsules ?? {}) },
       owner: buildSnapshotStoreOwner(getCharName(), getChatId()),
     };
     if (readResult.resolution !== "exact") {
@@ -1253,9 +1258,11 @@ export async function localizeSnapshotsForCurrentChat(
         Number(msg.message_id),
       );
       const localizedStore: SnapshotVersionStore = {
-        version: "ew-snapshot/v2",
+        version: FILE_ARTIFACT_VERSION,
         updated_at: Date.now(),
         versions: { ...store.versions },
+        workflow_execution: { ...(store.workflow_execution ?? {}) },
+        replay_capsules: { ...(store.replay_capsules ?? {}) },
         owner: buildSnapshotStoreOwner(charName, chatId),
       };
       await writeSnapshotStore(localizedFileName, localizedStore);
