@@ -36,10 +36,13 @@ import {
 import {
   ControllerEntrySnapshot,
   ControllerTemplateSlot,
+  DynSnapshot,
   EwSettings,
 } from "./types";
 import {
+  buildDynSnapshotFromEntry,
   ensureDefaultEntry,
+  normalizeDynSnapshotData,
   resolveTargetWorldbook,
 } from "./worldbook-runtime";
 
@@ -78,13 +81,45 @@ type SnapshotReadResult = {
   file_name?: string;
 };
 
-export type DynSnapshot = { name: string; content: string; enabled: boolean };
+function normalizeDynSnapshot(
+  snapshot: DynSnapshot | { name: string; content: string; enabled: boolean },
+): DynSnapshot {
+  const normalized = normalizeDynSnapshotData(snapshot);
+  if (normalized) {
+    return normalized;
+  }
 
-function normalizeDynSnapshot(snapshot: DynSnapshot): DynSnapshot {
   return {
-    name: String(snapshot?.name ?? "").trim(),
-    content: String(snapshot?.content ?? ""),
-    enabled: Boolean(snapshot?.enabled),
+    name: String((snapshot as any)?.name ?? "").trim(),
+    content: String((snapshot as any)?.content ?? ""),
+    enabled: Boolean((snapshot as any)?.enabled),
+    comment: "",
+    position: {
+      type: "before_character_definition",
+      role: "system",
+      depth: 0,
+      order: 100,
+    },
+    strategy: {
+      type: "constant",
+      keys: [],
+      keys_secondary: { logic: "and_any", keys: [] },
+      scan_depth: "same_as_global",
+    },
+    probability: 100,
+    effect: {
+      sticky: null,
+      cooldown: null,
+      delay: null,
+    },
+    extra: {
+      caseSensitive: false,
+      matchWholeWords: false,
+      group: "",
+      groupOverride: false,
+      groupWeight: 100,
+      useGroupScoring: false,
+    },
   };
 }
 
@@ -299,6 +334,10 @@ function selectSnapshotFromSources(
     }
   }
 
+  if (mode === "strict") {
+    return buildSnapshotReadResult(null, "missing", null);
+  }
+
   for (const source of sources) {
     const entries = getVersionEntries(source.versions);
     if (entries.length === 1) {
@@ -310,10 +349,6 @@ function selectSnapshotFromSources(
         matchedVersionKey,
       );
     }
-  }
-
-  if (mode === "strict") {
-    return buildSnapshotReadResult(null, "missing", null);
   }
 
   for (const source of sources) {
@@ -561,7 +596,7 @@ async function readSnapshotForMessageDetailed(
 }
 
 async function readSnapshotForMessage(msg: any): Promise<SnapshotData | null> {
-  const readResult = await readSnapshotForMessageDetailed(msg, "history");
+  const readResult = await readSnapshotForMessageDetailed(msg, "strict");
   return readResult.snapshot;
 }
 
@@ -1896,17 +1931,7 @@ export type SnapshotDiffApplyResult = {
   conflict_names: string[];
 };
 
-function buildDynSnapshotFromEntry(entry: {
-  name: string;
-  content: string;
-  enabled: boolean;
-}): DynSnapshot {
-  return {
-    name: String(entry.name ?? "").trim(),
-    content: String(entry.content ?? ""),
-    enabled: Boolean(entry.enabled),
-  };
-}
+// buildDynSnapshotFromEntry is now imported from worldbook-runtime
 
 export async function applySnapshotDiffToCurrentWorldbook(
   settings: EwSettings,

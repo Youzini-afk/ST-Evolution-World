@@ -1,9 +1,17 @@
-import { markFloorEntries } from './floor-binding';
-import { saveControllerBackup } from './settings';
-import { ControllerEntrySnapshot, ControllerTemplateSlot, EwSettings, MergedPlan } from './types';
-import { ensureDefaultEntry, resolveTargetWorldbook } from './worldbook-runtime';
-import { replaceWorldbook, type WbEntry } from './compat/worldbook';
-import { getChatId } from './compat/character';
+import { getChatId } from "./compat/character";
+import { replaceWorldbook, type WbEntry } from "./compat/worldbook";
+import { markFloorEntries } from "./floor-binding";
+import { saveControllerBackup } from "./settings";
+import {
+  ControllerEntrySnapshot,
+  ControllerTemplateSlot,
+  EwSettings,
+  MergedPlan,
+} from "./types";
+import {
+  ensureDefaultEntry,
+  resolveTargetWorldbook,
+} from "./worldbook-runtime";
 
 type CommitResult = {
   worldbook_name: string;
@@ -32,8 +40,10 @@ function applyDeclarativeDiff(
   settings: EwSettings,
 ): WbEntry[] {
   // 步骤 1：移除条目。
-  const removeSet = new Set(removeEntries.map(e => e.name));
-  const result = klona(currentEntries.filter(entry => !removeSet.has(entry.name)));
+  const removeSet = new Set(removeEntries.map((e) => e.name));
+  const result = klona(
+    currentEntries.filter((entry) => !removeSet.has(entry.name)),
+  );
 
   // 步骤 2：构建索引以实现 O(1) 查找。
   const indexByName = new Map<string, number>();
@@ -54,7 +64,12 @@ function applyDeclarativeDiff(
       result[existingIndex].content = desired.content;
       result[existingIndex].enabled = effectiveEnabled;
     } else {
-      const newEntry = ensureDefaultEntry(desired.name, desired.content, effectiveEnabled, result);
+      const newEntry = ensureDefaultEntry(
+        desired.name,
+        desired.content,
+        effectiveEnabled,
+        result,
+      );
       indexByName.set(desired.name, result.length);
       result.push(newEntry);
     }
@@ -88,12 +103,14 @@ export async function commitMergedPlan(
 
   // 校验所有操作目标都是受管理的条目名称。
   const allNames = [
-    ...mergedPlan.worldbook.desired_entries.map(entry => entry.name),
-    ...mergedPlan.worldbook.remove_entries.map(entry => entry.name),
+    ...mergedPlan.worldbook.desired_entries.map((entry) => entry.name),
+    ...mergedPlan.worldbook.remove_entries.map((entry) => entry.name),
   ];
-  const unmanaged = allNames.filter(name => !isManagedEntryName(settings, name));
+  const unmanaged = allNames.filter(
+    (name) => !isManagedEntryName(settings, name),
+  );
   if (unmanaged.length > 0) {
-    throw new Error(`unmanaged entry name(s): ${unmanaged.join(', ')}`);
+    throw new Error(`unmanaged entry name(s): ${unmanaged.join(", ")}`);
   }
 
   // 将声明式 diff 应用到世界书条目。
@@ -104,7 +121,9 @@ export async function commitMergedPlan(
     settings,
   );
 
-  const desiredControllerByName = new Map(controllerTemplates.map(slot => [slot.entry_name, slot]));
+  const desiredControllerByName = new Map(
+    controllerTemplates.map((slot) => [slot.entry_name, slot]),
+  );
 
   for (const entry of nextEntries) {
     if (!entry.name.startsWith(settings.controller_entry_prefix)) {
@@ -115,39 +134,47 @@ export async function commitMergedPlan(
       entry.content = desiredController.content;
       entry.enabled = true;
     } else {
-      entry.content = '';
+      entry.content = "";
       entry.enabled = false;
     }
   }
 
   for (const slot of controllerTemplates) {
-    const ctrlExisting = nextEntries.find(e => e.name === slot.entry_name);
+    const ctrlExisting = nextEntries.find((e) => e.name === slot.entry_name);
     if (ctrlExisting) {
       continue;
     }
-    nextEntries.push(ensureDefaultEntry(slot.entry_name, slot.content, true, nextEntries, true));
+    nextEntries.push(
+      ensureDefaultEntry(
+        slot.entry_name,
+        slot.content,
+        true,
+        nextEntries,
+        true,
+      ),
+    );
   }
 
   // 在一次原子操作中提交所有变更。
-  await replaceWorldbook(target.worldbook_name, nextEntries, { render: 'debounced' });
+  await replaceWorldbook(target.worldbook_name, nextEntries, {
+    render: "debounced",
+  });
 
   // 标记楼层绑定：记录 EW/Dyn 条目、其内容快照和 Controller 快照。
   if (settings.floor_binding_enabled && messageId >= 0) {
-    const dynDesired = mergedPlan.worldbook.desired_entries.filter(entry =>
+    const dynDesired = mergedPlan.worldbook.desired_entries.filter((entry) =>
       entry.name.startsWith(settings.dynamic_entry_prefix),
     );
 
-    const dynSnapshots = dynDesired.map(entry => ({
-      name: entry.name,
-      content: entry.content,
-      enabled: false,
-    }));
+    const dynSnapshots = dynDesired.map((entry) =>
+      buildDynSnapshotFromEntry(entry),
+    );
 
     if (dynSnapshots.length > 0 || controllerTemplates.length > 0) {
       await markFloorEntries(
         settings,
         messageId,
-        dynDesired.map(e => e.name),
+        dynDesired.map((e) => e.name),
         controllerTemplates,
         dynSnapshots,
       );

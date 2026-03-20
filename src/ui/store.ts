@@ -15,7 +15,6 @@ import {
   collectAllFloorSnapshots,
   collectLatestSnapshots,
   rollbackToFloor,
-  type DynSnapshot,
   type FloorSnapshot,
 } from "../runtime/floor-binding";
 import { runWorkflow } from "../runtime/pipeline";
@@ -38,6 +37,7 @@ import {
   subscribeLastRun,
   subscribeSettings,
 } from "../runtime/settings";
+import type { DynSnapshot } from "../runtime/types";
 import {
   EwFlowConfig,
   EwFlowConfigSchema,

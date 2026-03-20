@@ -19,6 +19,7 @@ import {
   disposeFloorBindingEvents,
   initFloorBindingEvents,
   migrateBeforeReplyArtifactsToAssistant,
+  pinMessageSnapshotToCurrentVersion,
   readFloorSnapshotByMessageId,
   rollbackBeforeFloor,
 } from "./floor-binding";
@@ -89,6 +90,15 @@ type FloorWorkflowExecutionState = {
   skip_reason?: string;
 };
 
+type FailedAfterReplyQueueJob = {
+  chat_key: string;
+  message_id: number;
+  user_message_id?: number;
+  user_input: string;
+  generation_type: string;
+  failed_at: number;
+};
+
 type WorkflowReplayCapsule = {
   at: number;
   request_id: string;
@@ -117,6 +127,10 @@ const WORKFLOW_NOTICE_COLLAPSE_MS = 5000;
 const queuedAfterReplyJobKeys = new Set<string>();
 const queuedAfterReplyDedupKeys = new Set<string>();
 const processedAfterReplyIdentityKeys = new Set<string>();
+const failedAfterReplyJobsByChat = new Map<
+  string,
+  FailedAfterReplyQueueJob[]
+>();
 const lastAfterReplyTriggerByIdentityKey = new Map<string, number>();
 const MIN_AFTER_REPLY_INTERVAL_MS = 3000;
 
@@ -239,6 +253,36 @@ function resolveAfterReplyUserInput(): string {
     runtimeState.last_send_intent?.user_input,
     getLatestUserMessageText(),
   );
+}
+
+function getFailedAfterReplyJobs(chatKey: string): FailedAfterReplyQueueJob[] {
+  return [...(failedAfterReplyJobsByChat.get(chatKey) ?? [])].sort(
+    (left, right) => left.failed_at - right.failed_at,
+  );
+}
+
+function upsertFailedAfterReplyJob(job: FailedAfterReplyQueueJob): void {
+  const current = failedAfterReplyJobsByChat.get(job.chat_key) ?? [];
+  const next = current.filter((item) => item.message_id !== job.message_id);
+  next.push(job);
+  failedAfterReplyJobsByChat.set(
+    job.chat_key,
+    next.sort((left, right) => left.failed_at - right.failed_at),
+  );
+}
+
+function removeFailedAfterReplyJob(chatKey: string, messageId: number): void {
+  const current = failedAfterReplyJobsByChat.get(chatKey);
+  if (!current?.length) {
+    return;
+  }
+
+  const next = current.filter((item) => item.message_id !== messageId);
+  if (next.length > 0) {
+    failedAfterReplyJobsByChat.set(chatKey, next);
+  } else {
+    failedAfterReplyJobsByChat.delete(chatKey);
+  }
 }
 
 function installSendIntentHooks() {
@@ -565,6 +609,19 @@ export function readFloorWorkflowExecution(
   return null;
 }
 
+function buildArchivedVersionedKey<T>(
+  baseKey: string,
+  map: Record<string, T>,
+): string {
+  let candidate = `${baseKey}@rev:${Date.now()}`;
+  let counter = 0;
+  while (map[candidate]) {
+    counter += 1;
+    candidate = `${baseKey}@rev:${Date.now()}_${counter}`;
+  }
+  return candidate;
+}
+
 async function writeFloorWorkflowExecution(
   messageId: number,
   state: FloorWorkflowExecutionState | null,
@@ -580,7 +637,16 @@ async function writeFloorWorkflowExecution(
 
   if (state) {
     const map = readFloorWorkflowExecutionMap(messageId);
-    map[buildExecutionVersionKey(state)] = state;
+    const versionKey = buildExecutionVersionKey(state);
+    const existing = map[versionKey];
+    if (existing) {
+      const existingJson = JSON.stringify(existing);
+      const nextJson = JSON.stringify(state);
+      if (existingJson !== nextJson) {
+        map[buildArchivedVersionedKey(versionKey, map)] = existing;
+      }
+    }
+    map[versionKey] = state;
     nextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY] = map;
   } else {
     delete nextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY];
@@ -731,6 +797,14 @@ async function writeWorkflowReplayCapsule(
   }
 
   const map = readWorkflowReplayCapsuleMap(messageId);
+  const existing = map[key];
+  if (existing) {
+    const existingJson = JSON.stringify(existing);
+    const nextJson = JSON.stringify(capsule);
+    if (existingJson !== nextJson) {
+      map[buildArchivedVersionedKey(key, map)] = existing;
+    }
+  }
   map[key] = capsule;
   const nextData: Record<string, unknown> = {
     ...(message.data ?? {}),
@@ -764,12 +838,23 @@ async function migrateFloorWorkflowCapsuleToAssistant(
 
   const assistantMap = readWorkflowReplayCapsuleMap(assistantMessageId);
   const assistantVersionInfo = getMessageVersionInfo(assistantMsg);
-  assistantMap[assistantVersionInfo.version_key] = {
+  const targetKey = assistantVersionInfo.version_key;
+  const nextCapsule: WorkflowReplayCapsule = {
     ...sourceCapsule,
     target_message_id: assistantMessageId,
-    target_version_key: assistantVersionInfo.version_key,
+    target_version_key: targetKey,
     target_role: "assistant",
   };
+  const existingAssistantCapsule = assistantMap[targetKey];
+  if (existingAssistantCapsule) {
+    const existingJson = JSON.stringify(existingAssistantCapsule);
+    const nextJson = JSON.stringify(nextCapsule);
+    if (existingJson !== nextJson) {
+      assistantMap[buildArchivedVersionedKey(targetKey, assistantMap)] =
+        existingAssistantCapsule;
+    }
+  }
+  assistantMap[targetKey] = nextCapsule;
   delete sourceMap[sourceVersionInfo.version_key];
 
   const sourceNextData: Record<string, unknown> = {
@@ -1022,6 +1107,107 @@ function shouldReleaseInterceptedMessage(
   return outcome.workflowSucceeded;
 }
 
+async function resolveFailedOnlyRerollTarget(
+  settings: EwSettings,
+  messageId: number,
+): Promise<
+  | {
+      ok: true;
+      flowIds: string[];
+      preservedResults: FloorWorkflowStoredResult[];
+      fallbackToAll?: boolean;
+    }
+  | {
+      ok: false;
+      reason: string;
+    }
+> {
+  const executionState = readFloorWorkflowExecution(messageId);
+  if (!executionState) {
+    return { ok: false, reason: "当前楼还没有可用的失败执行记录" };
+  }
+
+  if (executionState.failed_flow_ids.length === 0) {
+    if (
+      executionState.workflow_failed &&
+      executionState.attempted_flow_ids.length > 0
+    ) {
+      const effectiveFlows = await getEffectiveFlows(settings);
+      const flowMap = new Map(effectiveFlows.map((flow) => [flow.id, flow]));
+      const flowIds = executionState.attempted_flow_ids.filter((flowId) =>
+        flowMap.has(flowId),
+      );
+
+      if (flowIds.length === 0) {
+        return {
+          ok: false,
+          reason: "当前楼失败时涉及的工作流已被禁用或删除",
+        };
+      }
+
+      return {
+        ok: true,
+        flowIds,
+        preservedResults: [],
+        fallbackToAll: true,
+      };
+    }
+
+    return { ok: false, reason: "当前楼没有失败的工作流可供重跑" };
+  }
+
+  const effectiveFlows = await getEffectiveFlows(settings);
+  const flowMap = new Map(effectiveFlows.map((flow) => [flow.id, flow]));
+  const flowIds = executionState.failed_flow_ids.filter((flowId) =>
+    flowMap.has(flowId),
+  );
+  if (flowIds.length === 0) {
+    return { ok: false, reason: "当前楼记录中的失败工作流已被禁用或删除" };
+  }
+
+  return {
+    ok: true,
+    flowIds,
+    preservedResults: executionState.successful_results.filter((result) => {
+      return flowMap.has(result.flow_id) && !flowIds.includes(result.flow_id);
+    }),
+  };
+}
+
+function syncAfterReplyFailureQueue(
+  options: ExecuteWorkflowOptions,
+  executionState: FloorWorkflowExecutionState | null,
+  workflowSucceeded: boolean,
+): void {
+  if (options.trigger.timing !== "after_reply") {
+    return;
+  }
+
+  const chatKey = getCurrentChatKey();
+  const assistantMessageId =
+    options.trigger.assistant_message_id ?? options.messageId;
+  if (
+    workflowSucceeded ||
+    !executionState ||
+    (!executionState.workflow_failed &&
+      executionState.failed_flow_ids.length === 0)
+  ) {
+    removeFailedAfterReplyJob(chatKey, assistantMessageId);
+    return;
+  }
+
+  upsertFailedAfterReplyJob({
+    chat_key: chatKey,
+    message_id: assistantMessageId,
+    user_message_id: Number.isFinite(options.trigger.user_message_id)
+      ? Number(options.trigger.user_message_id)
+      : undefined,
+    user_input: String(options.userInput ?? ""),
+    generation_type: options.trigger.generation_type,
+    failed_at: executionState.at || Date.now(),
+  });
+}
+
 async function rollbackInterceptedUserMessage(
   messageId: number | null | undefined,
   userInput: string,
@@ -1171,6 +1357,19 @@ async function executeWorkflowWithPolicy(
   let carouselTimer: ReturnType<typeof setInterval> | null = null;
   let totalFlowCount = 0;
   let completedFlowCount = 0;
+  let failedFlowCount = 0;
+
+  const buildFlowProgress = () => {
+    if (totalFlowCount <= 0) {
+      return undefined;
+    }
+
+    return {
+      completed: completedFlowCount,
+      total: totalFlowCount,
+      failed: failedFlowCount,
+    };
+  };
 
   const getRotatedIsland = (): {
     entry_name?: string;
@@ -1238,16 +1437,14 @@ async function executeWorkflowWithPolicy(
           level: "info",
           persist: true,
           busy: true,
-          flow_progress:
-            totalFlowCount > 0
-              ? { completed: completedFlowCount, total: totalFlowCount }
-              : undefined,
+          flow_progress: buildFlowProgress(),
         });
         break;
       case "merging":
       case "committing":
         // All flows complete — clear active flows
-        completedFlowCount = activeFlows.size;
+        completedFlowCount =
+          totalFlowCount > 0 ? totalFlowCount : activeFlows.size;
         activeFlows.clear();
         stopCarousel();
         processingReminder.update({
@@ -1256,10 +1453,7 @@ async function executeWorkflowWithPolicy(
           persist: true,
           busy: true,
           island: { extra_count: 0 },
-          flow_progress:
-            totalFlowCount > 0
-              ? { completed: completedFlowCount, total: totalFlowCount }
-              : undefined,
+          flow_progress: buildFlowProgress(),
         });
         break;
       case "flow_started": {
@@ -1282,10 +1476,33 @@ async function executeWorkflowWithPolicy(
           level: "info",
           island: getRotatedIsland(),
           workflow_name: update.flow_name?.trim() || undefined,
-          flow_progress:
-            totalFlowCount > 0
-              ? { completed: completedFlowCount, total: totalFlowCount }
-              : undefined,
+          flow_progress: buildFlowProgress(),
+        });
+        break;
+      }
+      case "flow_finished": {
+        const flowId = update.flow_id ?? "";
+        if (flowId) {
+          activeFlows.delete(flowId);
+        }
+
+        completedFlowCount += 1;
+        if (update.flow_ok === false) {
+          failedFlowCount += 1;
+        }
+
+        if (activeFlows.size <= 1) {
+          stopCarousel();
+        }
+
+        processingReminder.update({
+          message: update.message ?? options.reminderMessage,
+          persist: true,
+          busy: true,
+          level: update.flow_ok === false ? "warning" : "info",
+          island: getRotatedIsland(),
+          workflow_name: update.flow_name?.trim() || undefined,
+          flow_progress: buildFlowProgress(),
         });
         break;
       }
@@ -1310,14 +1527,22 @@ async function executeWorkflowWithPolicy(
           level: "info",
           island: getRotatedIsland(),
           workflow_name: update.flow_name?.trim() || undefined,
-          flow_progress:
-            totalFlowCount > 0
-              ? { completed: completedFlowCount, total: totalFlowCount }
-              : undefined,
+          flow_progress: buildFlowProgress(),
         });
         break;
       }
       case "completed":
+        completedFlowCount =
+          totalFlowCount > 0 ? totalFlowCount : completedFlowCount;
+        processingReminder.update({
+          message: update.message ?? options.successMessage,
+          persist: true,
+          busy: true,
+          level: "info",
+          island: { extra_count: 0 },
+          flow_progress: buildFlowProgress(),
+        });
+        break;
       case "failed":
       default:
         break;
@@ -1407,6 +1632,23 @@ async function executeWorkflowWithPolicy(
     return nextResult;
   };
 
+  const waitForAutoRerollInterval = async (delayMs: number) => {
+    const remainingDelayMs = Math.max(0, delayMs);
+    if (remainingDelayMs <= 0) {
+      return;
+    }
+
+    const deadline = Date.now() + remainingDelayMs;
+    while (Date.now() < deadline) {
+      if (abortedByUser || workflowAbortController.signal.aborted) {
+        throw new Error("workflow cancelled by user");
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(200, deadline - Date.now())),
+      );
+    }
+  };
+
   let result;
   try {
     result = await runWorkflowAttempt();
@@ -1484,9 +1726,7 @@ async function executeWorkflowWithPolicy(
 
         try {
           if (autoRerollIntervalMs > 0) {
-            await new Promise((resolve) =>
-              setTimeout(resolve, autoRerollIntervalMs),
-            );
+            await waitForAutoRerollInterval(autoRerollIntervalMs);
           }
           result = await runWorkflowAttempt();
           autoRerollCount = nextAttemptNumber;
@@ -1588,6 +1828,7 @@ async function executeWorkflowWithPolicy(
           };
       }
 
+      syncAfterReplyFailureQueue(options, lastAfterReplyExecutionState, false);
       return {
         shouldAbortGeneration: false,
         workflowSucceeded: false,
@@ -1705,18 +1946,20 @@ async function executeWorkflowWithPolicy(
     const assistantMessageId =
       options.trigger.assistant_message_id ?? options.messageId;
     try {
+      await pinMessageSnapshotToCurrentVersion(assistantMessageId);
       await pinFloorWorkflowExecutionToCurrentVersion(
         assistantMessageId,
         lastAfterReplyExecutionState,
       );
     } catch (error) {
       console.warn(
-        "[Evolution World] Failed to pin after_reply execution to current visible version:",
+        "[Evolution World] Failed to pin after_reply artifacts to current visible version:",
         error,
       );
     }
   }
 
+  syncAfterReplyFailureQueue(options, lastAfterReplyExecutionState, true);
   reminderSettled = true;
   stopCarousel();
   processingReminder.update({
@@ -2088,8 +2331,8 @@ async function onAfterReplyMessage(
   lastAfterReplyTriggerByIdentityKey.set(identityKey, Date.now());
   queuedAfterReplyJobKeys.add(queueKey);
   queuedAfterReplyDedupKeys.add(dedupKey);
-  setProcessing(true);
   try {
+    setProcessing(true);
     if (shouldRunAfterReplyWorkflow) {
       await executeWorkflowWithPolicy(settings, {
         messageId,
@@ -2124,12 +2367,24 @@ async function onAfterReplyMessage(
           sourceMessageId,
           messageId,
         );
-        settleBeforeReplyMigration({
+        const migrationSettled = settleBeforeReplyMigration({
           assistantMessageId: messageId,
           artifactMigration,
           capsuleMigration,
           markPending: true,
         });
+        if (
+          !migrationSettled &&
+          shouldWarnBeforeReplyMigration({
+            artifactMigration,
+            capsuleMigration,
+          })
+        ) {
+          console.warn(
+            "[Evolution World] before_reply migration did not complete:",
+            artifactMigration,
+          );
+        }
       }
     }
     if (shouldRunAfterReplyWorkflow) {
@@ -2564,30 +2819,111 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
   const userInput = resolveAfterReplyUserInput();
   const rerollScope = settings.reroll_scope ?? "all";
 
+  if (rerollScope === "queued_failed") {
+    const queuedOutcome = await (async () => {
+      const chatKey = getCurrentChatKey();
+      const jobs = getFailedAfterReplyJobs(chatKey);
+      if (jobs.length === 0) {
+        return { ok: false, reason: "当前聊天没有失败队列可供重跑" };
+      }
+
+      let retriedCount = 0;
+      let successCount = 0;
+      let failedCount = 0;
+      let skippedCount = 0;
+
+      for (let index = 0; index < jobs.length; index += 1) {
+        const job = jobs[index];
+        const resolved = await resolveFailedOnlyRerollTarget(
+          settings,
+          job.message_id,
+        );
+        if (!resolved.ok) {
+          removeFailedAfterReplyJob(chatKey, job.message_id);
+          skippedCount += 1;
+          continue;
+        }
+
+        retriedCount += 1;
+        if (settings.floor_binding_enabled) {
+          await rollbackBeforeFloor(settings, job.message_id);
+        }
+
+        const outcome = await executeWorkflowWithPolicy(settings, {
+          messageId: job.message_id,
+          userInput: job.user_input,
+          injectReply: false,
+          flowIds: resolved.flowIds,
+          timingFilter: "after_reply",
+          preservedResults: resolved.preservedResults,
+          jobType: "live_reroll",
+          trigger: {
+            timing: "after_reply",
+            source: "queued_failed_reroll",
+            generation_type: job.generation_type,
+            user_message_id: Number.isFinite(job.user_message_id)
+              ? Number(job.user_message_id)
+              : undefined,
+            assistant_message_id: job.message_id,
+          },
+          reminderMessage: `正在重跑失败队列 ${index + 1}/${jobs.length}，请稍后…`,
+          successMessage: `失败队列 ${index + 1}/${jobs.length} 已处理完成。`,
+        });
+
+        if (outcome.abortedByUser) {
+          return {
+            ok: false,
+            reason: `已终止失败队列重跑，已完成 ${successCount}/${retriedCount} 条。`,
+          };
+        }
+
+        if (outcome.workflowSucceeded) {
+          const queuedMessageText = getMessageText(job.message_id);
+          if (queuedMessageText.trim()) {
+            markAfterReplyHandled(job.message_id, queuedMessageText);
+          }
+          successCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      }
+
+      if (retriedCount === 0) {
+        return {
+          ok: false,
+          reason: "失败队列中的楼层记录已失效，已自动清理。",
+        };
+      }
+
+      if (failedCount > 0) {
+        return {
+          ok: false,
+          reason: `失败队列已重跑 ${retriedCount} 条，其中 ${successCount} 条成功，${failedCount} 条仍失败${skippedCount > 0 ? `，${skippedCount} 条已跳过` : ""}。`,
+        };
+      }
+
+      return {
+        ok: true,
+        reason:
+          skippedCount > 0
+            ? `失败队列已重跑完成，共成功 ${successCount} 条，另有 ${skippedCount} 条失效记录已跳过。`
+            : `失败队列已重跑完成，共成功 ${successCount} 条。`,
+      };
+    })();
+
+    return queuedOutcome;
+  }
+
   let flowIds: string[] | undefined;
   let preservedResults: FloorWorkflowStoredResult[] = [];
 
   if (rerollScope === "failed_only") {
-    const executionState = readFloorWorkflowExecution(messageId);
-    if (executionState?.failed_flow_ids.length) {
-      const effectiveFlows = await getEffectiveFlows(settings);
-      const flowMap = new Map(effectiveFlows.map((flow) => [flow.id, flow]));
-
-      flowIds = executionState.failed_flow_ids.filter((flowId) =>
-        flowMap.has(flowId),
-      );
-      preservedResults = executionState.successful_results.filter((result) => {
-        return (
-          flowMap.has(result.flow_id) && !flowIds?.includes(result.flow_id)
-        );
-      });
-
-      if (flowIds.length === 0) {
-        return { ok: false, reason: "当前楼记录中的失败工作流已被禁用或删除" };
-      }
-    } else if (executionState && executionState.failed_flow_ids.length === 0) {
-      return { ok: false, reason: "当前楼没有失败的工作流可供重跑" };
+    const resolved = await resolveFailedOnlyRerollTarget(settings, messageId);
+    if (!resolved.ok) {
+      return { ok: false, reason: resolved.reason };
     }
+    flowIds = resolved.flowIds;
+    preservedResults = resolved.preservedResults;
   }
 
   setProcessing(true);
