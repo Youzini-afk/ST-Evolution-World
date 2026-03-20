@@ -9,6 +9,7 @@ import { EwWorkflowNoticeInput, showManagedWorkflowNotice } from "../ui/notice";
 import { getEffectiveFlows } from "./char-flows";
 import {
   getChatMessages,
+  getCurrentCharacterName,
   getLastMessageId,
   setChatMessages,
 } from "./compat/character";
@@ -32,6 +33,14 @@ import {
 } from "./intercept-guard";
 import { runWorkflow } from "./pipeline";
 import { getSettings, patchSettings } from "./settings";
+import {
+  buildFileName,
+  buildLegacyFileName,
+  buildSnapshotStoreOwner,
+  createEmptySnapshotStore,
+  readSnapshotStore,
+  type SnapshotVersionStore,
+} from "./snapshot-storage";
 import {
   clearAfterReplyPending,
   clearAfterReplyPendingIfMatches,
@@ -70,6 +79,9 @@ const EW_FLOOR_WORKFLOW_EXECUTION_KEY = "ew_workflow_execution";
 const EW_BEFORE_REPLY_BINDING_KEY = "ew_before_reply_binding";
 const EW_REDERIVE_META_KEY = "ew_rederive_meta";
 const EW_WORKFLOW_REPLAY_CAPSULE_KEY = "ew_workflow_replay_capsule";
+const EW_SNAPSHOT_FILE_KEY = "ew_snapshot_file";
+const EW_SWIPE_ID_KEY = "ew_snapshot_swipe_id";
+const EW_CONTENT_HASH_KEY = "ew_snapshot_content_hash";
 
 type FloorWorkflowStoredResult = {
   flow_id: string;
@@ -84,14 +96,18 @@ type FloorWorkflowExecutionVersionedMap = Record<
 type FloorWorkflowExecutionState = {
   at: number;
   request_id: string;
+  /** 写入时 assistant 消息的 swipe_id，用于版本校验 */
   swipe_id?: number;
+  /** 写入时 assistant 消息的内容哈希，检测 edit/update */
   content_hash?: string;
   attempted_flow_ids: string[];
   successful_results: FloorWorkflowStoredResult[];
+  successful_flow_ids?: string[];
   failed_flow_ids: string[];
   workflow_failed: boolean;
   execution_status: "executed" | "skipped";
   skip_reason?: string;
+  details_externalized?: boolean;
 };
 
 type BeforeReplyBindingMigrationResult = {
@@ -130,6 +146,7 @@ type WorkflowReplayCapsule = {
   legacy_approx: boolean;
   assembled_messages?: Array<{ role: string; content: string; name?: string }>;
   request_preview?: Array<Record<string, unknown>>;
+  details_externalized?: boolean;
 };
 
 const listenerStops: StopFn[] = [];
@@ -162,6 +179,100 @@ const lastAfterReplyTriggerByIdentityKey = new Map<string, number>();
 const MIN_BEFORE_REPLY_INTERVAL_MS = 2500;
 const MIN_AFTER_REPLY_INTERVAL_MS = 3000;
 let runtimeEventsInitialized = false;
+const artifactCompactionInFlightByChat = new Map<
+  string,
+  Promise<{ compacted: number; warnings: string[] }>
+>();
+
+function getCurrentCharacterNameSafe(): string {
+  return getCurrentCharacterName() ?? "unknown";
+}
+
+function buildArtifactFileCandidates(
+  messageId: number,
+  message?: any,
+): string[] {
+  const candidates: string[] = [];
+  const explicit =
+    typeof message?.data?.[EW_SNAPSHOT_FILE_KEY] === "string"
+      ? String(message.data[EW_SNAPSHOT_FILE_KEY]).trim()
+      : "";
+  if (explicit) {
+    candidates.push(explicit);
+  }
+
+  const chatId = getCurrentChatKey();
+  const charName = getCurrentCharacterNameSafe();
+  const currentNamed = buildFileName(charName, chatId, messageId);
+  if (!candidates.includes(currentNamed)) {
+    candidates.push(currentNamed);
+  }
+  const legacyNamed = buildLegacyFileName(charName, chatId, messageId);
+  if (!candidates.includes(legacyNamed)) {
+    candidates.push(legacyNamed);
+  }
+  return candidates;
+}
+
+async function resolveArtifactStoreForMessage(messageId: number): Promise<{
+  message: any;
+  fileName: string;
+  store: SnapshotVersionStore;
+} | null> {
+  const message = getChatMessages(messageId)[0];
+  if (!message) {
+    return null;
+  }
+
+  const chatId = getCurrentChatKey();
+  const charName = getCurrentCharacterNameSafe();
+  const currentNamed = buildFileName(charName, chatId, messageId);
+  const legacyNamed = buildLegacyFileName(charName, chatId, messageId);
+  const expectedOwner = buildSnapshotStoreOwner(charName, chatId);
+  for (const candidate of buildArtifactFileCandidates(messageId, message)) {
+    const store = await readSnapshotStore(candidate);
+    if (store) {
+      const ownerMatches =
+        store.owner &&
+        store.owner.char_name === expectedOwner.char_name &&
+        store.owner.chat_id === expectedOwner.chat_id &&
+        store.owner.chat_fingerprint === expectedOwner.chat_fingerprint;
+      const nameMatches =
+        candidate === currentNamed || candidate === legacyNamed;
+      if (store.owner) {
+        if (!ownerMatches) {
+          continue;
+        }
+      } else if (!nameMatches) {
+        continue;
+      }
+      return {
+        message,
+        fileName: candidate,
+        store,
+      };
+    }
+  }
+
+  return {
+    message,
+    fileName: currentNamed,
+    store: createEmptySnapshotStore(buildSnapshotStoreOwner(charName, chatId)),
+  };
+}
+
+function syncArtifactMessageVersionMeta(
+  nextData: Record<string, unknown>,
+  message: any,
+): void {
+  const versionInfo = getMessageVersionInfo(message);
+  nextData[EW_SWIPE_ID_KEY] = versionInfo.swipe_id;
+  if (String(versionInfo.content_hash ?? "").trim()) {
+    nextData[EW_CONTENT_HASH_KEY] = versionInfo.content_hash;
+  } else {
+    delete nextData[EW_CONTENT_HASH_KEY];
+  }
+}
 
 // ST 扩展直接运行在主页面，无需 getHostWindow/getChatDocument
 function getChatDocument(): Document {
@@ -647,6 +758,17 @@ function normalizeFloorWorkflowExecutionState(
         .filter(Boolean)
     : [];
 
+  const executionStatus =
+    obj.execution_status === "skipped" ? "skipped" : "executed";
+  const skipReason =
+    typeof obj.skip_reason === "string" ? String(obj.skip_reason).trim() : "";
+
+  const successfulFlowIds = Array.isArray(obj.successful_flow_ids)
+    ? obj.successful_flow_ids
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean)
+    : successfulResults.map((item) => item.flow_id);
+
   return {
     at: Number(obj.at ?? 0),
     request_id: String(obj.request_id ?? "").trim(),
@@ -655,14 +777,12 @@ function normalizeFloorWorkflowExecutionState(
       typeof obj.content_hash === "string" ? obj.content_hash : undefined,
     attempted_flow_ids: _.uniq(attemptedFlowIds),
     successful_results: successfulResults,
+    successful_flow_ids: _.uniq(successfulFlowIds),
     failed_flow_ids: _.uniq(failedFlowIds),
     workflow_failed: Boolean(obj.workflow_failed),
-    execution_status:
-      obj.execution_status === "skipped" ? "skipped" : "executed",
-    skip_reason:
-      typeof obj.skip_reason === "string" && obj.skip_reason.trim()
-        ? obj.skip_reason.trim()
-        : undefined,
+    execution_status: executionStatus,
+    skip_reason: skipReason || undefined,
+    details_externalized: Boolean(obj.details_externalized),
   };
 }
 
@@ -675,6 +795,7 @@ function normalizeFloorWorkflowExecutionMap(
 
   const obj = raw as Record<string, unknown>;
   if (
+    Array.isArray(obj.attempted_flow_ids) ||
     Array.isArray(obj.successful_results) ||
     Array.isArray(obj.failed_flow_ids) ||
     typeof obj.request_id === "string"
