@@ -1,3 +1,4 @@
+import _ from "lodash";
 import { EVENT_STREAM_TOKEN, onEvent } from "./compat/events";
 import {
   getSillyTavernContext,
@@ -6,7 +7,7 @@ import {
   stopSpecificGeneration,
 } from "./compat/generation";
 import { buildFlowRequest } from "./context-builder";
-import { FlowResponseSchema, FlowTriggerV1 } from "./contracts";
+import { FlowRequestV1, FlowResponseSchema, FlowTriggerV1 } from "./contracts";
 import {
   assembleOrderedPrompts,
   collectPromptComponents,
@@ -73,6 +74,26 @@ export const DEFAULT_WORKFLOW_SYSTEM_PROMPT = [
 // resolveGenerateRaw, getStRequestHeaders, getSillyTavernContext
 // 均从 compat/generation 导入。
 
+function collectActiveDynEntryNames(
+  promptComponents: PromptComponents,
+  settings: EwSettings,
+): string[] {
+  const candidates = [
+    ...(promptComponents.worldInfoBefore ?? []),
+    ...(promptComponents.worldInfoAfter ?? []),
+  ] as Array<Record<string, any>>;
+
+  return _.uniq(
+    candidates
+      .map((entry) => entry.source_name ?? entry.name)
+      .filter(
+        (name): name is string =>
+          typeof name === "string" &&
+          name.startsWith(settings.dynamic_entry_prefix),
+      ),
+  );
+}
+
 function isDispatchAborted(
   signal?: AbortSignal,
   isCancelled?: () => boolean,
@@ -89,6 +110,33 @@ function throwIfDispatchAborted(
   }
 }
 
+function waitDispatchDelay(
+  ms: number,
+  signal?: AbortSignal,
+  isCancelled?: () => boolean,
+): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise(async (resolve, reject) => {
+    const startedAt = Date.now();
+    try {
+      while (Date.now() - startedAt < ms) {
+        throwIfDispatchAborted(signal, isCancelled);
+        const remaining = ms - (Date.now() - startedAt);
+        await new Promise((innerResolve) =>
+          setTimeout(innerResolve, Math.min(remaining, 200)),
+        );
+      }
+      throwIfDispatchAborted(signal, isCancelled);
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 function buildTemplateContext(base: Record<string, any>): Record<string, any> {
   const userInput = typeof base.user_input === "string" ? base.user_input : "";
   return _.merge({}, base, {
@@ -96,6 +144,59 @@ function buildTemplateContext(base: Record<string, any>): Record<string, any> {
     last_user_message: userInput,
     userInput,
   });
+}
+
+function resolveTemplateExpression(
+  templateContext: Record<string, any>,
+  expression: string,
+): unknown {
+  const normalizedPath = String(expression ?? "").trim();
+  if (!normalizedPath) {
+    return "";
+  }
+  return _.get(templateContext, normalizedPath);
+}
+
+function resolveTemplateString(
+  templateContext: Record<string, any>,
+  rawValue: string,
+): unknown {
+  const exactMatch = rawValue.match(/^\{\{\s*([a-zA-Z0-9_.$]+)\s*\}\}$/);
+  if (exactMatch) {
+    return resolveTemplateExpression(templateContext, exactMatch[1]);
+  }
+
+  return rawValue.replace(
+    /\{\{\s*([a-zA-Z0-9_.$]+)\s*\}\}/g,
+    (_match, path) => {
+      const value = resolveTemplateExpression(templateContext, path);
+      if (value === undefined || value === null) {
+        return "";
+      }
+      if (_.isPlainObject(value) || Array.isArray(value)) {
+        return JSON.stringify(value);
+      }
+      return String(value);
+    },
+  );
+}
+
+function resolveTemplateNode(
+  templateContext: Record<string, any>,
+  node: unknown,
+): unknown {
+  if (typeof node === "string") {
+    return resolveTemplateString(templateContext, node);
+  }
+  if (Array.isArray(node)) {
+    return node.map((item) => resolveTemplateNode(templateContext, item));
+  }
+  if (_.isPlainObject(node)) {
+    return _.mapValues(node as Record<string, unknown>, (value) =>
+      resolveTemplateNode(templateContext, value),
+    );
+  }
+  return node;
 }
 
 function applyTemplate(
@@ -106,29 +207,26 @@ function applyTemplate(
     return base;
   }
 
-  const templateContext = buildTemplateContext(base);
-
-  const replaced = templateText.replace(
-    /\{\{\s*([a-zA-Z0-9_.$]+)\s*\}\}/g,
-    (_match, path) => {
-      const value = _.get(templateContext, path);
-      if (_.isPlainObject(value) || Array.isArray(value)) {
-        return JSON.stringify(value);
-      }
-      return value === undefined ? "" : String(value);
-    },
-  );
-
-  let templateObject: Record<string, any>;
+  let parsedTemplate: unknown;
   try {
-    const parsed = JSON.parse(replaced);
-    if (!_.isPlainObject(parsed)) {
-      throw new Error("request_template must parse to JSON object");
-    }
-    templateObject = parsed as Record<string, any>;
+    parsedTemplate = JSON.parse(templateText);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`flow request_template invalid: ${message}`);
+  }
+
+  if (!_.isPlainObject(parsedTemplate)) {
+    throw new Error(
+      "flow request_template invalid: request_template must parse to JSON object",
+    );
+  }
+
+  const templateContext = buildTemplateContext(base);
+  const templateObject = resolveTemplateNode(templateContext, parsedTemplate);
+  if (!_.isPlainObject(templateObject)) {
+    throw new Error(
+      "flow request_template invalid: resolved template must stay as JSON object",
+    );
   }
 
   return _.merge({}, base, templateObject);
@@ -139,6 +237,25 @@ function toErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function shouldFallbackFromGenerateRawCustomApiError(error: unknown): boolean {
+  const message = toErrorMessage(error);
+  if (!message.trim()) {
+    return false;
+  }
+
+  if (
+    /上游 API|HTTP\s+\d{3}|response schema invalid|model output is not a JSON object|unexpected token|response_extract_regex|timeout|cancelled|workflow cancelled/i.test(
+      message,
+    )
+  ) {
+    return false;
+  }
+
+  return /generateRaw is unavailable|custom_api.+(unsupported|not supported|not implemented)|is not a function|Cannot read propert/i.test(
+    message,
+  );
 }
 
 function parseStBackendErrorPayload(errTxt: string): {
@@ -248,6 +365,9 @@ function buildCustomIncludeHeaders(apiPreset: EwApiPreset): string {
 }
 
 function shouldUseGenerateRawCustomApi(apiPreset: EwApiPreset): boolean {
+  if (apiPreset.api_key.trim()) {
+    return false;
+  }
   return !apiPreset.headers_json.trim();
 }
 
@@ -294,6 +414,55 @@ function resolveCurrentChatCompletionModel(
   return String(modelBySource[source] ?? "").trim();
 }
 
+function normalizePenaltyNumber(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Number(Math.max(0, Math.min(2, value)).toFixed(4));
+}
+
+function buildChatCompletionPenaltyFields(flow: EwFlowConfig): {
+  frequency_penalty?: number;
+  presence_penalty?: number;
+} {
+  const frequencyPenalty = normalizePenaltyNumber(
+    flow.generation_options.frequency_penalty,
+  );
+  const presencePenalty = normalizePenaltyNumber(
+    flow.generation_options.presence_penalty,
+  );
+  const fields: {
+    frequency_penalty?: number;
+    presence_penalty?: number;
+  } = {};
+
+  if (frequencyPenalty > 0) {
+    fields.frequency_penalty = frequencyPenalty;
+  }
+  if (presencePenalty > 0) {
+    fields.presence_penalty = presencePenalty;
+  }
+
+  return fields;
+}
+
+function buildGenerateRawPenaltyFields(flow: EwFlowConfig): {
+  frequency_penalty: "unset" | number;
+  presence_penalty: "unset" | number;
+} {
+  const frequencyPenalty = normalizePenaltyNumber(
+    flow.generation_options.frequency_penalty,
+  );
+  const presencePenalty = normalizePenaltyNumber(
+    flow.generation_options.presence_penalty,
+  );
+
+  return {
+    frequency_penalty: frequencyPenalty > 0 ? frequencyPenalty : "unset",
+    presence_penalty: presencePenalty > 0 ? presencePenalty : "unset",
+  };
+}
+
 function buildMainApiStBackendRequestBody(
   flow: EwFlowConfig,
   orderedPrompts: Array<{
@@ -328,8 +497,7 @@ function buildMainApiStBackendRequestBody(
     max_tokens: flow.generation_options.max_reply_tokens,
     temperature: flow.generation_options.temperature,
     top_p: flow.generation_options.top_p,
-    frequency_penalty: flow.generation_options.frequency_penalty,
-    presence_penalty: flow.generation_options.presence_penalty,
+    ...buildChatCompletionPenaltyFields(flow),
     stream: flow.generation_options.stream,
     chat_completion_source: String(
       chatSettings.chat_completion_source ?? "openai",
@@ -373,8 +541,7 @@ function buildCustomStBackendRequestBody(
     max_tokens: flow.generation_options.max_reply_tokens,
     temperature: flow.generation_options.temperature,
     top_p: flow.generation_options.top_p,
-    frequency_penalty: flow.generation_options.frequency_penalty,
-    presence_penalty: flow.generation_options.presence_penalty,
+    ...buildChatCompletionPenaltyFields(flow),
     stream: flow.generation_options.stream,
     chat_completion_source: "custom",
     group_names: [],
@@ -639,16 +806,11 @@ async function buildOrderedPromptsForFlow(
   return orderedPrompts;
 }
 
-function _stopSpecificGeneration(generationId: string): void {
-  stopSpecificGeneration(generationId);
-}
-
 function buildGenerateRawCustomApi(
   apiPreset: EwApiPreset,
   flow: EwFlowConfig,
 ): {
   apiurl: string;
-  key?: string;
   model: string;
   source?: string;
   max_tokens?: "same_as_preset" | "unset" | number;
@@ -659,13 +821,11 @@ function buildGenerateRawCustomApi(
 } {
   return {
     apiurl: apiPreset.api_url.trim(),
-    key: apiPreset.api_key.trim() || undefined,
     model: apiPreset.model.trim().replace(/^models\//, ""),
     source: apiPreset.api_source?.trim() || "openai",
     max_tokens: flow.generation_options.max_reply_tokens,
     temperature: flow.generation_options.temperature,
-    frequency_penalty: flow.generation_options.frequency_penalty,
-    presence_penalty: flow.generation_options.presence_penalty,
+    ...buildGenerateRawPenaltyFields(flow),
     top_p: flow.generation_options.top_p,
   };
 }
@@ -869,7 +1029,7 @@ async function executeFlowViaLlmConnector(
     throw new Error(`[${flow.id}] generateRaw is unavailable`);
   }
 
-  const abortGeneration = () => _stopSpecificGeneration(generationId);
+  const abortGeneration = () => stopSpecificGeneration(generationId);
   if (abortSignal) {
     if (abortSignal.aborted) {
       abortGeneration();
@@ -942,7 +1102,7 @@ async function executeFlowViaGenerateRawCustomApi(
   }
   const customApi = buildGenerateRawCustomApi(apiPreset, flow);
 
-  const abortGeneration = () => _stopSpecificGeneration(generationId);
+  const abortGeneration = () => stopSpecificGeneration(generationId);
   if (abortSignal) {
     if (abortSignal.aborted) {
       abortGeneration();
@@ -1150,6 +1310,10 @@ async function executeFlow(
   trigger: FlowTriggerV1 | undefined,
   requestId: string,
   serialResults: Record<string, any>[],
+  contextCursor: ContextCursor | undefined,
+  jobType: WorkflowJobType | undefined,
+  writebackPolicy: WorkflowWritebackPolicy | undefined,
+  rederiveOptions: DispatchInput["rederive_options"] | undefined,
   abortSignal?: AbortSignal,
   isCancelled?: () => boolean,
   onProgress?: (update: WorkflowProgressUpdate) => void,
@@ -1201,24 +1365,33 @@ async function executeFlow(
 
   // Collect prompt components once — shared by buildFlowRequest (metadata) and assembler (messages)
   const promptComponentsPromise = collectPromptComponents(flow, settings);
-
-  const request = await buildFlowRequest({
-    settings,
-    flow,
-    message_id: messageId,
-    user_input: userInput,
-    trigger,
-    request_id: requestId,
-    serial_results: serialResults,
-  });
+  let request: FlowRequestV1 | undefined;
+  let requestDebug: Record<string, any> | undefined;
 
   try {
     throwIfDispatchAborted(abortSignal, isCancelled);
+    const promptComponents = await promptComponentsPromise;
+    request = await buildFlowRequest({
+      settings,
+      flow,
+      message_id: messageId,
+      user_input: userInput,
+      trigger,
+      request_id: requestId,
+      serial_results: serialResults,
+      active_dyn_entry_names: collectActiveDynEntryNames(
+        promptComponents,
+        settings,
+      ),
+      context_cursor: contextCursor,
+      job_type: jobType,
+      writeback_policy: writebackPolicy,
+      legacy_approx: Boolean(rederiveOptions?.legacy_approx),
+    });
     const body = applyTemplate(
       request as unknown as Record<string, any>,
       flow.request_template,
     );
-    const promptComponents = await promptComponentsPromise;
     const orderedPrompts = await buildOrderedPromptsForFlow(
       flow,
       promptComponents,
@@ -1243,7 +1416,7 @@ async function executeFlow(
     };
 
     let response: NonNullable<DispatchFlowAttempt["response"]>;
-    let requestDebug = requestDebugBase as Record<string, any>;
+    requestDebug = requestDebugBase as Record<string, any>;
 
     if (usesTavernMain) {
       if (mainApiStreamBridgeRequest) {
@@ -1318,6 +1491,9 @@ async function executeFlow(
             isCancelled,
           );
         } catch (error) {
+          if (!shouldFallbackFromGenerateRawCustomApiError(error)) {
+            throw error;
+          }
           console.warn(
             `[EW] Flow "${flow.id}": generateRaw.custom_api failed, fallback to ST backend — ${toErrorMessage(error)}`,
           );
@@ -1363,6 +1539,19 @@ async function executeFlow(
 
     throwIfDispatchAborted(abortSignal, isCancelled);
 
+    onProgress?.({
+      phase: "flow_finished",
+      request_id: requestId,
+      flow_id: flow.id,
+      flow_name: flow.name,
+      flow_order: flowOrder,
+      flow_ok: true,
+      generation_id: generationId,
+      message: flow.name.trim()
+        ? `工作流「${flow.name}」已完成。`
+        : `工作流 ${flow.id} 已完成。`,
+    });
+
     return {
       flow,
       flow_order: flowOrder,
@@ -1376,6 +1565,19 @@ async function executeFlow(
       elapsed_ms: Date.now() - startedAt,
     };
   } catch (error) {
+    onProgress?.({
+      phase: "flow_finished",
+      request_id: requestId,
+      flow_id: flow.id,
+      flow_name: flow.name,
+      flow_order: flowOrder,
+      flow_ok: false,
+      generation_id: generationId,
+      message: flow.name.trim()
+        ? `工作流「${flow.name}」执行失败。`
+        : `工作流 ${flow.id} 执行失败。`,
+    });
+
     return {
       flow,
       flow_order: flowOrder,
@@ -1383,7 +1585,7 @@ async function executeFlow(
       api_preset_name: apiPreset.name,
       api_url: attemptApiUrl,
       request,
-      request_debug: {
+      request_debug: requestDebug ?? {
         flow_request: request,
       },
       ok: false,
@@ -1401,12 +1603,37 @@ export async function dispatchFlows(
     throw new Error("no enabled flows");
   }
 
+  const serialIntervalMs = Math.max(
+    0,
+    Math.round((input.settings.serial_dispatch_interval_seconds ?? 0) * 1000),
+  );
+  const parallelIntervalMs = Math.max(
+    0,
+    Math.round((input.settings.parallel_dispatch_interval_seconds ?? 0) * 1000),
+  );
+
   if (input.settings.dispatch_mode === "serial") {
     const serialResults: Record<string, any>[] = [];
     const attempts: DispatchFlowAttempt[] = [];
     const outputs: DispatchFlowResult[] = [];
 
     for (const [index, flow] of flows.entries()) {
+      if (index > 0 && serialIntervalMs > 0) {
+        input.onProgress?.({
+          phase: "dispatching",
+          request_id: input.request_id,
+          flow_id: flow.id,
+          flow_name: flow.name,
+          flow_order: index,
+          message: `串行调度等待 ${input.settings.serial_dispatch_interval_seconds} 秒后发出下一条工作流…`,
+        });
+        await waitDispatchDelay(
+          serialIntervalMs,
+          input.abortSignal,
+          input.isCancelled,
+        );
+      }
+
       throwIfDispatchAborted(input.abortSignal, input.isCancelled);
       const attempt = await executeFlow(
         input.settings,
@@ -1417,6 +1644,10 @@ export async function dispatchFlows(
         input.trigger,
         input.request_id,
         serialResults,
+        input.context_cursor,
+        input.job_type,
+        input.writeback_policy,
+        input.rederive_options,
         input.abortSignal,
         input.isCancelled,
         input.onProgress,
@@ -1449,8 +1680,21 @@ export async function dispatchFlows(
   }
 
   const attempts = await Promise.all(
-    flows.map((flow, index) =>
-      executeFlow(
+    flows.map(async (flow, index) => {
+      const delayMs = parallelIntervalMs * index;
+      if (delayMs > 0) {
+        input.onProgress?.({
+          phase: "dispatching",
+          request_id: input.request_id,
+          flow_id: flow.id,
+          flow_name: flow.name,
+          flow_order: index,
+          message: `同一批次还有后续工作流待发出：工作流「${flow.name || flow.id}」将在 ${delayMs / 1000} 秒后开始请求…`,
+        });
+        await waitDispatchDelay(delayMs, input.abortSignal, input.isCancelled);
+      }
+
+      return executeFlow(
         input.settings,
         flow,
         index,
@@ -1459,11 +1703,15 @@ export async function dispatchFlows(
         input.trigger,
         input.request_id,
         [],
+        input.context_cursor,
+        input.job_type,
+        input.writeback_policy,
+        input.rederive_options,
         input.abortSignal,
         input.isCancelled,
         input.onProgress,
-      ),
-    ),
+      );
+    }),
   );
 
   throwIfDispatchAborted(input.abortSignal, input.isCancelled);

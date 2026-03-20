@@ -11,6 +11,7 @@ import {
 } from "./events";
 import { localizeSnapshotsForCurrentChat } from "./floor-binding";
 import { resolveControllerSnapshotEntryName } from "./helpers";
+import { runWorkflow } from "./pipeline";
 import {
   getLastIo,
   getLastRun,
@@ -241,11 +242,11 @@ export function initGlobalApi() {
     runNow: async (message) => {
       const text = message ?? "";
       const input = text.trim() || (getChatMessages(-1)[0]?.message ?? "");
-      const result = await rederiveWorkflowAtFloorRuntime({
+      const result = await runWorkflow({
         message_id: getLastMessageId(),
-        timing: "manual",
-        capsule_mode: "full",
-        confirm_legacy: true,
+        user_input: input,
+        mode: "manual",
+        inject_reply: false,
       });
       return { ok: result.ok, reason: result.reason };
     },

@@ -291,9 +291,6 @@ export function shouldHandleGenerationAfter(
   if (!settings.enabled) {
     return { ok: false, reason: "disabled" };
   }
-  if (state.is_processing) {
-    return { ok: false, reason: "already_processing" };
-  }
   if (dry_run) {
     return { ok: false, reason: "dry_run" };
   }
@@ -339,9 +336,6 @@ export function shouldHandleAfterReply(
 ): { ok: boolean; reason: string } {
   if (!settings.enabled) {
     return { ok: false, reason: "disabled" };
-  }
-  if (state.is_processing) {
-    return { ok: false, reason: "already_processing" };
   }
   if (
     type === "quiet" ||

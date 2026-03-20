@@ -1,3 +1,5 @@
+import { klona } from "klona";
+import _ from "lodash";
 import { createDefaultApiPreset, createDefaultFlow } from "./factory";
 import { migrateAllFlows } from "./flow-migrator";
 import { simpleHash } from "./helpers";
@@ -330,6 +332,12 @@ function normalizeSettings(raw: unknown): EwSettings {
         ? oldName
         : oldName + "/";
       delete obj["controller_entry_name"];
+    }
+    // Migrate legacy implicit parallel staggering.
+    // Old versions defaulted to 10s, which is easily misread as a duplicate reroll.
+    // Treat that legacy default as unsafe and collapse it back to true parallel dispatch.
+    if (Number(obj["parallel_dispatch_interval_seconds"] ?? 0) === 10) {
+      obj["parallel_dispatch_interval_seconds"] = 0;
     }
   }
 

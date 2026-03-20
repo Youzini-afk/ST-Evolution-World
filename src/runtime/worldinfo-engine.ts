@@ -15,11 +15,19 @@
  * Used exclusively for workflow prompt assembly.
  */
 
-import { createRenderContext, evalEjsTemplate } from './ejs-internal';
-import { isLikelyMvuWorldInfoContent, isMvuTaggedWorldInfoNameOrComment } from './mvu-compat';
-import { EwSettings } from './types';
-import { getWorldbook, getCharWorldbookNames, getLorebookEntries } from './compat/worldbook';
-import { getSillyTavernContext } from './compat/generation';
+import { getSillyTavernContext } from "./compat/generation";
+import {
+  getCharWorldbookNames,
+  getLorebookEntries,
+  getWorldbook,
+} from "./compat/worldbook";
+import { createRenderContext, evalEjsTemplate } from "./ejs-internal";
+import { simpleHash } from "./helpers";
+import {
+  isLikelyMvuWorldInfoContent,
+  isMvuTaggedWorldInfoNameOrComment,
+} from "./mvu-compat";
+import { EwSettings } from "./types";
 
 // ---------------------------------------------------------------------------
 // ST Constants (replicated locally to avoid import dependency)
@@ -139,8 +147,9 @@ interface NormalizedEntry {
 
 export interface ResolvedWiEntry {
   name: string;
+  source_name?: string;
   content: string;
-  role: 'system' | 'user' | 'assistant';
+  role: "system" | "user" | "assistant";
   position: number;
   depth: number;
   order: number;
@@ -174,23 +183,23 @@ function getStContext(): Record<string, any> {
  * Mirrors SillyTavern's `substituteParams()` for the most common macros.
  */
 function substituteParams(text: string): string {
-  if (!text || !text.includes('{{')) return text;
+  if (!text || !text.includes("{{")) return text;
 
   const ctx = getStContext();
-  const userName = ctx.name1 ?? '';
-  const charName = ctx.name2 ?? '';
-  const personaDescription = ctx.persona ?? '';
+  const userName = ctx.name1 ?? "";
+  const charName = ctx.name2 ?? "";
+  const personaDescription = ctx.persona ?? "";
 
   return text
     .replace(/\{\{user\}\}/gi, userName)
     .replace(/\{\{char\}\}/gi, charName)
     .replace(/\{\{persona\}\}/gi, personaDescription)
-    .replace(/\{\{original\}\}/gi, '')
-    .replace(/\{\{input\}\}/gi, '')
-    .replace(/\{\{lastMessage\}\}/gi, '')
-    .replace(/\{\{lastMessageId\}\}/gi, '')
-    .replace(/\{\{newline\}\}/gi, '\n')
-    .replace(/\{\{trim\}\}/gi, '');
+    .replace(/\{\{original\}\}/gi, "")
+    .replace(/\{\{input\}\}/gi, "")
+    .replace(/\{\{lastMessage\}\}/gi, "")
+    .replace(/\{\{lastMessageId\}\}/gi, "")
+    .replace(/\{\{newline\}\}/gi, "\n")
+    .replace(/\{\{trim\}\}/gi, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -198,35 +207,40 @@ function substituteParams(text: string): string {
 // ---------------------------------------------------------------------------
 
 const KNOWN_DECORATORS = [
-  '@@activate',
-  '@@dont_activate',
-  '@@message_formatting',
-  '@@generate_before',
-  '@@generate_after',
-  '@@render_before',
-  '@@render_after',
-  '@@dont_preload',
-  '@@initial_variables',
-  '@@always_enabled',
-  '@@only_preload',
-  '@@iframe',
-  '@@preprocessing',
-  '@@if',
-  '@@private',
+  "@@activate",
+  "@@dont_activate",
+  "@@message_formatting",
+  "@@generate_before",
+  "@@generate_after",
+  "@@render_before",
+  "@@render_after",
+  "@@dont_preload",
+  "@@initial_variables",
+  "@@always_enabled",
+  "@@only_preload",
+  "@@iframe",
+  "@@preprocessing",
+  "@@if",
+  "@@private",
 ];
 
-function parseDecorators(content: string): { decorators: string[]; cleanContent: string } {
+function parseDecorators(content: string): {
+  decorators: string[];
+  cleanContent: string;
+} {
   const decorators: string[] = [];
-  const lines = content.split('\n');
+  const lines = content.split("\n");
   const cleanLines: string[] = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
-    const match = KNOWN_DECORATORS.find(d => trimmed.startsWith(d));
+    const match = KNOWN_DECORATORS.find((d) => trimmed.startsWith(d));
     if (match) {
       // ST separates decorator name from arguments — store only the name
-      const firstSpace = trimmed.indexOf(' ');
-      decorators.push(firstSpace > 0 ? trimmed.substring(0, firstSpace) : trimmed);
+      const firstSpace = trimmed.indexOf(" ");
+      decorators.push(
+        firstSpace > 0 ? trimmed.substring(0, firstSpace) : trimmed,
+      );
     } else {
       cleanLines.push(line);
     }
@@ -234,7 +248,7 @@ function parseDecorators(content: string): { decorators: string[]; cleanContent:
 
   return {
     decorators,
-    cleanContent: cleanLines.join('\n').trim(),
+    cleanContent: cleanLines.join("\n").trim(),
   };
 }
 
@@ -242,60 +256,81 @@ function parseDecorators(content: string): { decorators: string[]; cleanContent:
 // Special Entry Name Detection (Fix #6)
 // ---------------------------------------------------------------------------
 
-const SPECIAL_NAME_MARKERS = ['[GENERATE:', '[RENDER:', '@INJECT', '[InitialVariables]'];
+const SPECIAL_NAME_MARKERS = [
+  "[GENERATE:",
+  "[RENDER:",
+  "@INJECT",
+  "[InitialVariables]",
+];
 
 function isSpecialEntryByComment(comment: string): boolean {
-  return SPECIAL_NAME_MARKERS.some(marker => comment.includes(marker));
+  return SPECIAL_NAME_MARKERS.some((marker) => comment.includes(marker));
 }
 
 // ---------------------------------------------------------------------------
 // Entry Normalization (Fix #4: handle both `disable` and `enabled`)
 // ---------------------------------------------------------------------------
 
-function normalizeEntry(raw: RawWbEntry, worldbookName: string): NormalizedEntry {
+function normalizeEntry(
+  raw: RawWbEntry,
+  worldbookName: string,
+): NormalizedEntry {
   const { decorators, cleanContent } = parseDecorators(raw.content);
 
   // Map position.type string to numeric position
   let position = WI_POSITION.atDepth;
-  const posType = raw.position?.type ?? 'at_depth';
-  let resolvedRole = raw.position?.role ?? 'system';
-  if (posType === 'before_char' || posType === 'before' || posType === 'before_character_definition')
+  const posType = raw.position?.type ?? "at_depth";
+  let resolvedRole = raw.position?.role ?? "system";
+  if (
+    posType === "before_char" ||
+    posType === "before" ||
+    posType === "before_character_definition"
+  )
     position = WI_POSITION.before;
-  else if (posType === 'after_char' || posType === 'after' || posType === 'after_character_definition')
+  else if (
+    posType === "after_char" ||
+    posType === "after" ||
+    posType === "after_character_definition"
+  )
     position = WI_POSITION.after;
-  else if (posType === 'em_top' || posType === 'before_example_messages') position = WI_POSITION.EMTop;
-  else if (posType === 'em_bottom' || posType === 'after_example_messages') position = WI_POSITION.EMBottom;
-  else if (posType === 'an_top' || posType === 'before_author_note') position = WI_POSITION.ANTop;
-  else if (posType === 'an_bottom' || posType === 'after_author_note') position = WI_POSITION.ANBottom;
-  else if (posType === 'at_depth' || posType === 'at_depth_as_system') position = WI_POSITION.atDepth;
-  else if (posType === 'at_depth_as_assistant') {
+  else if (posType === "em_top" || posType === "before_example_messages")
+    position = WI_POSITION.EMTop;
+  else if (posType === "em_bottom" || posType === "after_example_messages")
+    position = WI_POSITION.EMBottom;
+  else if (posType === "an_top" || posType === "before_author_note")
+    position = WI_POSITION.ANTop;
+  else if (posType === "an_bottom" || posType === "after_author_note")
+    position = WI_POSITION.ANBottom;
+  else if (posType === "at_depth" || posType === "at_depth_as_system")
     position = WI_POSITION.atDepth;
-    resolvedRole = 'assistant';
-  } else if (posType === 'at_depth_as_user') {
+  else if (posType === "at_depth_as_assistant") {
     position = WI_POSITION.atDepth;
-    resolvedRole = 'user';
+    resolvedRole = "assistant";
+  } else if (posType === "at_depth_as_user") {
+    position = WI_POSITION.atDepth;
+    resolvedRole = "user";
   }
   // numeric position from extensions (legacy support)
-  else if (typeof raw.extensions?.position === 'number') {
+  else if (typeof raw.extensions?.position === "number") {
     position = raw.extensions.position;
   }
 
   // Map strategy.type to boolean flags
-  const isConstant = raw.strategy?.type === 'constant';
-  const isSelective = raw.strategy?.type === 'selective';
+  const isConstant = raw.strategy?.type === "constant";
+  const isSelective = raw.strategy?.type === "selective";
 
   // selectiveLogic from keys_secondary
   let selectiveLogic = WI_LOGIC.AND_ANY;
   const logicStr = raw.strategy?.keys_secondary?.logic;
-  if (logicStr === 'not_all') selectiveLogic = WI_LOGIC.NOT_ALL;
-  else if (logicStr === 'not_any') selectiveLogic = WI_LOGIC.NOT_ANY;
-  else if (logicStr === 'and_all') selectiveLogic = WI_LOGIC.AND_ALL;
+  if (logicStr === "not_all") selectiveLogic = WI_LOGIC.NOT_ALL;
+  else if (logicStr === "not_any") selectiveLogic = WI_LOGIC.NOT_ANY;
+  else if (logicStr === "and_all") selectiveLogic = WI_LOGIC.AND_ALL;
 
   // Fix #4: handle both `disable` (ST native) and `enabled` (getWorldbook API)
   let isEnabled: boolean;
-  if (typeof raw.disable === 'boolean') {
+  if (typeof raw.disable === "boolean") {
     isEnabled = !raw.disable;
-  } else if (typeof raw.enabled === 'boolean') {
+  } else if (typeof raw.enabled === "boolean") {
     isEnabled = raw.enabled;
   } else {
     isEnabled = true; // default: enabled
@@ -304,7 +339,7 @@ function normalizeEntry(raw: RawWbEntry, worldbookName: string): NormalizedEntry
   return {
     uid: raw.uid,
     name: raw.name,
-    comment: String(raw.comment ?? ''),
+    comment: String(raw.comment ?? ""),
     content: raw.content,
     cleanContent,
     decorators,
@@ -322,7 +357,7 @@ function normalizeEntry(raw: RawWbEntry, worldbookName: string): NormalizedEntry
     caseSensitive: (raw.extra as any)?.caseSensitive ?? false,
     matchWholeWords: (raw.extra as any)?.matchWholeWords ?? false,
 
-    group: (raw.extra as any)?.group ?? '',
+    group: (raw.extra as any)?.group ?? "",
     groupOverride: (raw.extra as any)?.groupOverride ?? false,
     groupWeight: (raw.extra as any)?.groupWeight ?? 100,
     useGroupScoring: (raw.extra as any)?.useGroupScoring ?? false,
@@ -355,15 +390,53 @@ function parseRegexFromString(input: string): RegExp | null {
   }
 }
 
-function matchKeys(haystack: string, needle: string, entry: NormalizedEntry): boolean {
+function deterministicPercent(seed: string): number {
+  const hashed = simpleHash(seed).replace(/^h/, "");
+  const parsed = Number.parseInt(hashed.slice(0, 8), 16);
+  if (!Number.isFinite(parsed)) {
+    return 100;
+  }
+  return (parsed % 100) + 1;
+}
+
+function deterministicWeightedIndex(weights: number[], seed: string): number {
+  const normalized = weights.map((weight) =>
+    Math.max(0, Math.trunc(Number(weight) || 0)),
+  );
+  const totalWeight = _.sum(normalized);
+  if (totalWeight <= 0) {
+    return -1;
+  }
+
+  const hashed = simpleHash(seed).replace(/^h/, "");
+  let rollValue = (Number.parseInt(hashed.slice(0, 8), 16) % totalWeight) + 1;
+  for (let i = 0; i < normalized.length; i += 1) {
+    rollValue -= normalized[i];
+    if (rollValue <= 0) {
+      return i;
+    }
+  }
+
+  return normalized.length - 1;
+}
+
+function matchKeys(
+  haystack: string,
+  needle: string,
+  entry: NormalizedEntry,
+): boolean {
   // Regex keyword
   const keyRegex = parseRegexFromString(needle.trim());
   if (keyRegex) {
     return keyRegex.test(haystack);
   }
 
-  const transformedHaystack = entry.caseSensitive ? haystack : haystack.toLowerCase();
-  const transformedNeedle = entry.caseSensitive ? needle.trim() : needle.trim().toLowerCase();
+  const transformedHaystack = entry.caseSensitive
+    ? haystack
+    : haystack.toLowerCase();
+  const transformedNeedle = entry.caseSensitive
+    ? needle.trim()
+    : needle.trim().toLowerCase();
 
   if (!transformedNeedle) return false;
 
@@ -372,7 +445,9 @@ function matchKeys(haystack: string, needle: string, entry: NormalizedEntry): bo
     if (keyWords.length > 1) {
       return transformedHaystack.includes(transformedNeedle);
     }
-    const regex = new RegExp(`(?:^|\\W)(${_.escapeRegExp(transformedNeedle)})(?:$|\\W)`);
+    const regex = new RegExp(
+      `(?:^|\\W)(${_.escapeRegExp(transformedNeedle)})(?:$|\\W)`,
+    );
     return regex.test(transformedHaystack);
   }
 
@@ -398,9 +473,12 @@ function getScore(trigger: string, entry: NormalizedEntry): number {
   if (entry.keys.length === 0) return 0;
 
   if (entry.keysSecondary.length > 0) {
-    if (entry.selectiveLogic === WI_LOGIC.AND_ANY) return primaryScore + secondaryScore;
+    if (entry.selectiveLogic === WI_LOGIC.AND_ANY)
+      return primaryScore + secondaryScore;
     if (entry.selectiveLogic === WI_LOGIC.AND_ALL) {
-      return secondaryScore === entry.keysSecondary.length ? primaryScore + secondaryScore : primaryScore;
+      return secondaryScore === entry.keysSecondary.length
+        ? primaryScore + secondaryScore
+        : primaryScore;
     }
   }
 
@@ -412,14 +490,23 @@ function getScore(trigger: string, entry: NormalizedEntry): number {
 // Fixes applied: #1 substituteParams, #5 exact decorator match, #6 special names
 // ---------------------------------------------------------------------------
 
-function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): NormalizedEntry[] {
+function selectActivatedEntries(
+  entries: NormalizedEntry[],
+  trigger: string,
+): NormalizedEntry[] {
+  const activationSeedBase = _.escapeRegExp(String(trigger ?? ""));
   const activated = new Set<NormalizedEntry>();
 
   for (const entry of entries) {
     if (!entry.enabled) continue;
 
     // Probability check
-    if (entry.useProbability && entry.probability < _.random(1, 100)) continue;
+    if (entry.useProbability) {
+      const probabilityRoll = deterministicPercent(
+        `${activationSeedBase}:prob:${entry.worldbook}:${entry.uid}:${entry.name}`,
+      );
+      if (entry.probability < probabilityRoll) continue;
+    }
 
     // 🔵 Constant — always activated
     if (entry.constant) {
@@ -428,33 +515,35 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
     }
 
     // Decorator-based activation (Fix #5: exact match, not startsWith)
-    if (entry.decorators.includes('@@activate')) {
+    if (entry.decorators.includes("@@activate")) {
       activated.add(entry);
       continue;
     }
-    if (entry.decorators.includes('@@dont_activate')) continue;
-    if (entry.decorators.includes('@@only_preload')) continue;
+    if (entry.decorators.includes("@@dont_activate")) continue;
+    if (entry.decorators.includes("@@only_preload")) continue;
 
     // Special decorator entries (@@generate, @@render, @@initial_variables, @@preprocessing, @@iframe)
     const specialDecorators = [
-      '@@generate',
-      '@@generate_before',
-      '@@generate_after',
-      '@@render',
-      '@@render_before',
-      '@@render_after',
-      '@@initial_variables',
-      '@@preprocessing',
-      '@@iframe',
+      "@@generate",
+      "@@generate_before",
+      "@@generate_after",
+      "@@render",
+      "@@render_before",
+      "@@render_after",
+      "@@initial_variables",
+      "@@preprocessing",
+      "@@iframe",
     ];
-    if (entry.decorators.some(d => specialDecorators.includes(d))) continue;
+    if (entry.decorators.some((d) => specialDecorators.includes(d))) continue;
 
     // Fix #6: Special entry name markers
     if (isSpecialEntryByComment(entry.comment)) continue;
 
     // Primary keyword matching (Fix #1: substituteParams before match)
     if (entry.keys.length === 0) continue;
-    const matchedKey = entry.keys.map(k => substituteParams(k)).find(k => matchKeys(trigger, k, entry));
+    const matchedKey = entry.keys
+      .map((k) => substituteParams(k))
+      .find((k) => matchKeys(trigger, k, entry));
     if (!matchedKey) continue;
 
     // Secondary keyword (blue lamp) logic
@@ -470,7 +559,9 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
     for (const secondary of entry.keysSecondary) {
       // Fix #1: substituteParams on secondary keys too
       const substituted = substituteParams(secondary);
-      const hasMatch = substituted.trim() !== '' && matchKeys(trigger, substituted.trim(), entry);
+      const hasMatch =
+        substituted.trim() !== "" &&
+        matchKeys(trigger, substituted.trim(), entry);
       if (hasMatch) hasAnyMatch = true;
       if (!hasMatch) hasAllMatch = false;
 
@@ -504,8 +595,8 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
 
   // ── Inclusion Group handling ──
 
-  const grouped = _.groupBy(Array.from(activated), e => e.group);
-  const ungrouped = grouped[''] ?? [];
+  const grouped = _.groupBy(Array.from(activated), (e) => e.group);
+  const ungrouped = grouped[""] ?? [];
 
   if (ungrouped.length > 0 && Object.keys(grouped).length <= 1) {
     return ungrouped.sort(sortEntries);
@@ -513,7 +604,7 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
 
   const matched: NormalizedEntry[] = [];
   for (const [group, members] of Object.entries(grouped)) {
-    if (group === '') continue;
+    if (group === "") continue;
 
     if (members.length === 1) {
       matched.push(members[0]);
@@ -521,15 +612,15 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
     }
 
     // Group prioritization
-    const usePrioritize = members.filter(e => e.groupOverride);
+    const usePrioritize = members.filter((e) => e.groupOverride);
     if (usePrioritize.length > 0) {
-      const orders = members.map(e => e.order);
-      const top = Math.min(...orders);
-      if (top) {
+      const orders = usePrioritize.map((e) => e.order);
+      if (orders.length > 0) {
+        const top = Math.min(...orders);
         matched.push(
-          members[
+          usePrioritize[
             Math.max(
-              orders.findIndex(o => o <= top),
+              usePrioritize.findIndex((entry) => entry.order <= top),
               0,
             )
           ],
@@ -539,15 +630,15 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
     }
 
     // Group scoring
-    const useScoring = members.filter(e => e.useGroupScoring);
+    const useScoring = members.filter((e) => e.useGroupScoring);
     if (useScoring.length > 0) {
-      const scores = members.map(e => getScore(trigger, e));
+      const scores = members.map((e) => getScore(trigger, e));
       const top = Math.max(...scores);
       if (top > 0) {
         matched.push(
           members[
             Math.max(
-              scores.findIndex(s => s >= top),
+              scores.findIndex((s) => s >= top),
               0,
             )
           ],
@@ -557,12 +648,15 @@ function selectActivatedEntries(entries: NormalizedEntry[], trigger: string): No
     }
 
     // Fix #7: Weighted random — only for members without groupOverride or useGroupScoring
-    const useWeights = members.filter(e => !e.groupOverride && !e.useGroupScoring);
+    const useWeights = members.filter(
+      (e) => !e.groupOverride && !e.useGroupScoring,
+    );
     if (useWeights.length > 0) {
-      const weights = useWeights.map(e => e.groupWeight);
-      const totalWeight = _.sum(weights);
-      let rollValue = _.random(1, totalWeight);
-      const winner = weights.findIndex(w => (rollValue -= w) <= 0);
+      const weights = useWeights.map((e) => e.groupWeight);
+      const winner = deterministicWeightedIndex(
+        weights,
+        `${activationSeedBase}:group:${group}:${useWeights.map((entry) => `${entry.worldbook}:${entry.uid}`).join("|")}`,
+      );
       if (winner >= 0) matched.push(useWeights[winner]);
     }
   }
@@ -588,7 +682,11 @@ function sortEntries(a: NormalizedEntry, b: NormalizedEntry): number {
   const maxDepth = Math.max(a.depth, b.depth, DEFAULT_DEPTH);
 
   // Sort by depth (desc), then order (asc), then uid (desc) — matches ST
-  return calcDepth(b, maxDepth) - calcDepth(a, maxDepth) || a.order - b.order || b.uid - a.uid;
+  return (
+    calcDepth(b, maxDepth) - calcDepth(a, maxDepth) ||
+    a.order - b.order ||
+    b.uid - a.uid
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -606,16 +704,24 @@ async function collectAllWorldbookEntries(): Promise<NormalizedEntry[]> {
 
       try {
         const lorebookEntries = await getLorebookEntries(wbName);
-        commentByUid = new Map(lorebookEntries.map(entry => [entry.uid, String(entry.comment ?? '')]));
+        commentByUid = new Map(
+          lorebookEntries.map((entry) => [
+            entry.uid,
+            String(entry.comment ?? ""),
+          ]),
+        );
       } catch (commentError) {
-        console.debug(`[EW WI Engine] Cannot read lorebook comments for '${wbName}':`, commentError);
+        console.debug(
+          `[EW WI Engine] Cannot read lorebook comments for '${wbName}':`,
+          commentError,
+        );
       }
 
       for (const entry of entries) {
         const normalized = normalizeEntry(
           {
             ...entry,
-            comment: commentByUid.get(entry.uid) ?? entry.comment ?? '',
+            comment: commentByUid.get(entry.uid) ?? entry.comment ?? "",
           },
           wbName,
         );
@@ -650,19 +756,20 @@ async function collectAllWorldbookEntries(): Promise<NormalizedEntry[]> {
       await loadWbOnce(additionalWb);
     }
   } catch (e) {
-    console.debug('[EW WI Engine] Cannot read character worldbooks:', e);
+    console.debug("[EW WI Engine] Cannot read character worldbooks:", e);
   }
 
   // 2. Fix #2: Persona lorebook
   try {
     const ctx = getStContext();
     const personaLorebook: string | undefined =
-      ctx.extensionSettings?.persona_description_lorebook ?? (ctx as any).power_user?.persona_description_lorebook;
+      ctx.extensionSettings?.persona_description_lorebook ??
+      (ctx as any).power_user?.persona_description_lorebook;
     if (personaLorebook) {
       await loadWbOnce(personaLorebook);
     }
   } catch (e) {
-    console.debug('[EW WI Engine] Cannot read persona lorebook:', e);
+    console.debug("[EW WI Engine] Cannot read persona lorebook:", e);
   }
 
   // 3. Fix #2: Chat-bound lorebook (chat_metadata['world'])
@@ -673,7 +780,7 @@ async function collectAllWorldbookEntries(): Promise<NormalizedEntry[]> {
       await loadWbOnce(chatWorld);
     }
   } catch (e) {
-    console.debug('[EW WI Engine] Cannot read chat-bound lorebook:', e);
+    console.debug("[EW WI Engine] Cannot read chat-bound lorebook:", e);
   }
 
   return allEntries;
@@ -689,16 +796,24 @@ export async function collectIgnoredWorldInfoContents(): Promise<string[]> {
 
       try {
         const lorebookEntries = await getLorebookEntries(wbName);
-        commentByUid = new Map(lorebookEntries.map(entry => [entry.uid, String(entry.comment ?? '')]));
+        commentByUid = new Map(
+          lorebookEntries.map((entry) => [
+            entry.uid,
+            String(entry.comment ?? ""),
+          ]),
+        );
       } catch (commentError) {
-        console.debug(`[EW WI Engine] Cannot read lorebook comments for '${wbName}':`, commentError);
+        console.debug(
+          `[EW WI Engine] Cannot read lorebook comments for '${wbName}':`,
+          commentError,
+        );
       }
 
       for (const entry of entries) {
         const normalized = normalizeEntry(
           {
             ...entry,
-            comment: commentByUid.get(entry.uid) ?? entry.comment ?? '',
+            comment: commentByUid.get(entry.uid) ?? entry.comment ?? "",
           },
           wbName,
         );
@@ -707,13 +822,18 @@ export async function collectIgnoredWorldInfoContents(): Promise<string[]> {
           continue;
         }
 
-        const normalizedContent = (normalized.cleanContent || normalized.content).trim();
+        const normalizedContent = (
+          normalized.cleanContent || normalized.content
+        ).trim();
         if (normalizedContent) {
           ignoredContents.push(normalizedContent);
         }
       }
     } catch (e) {
-      console.debug(`[EW WI Engine] Cannot read worldbook '${wbName}' for ignore list:`, e);
+      console.debug(
+        `[EW WI Engine] Cannot read worldbook '${wbName}' for ignore list:`,
+        e,
+      );
     }
   }
 
@@ -733,18 +853,25 @@ export async function collectIgnoredWorldInfoContents(): Promise<string[]> {
       await loadWbOnce(additionalWb);
     }
   } catch (e) {
-    console.debug('[EW WI Engine] Cannot read character worldbooks for ignore list:', e);
+    console.debug(
+      "[EW WI Engine] Cannot read character worldbooks for ignore list:",
+      e,
+    );
   }
 
   try {
     const ctx = getStContext();
     const personaLorebook: string | undefined =
-      ctx.extensionSettings?.persona_description_lorebook ?? (ctx as any).power_user?.persona_description_lorebook;
+      ctx.extensionSettings?.persona_description_lorebook ??
+      (ctx as any).power_user?.persona_description_lorebook;
     if (personaLorebook) {
       await loadWbOnce(personaLorebook);
     }
   } catch (e) {
-    console.debug('[EW WI Engine] Cannot read persona lorebook for ignore list:', e);
+    console.debug(
+      "[EW WI Engine] Cannot read persona lorebook for ignore list:",
+      e,
+    );
   }
 
   try {
@@ -754,29 +881,36 @@ export async function collectIgnoredWorldInfoContents(): Promise<string[]> {
       await loadWbOnce(chatWorld);
     }
   } catch (e) {
-    console.debug('[EW WI Engine] Cannot read chat-bound lorebook for ignore list:', e);
+    console.debug(
+      "[EW WI Engine] Cannot read chat-bound lorebook for ignore list:",
+      e,
+    );
   }
 
-  return _.uniq(ignoredContents.map(content => content.trim()).filter(Boolean));
+  return _.uniq(
+    ignoredContents.map((content) => content.trim()).filter(Boolean),
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Position Classification
 // ---------------------------------------------------------------------------
 
-function classifyPosition(entry: NormalizedEntry): 'before' | 'after' | 'atDepth' {
+function classifyPosition(
+  entry: NormalizedEntry,
+): "before" | "after" | "atDepth" {
   switch (entry.position) {
     case WI_POSITION.before:
     case WI_POSITION.EMTop:
     case WI_POSITION.ANTop:
-      return 'before';
+      return "before";
     case WI_POSITION.atDepth:
-      return 'atDepth';
+      return "atDepth";
     case WI_POSITION.after:
     case WI_POSITION.EMBottom:
     case WI_POSITION.ANBottom:
     default:
-      return 'after';
+      return "after";
   }
 }
 
@@ -792,13 +926,16 @@ function classifyPosition(entry: NormalizedEntry): 'before' | 'after' | 'atDepth
  * 3. Executes EJS rendering on activated entries
  * 4. Returns structured before/after lists with entry names
  */
-export async function resolveWorldInfo(_settings: EwSettings, chatMessages: string[]): Promise<ResolvedWorldInfo> {
+export async function resolveWorldInfo(
+  _settings: EwSettings,
+  chatMessages: string[],
+): Promise<ResolvedWorldInfo> {
   const result: ResolvedWorldInfo = { before: [], after: [], atDepth: [] };
 
-  const roleMap: Record<string, 'system' | 'user' | 'assistant'> = {
-    system: 'system',
-    user: 'user',
-    assistant: 'assistant',
+  const roleMap: Record<string, "system" | "user" | "assistant"> = {
+    system: "system",
+    user: "user",
+    assistant: "assistant",
   };
 
   try {
@@ -807,14 +944,14 @@ export async function resolveWorldInfo(_settings: EwSettings, chatMessages: stri
     if (allEntries.length === 0) return result;
 
     // 2. Build activation trigger from chat messages
-    const trigger = chatMessages.join('\n\n');
+    const trigger = chatMessages.join("\n\n");
 
     // 3. Run activation logic
     const activated = selectActivatedEntries(allEntries, trigger);
     if (activated.length === 0) return result;
 
     // 4. Build render context (for EJS getwi calls)
-    const allForGetwi = allEntries.map(e => ({
+    const allForGetwi = allEntries.map((e) => ({
       name: e.name,
       comment: e.comment,
       content: e.cleanContent || e.content,
@@ -830,10 +967,17 @@ export async function resolveWorldInfo(_settings: EwSettings, chatMessages: stri
 
       try {
         rendered = await evalEjsTemplate(contentToRender, renderCtx, {
-          world_info: { comment: entry.comment || entry.name, name: entry.name, world: entry.worldbook },
+          world_info: {
+            comment: entry.comment || entry.name,
+            name: entry.name,
+            world: entry.worldbook,
+          },
         });
       } catch (e) {
-        console.warn(`[EW WI Engine] EJS render failed for entry '${entry.name}':`, e);
+        console.warn(
+          `[EW WI Engine] EJS render failed for entry '${entry.name}':`,
+          e,
+        );
         rendered = contentToRender;
       }
 
@@ -846,8 +990,9 @@ export async function resolveWorldInfo(_settings: EwSettings, chatMessages: stri
       if (entry.name.startsWith(_settings.controller_entry_prefix)) {
         const rawControllerEntry: ResolvedWiEntry = {
           name: entry.name,
+          source_name: entry.name,
           content: contentToRender,
-          role: roleMap[entry.role] ?? 'system',
+          role: roleMap[entry.role] ?? "system",
           position: entry.position,
           depth: entry.depth,
           order: entry.order,
@@ -856,11 +1001,16 @@ export async function resolveWorldInfo(_settings: EwSettings, chatMessages: stri
 
         for (const pulled of renderCtx.pulledEntries.values()) {
           if (!pulled.content.trim()) continue;
-          if (pulled.worldbook === entry.worldbook && pulled.name === entry.name) continue;
+          if (
+            pulled.worldbook === entry.worldbook &&
+            pulled.name === entry.name
+          )
+            continue;
           targetBucket.push({
             name: pulled.comment || pulled.name,
+            source_name: pulled.name,
             content: pulled.content,
-            role: roleMap[entry.role] ?? 'system',
+            role: roleMap[entry.role] ?? "system",
             position: entry.position,
             depth: entry.depth,
             order: entry.order,
@@ -872,7 +1022,7 @@ export async function resolveWorldInfo(_settings: EwSettings, chatMessages: stri
       const resolvedEntry: ResolvedWiEntry = {
         name: entry.name,
         content: rendered,
-        role: roleMap[entry.role] ?? 'system',
+        role: roleMap[entry.role] ?? "system",
         position: entry.position,
         depth: entry.depth,
         order: entry.order,
@@ -880,7 +1030,7 @@ export async function resolveWorldInfo(_settings: EwSettings, chatMessages: stri
       targetBucket.push(resolvedEntry);
     }
   } catch (e) {
-    console.error('[EW WI Engine] resolveWorldInfo failed:', e);
+    console.error("[EW WI Engine] resolveWorldInfo failed:", e);
   }
 
   return result;

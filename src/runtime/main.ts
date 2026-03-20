@@ -29,8 +29,9 @@ export async function initRuntime() {
     initRuntimeEvents();
     scheduleHideSettingsApply(getSettings().hide_settings, 220);
 
-    // 与脚本版保持一致：EvolutionWorldAPI 只由 initGlobalApi() 负责挂载，
-    // 避免初始化阶段出现空对象覆盖或 API 暴露边界不一致。
+    // 不再通过酒馆助手的 initializeGlobal 注册全局变量。
+    // 避免框架把 EvolutionWorldAPI（含 getConfig()）序列化写入角色卡变量。
+    // EvolutionWorldAPI 已由 initGlobalApi() 直接挂载到 window，外部脚本仍可访问。
 
     initialized = true;
     console.info("[Evolution World] runtime initialized");

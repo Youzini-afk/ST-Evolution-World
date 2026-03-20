@@ -292,13 +292,17 @@ function stGetChatMessage(id: number): any {
   return null;
 }
 
+void stGetChatMessage;
+
 function processChatMessage(msg: any): string {
   return String(msg?.mes ?? msg?.message ?? "");
 }
 
 function stGetChatMessages(range: string, _opts?: Record<string, any>): any[] {
   try {
-    return getChatMessages(range, _opts);
+    if (typeof getChatMessages === "function") {
+      return getChatMessages(range, _opts);
+    }
   } catch {
     /* fallback below */
   }
@@ -317,6 +321,9 @@ function stMatchChatMessages(pattern: string | RegExp): any[] {
     typeof pattern === "string" ? new RegExp(pattern, "i") : pattern;
   return chat.filter((msg: any) => regex.test(msg.mes ?? ""));
 }
+
+void stGetChatMessages;
+void stMatchChatMessages;
 
 function getChatMessageCompat(
   index: number,

@@ -22,6 +22,7 @@ import {
   WorkflowProgressUpdate,
   WorkflowWritebackPolicy,
 } from "./types";
+import { resolveTargetWorldbook } from "./worldbook-runtime";
 
 type WorkflowExecutionStage =
   | "preparing"
@@ -421,13 +422,30 @@ function toPreview(value: unknown, maxLen = 3000): string {
   }
 }
 
+/**
+ * 从 request_debug 中抹除敏感字段，防止 api_key 写入 localStorage / last_io。
+ */
+function sanitizeRequestDebug(debug: Record<string, any>): Record<string, any> {
+  const copy = klona(debug);
+  if (
+    copy.transport_request?.custom_api &&
+    "key" in copy.transport_request.custom_api
+  ) {
+    copy.transport_request.custom_api.key = "[REDACTED]";
+  }
+  if (typeof copy.transport_request?.custom_include_headers === "string") {
+    copy.transport_request.custom_include_headers =
+      copy.transport_request.custom_include_headers.replace(
+        /(Authorization\s*:\s*Bearer\s+)\S+/gi,
+        "$1[REDACTED]",
+      );
+  }
+  return copy;
+}
+
 function buildAttemptRequestPreview(attempt: DispatchFlowAttempt): string {
-  return toPreview(
-    attempt.request_debug ?? {
-      flow_request: attempt.request,
-    },
-    20000,
-  );
+  const debug = attempt.request_debug ?? { flow_request: attempt.request };
+  return toPreview(sanitizeRequestDebug(debug), 20000);
 }
 
 function saveIoSummary(
@@ -667,8 +685,28 @@ export async function runWorkflow(
   const startedAt = Date.now();
   const settings = getSettings();
   const requestId = uuidv4();
+  const requestContext = {
+    chat_id: String(getChatId() ?? "unknown").trim() || "unknown",
+    request_id: requestId,
+    message_id: Number(input.message_id ?? -1),
+    user_input:
+      typeof input.user_input === "string" ? input.user_input : undefined,
+    trigger: input.trigger
+      ? {
+          timing: input.trigger.timing,
+          source: input.trigger.source,
+          generation_type: input.trigger.generation_type,
+          ...(Number.isFinite(input.trigger.user_message_id)
+            ? { user_message_id: input.trigger.user_message_id }
+            : {}),
+          ...(Number.isFinite(input.trigger.assistant_message_id)
+            ? { assistant_message_id: input.trigger.assistant_message_id }
+            : {}),
+        }
+      : undefined,
+  };
   const preservedResults = [...(input.preserved_results ?? [])];
-  const currentChatId = String(getChatId() ?? "unknown");
+  const currentChatId = requestContext.chat_id;
   let attempts: DispatchFlowAttempt[] = [];
   let currentStage: WorkflowExecutionStage = "preparing";
 
@@ -693,6 +731,13 @@ export async function runWorkflow(
       request_id: requestId,
       message: "正在准备工作流上下文…",
     });
+
+    const targetWorldbook = await resolveTargetWorldbook(settings);
+    if (!targetWorldbook) {
+      throw new Error(
+        "EW requires a bound worldbook on current character. Please bind one before running workflows.",
+      );
+    }
 
     const allEnabledFlows = await getEffectiveFlows(settings);
     const selectedFlowIds = new Set((input.flow_ids ?? []).filter(Boolean));
@@ -772,10 +817,10 @@ export async function runWorkflow(
       dispatchFlows({
         settings,
         flows: enabledFlows,
-        message_id: input.message_id,
-        user_input: input.user_input,
-        trigger: input.trigger,
-        request_id: requestId,
+        message_id: requestContext.message_id,
+        user_input: requestContext.user_input,
+        trigger: requestContext.trigger,
+        request_id: requestContext.request_id ?? requestId,
         context_cursor: input.context_cursor,
         job_type: input.job_type,
         writeback_policy: input.writeback_policy,
@@ -827,8 +872,8 @@ export async function runWorkflow(
       settings,
       mergedPlan,
       controllerTemplates,
-      requestId,
-      input.message_id,
+      requestContext.request_id ?? requestId,
+      requestContext.message_id,
     );
     throwIfWorkflowCancelled(input);
 
@@ -874,9 +919,9 @@ export async function runWorkflow(
     });
     if (error instanceof DispatchFlowsError) {
       attempts = error.attempts;
-      saveIoSummary(requestId, currentChatId, input.mode, attempts);
+      persistIoSummarySafe(requestId, currentChatId, input.mode, attempts);
     } else if (attempts.length === 0) {
-      saveIoSummary(requestId, currentChatId, input.mode, []);
+      persistIoSummarySafe(requestId, currentChatId, input.mode, []);
     }
 
     const failureStage: WorkflowFailureDiagnostic["stage"] = (() => {
@@ -916,7 +961,7 @@ export async function runWorkflow(
       diagnostics: {},
       failure,
     });
-    setLastRun(summary);
+    persistRunSummarySafe(summary);
 
     return {
       ok: false,

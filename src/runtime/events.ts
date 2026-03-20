@@ -25,9 +25,13 @@ import {
 } from "./floor-binding";
 import { getMessageVersionInfo, simpleHash } from "./helpers";
 import { runIncrementalHideCheck } from "./hide-engine";
-import { resetInterceptGuard, wasRecentlyIntercepted } from "./intercept-guard";
+import {
+  markIntercepted,
+  resetInterceptGuard,
+  wasRecentlyIntercepted,
+} from "./intercept-guard";
 import { runWorkflow } from "./pipeline";
-import { getSettings } from "./settings";
+import { getSettings, patchSettings } from "./settings";
 import {
   clearAfterReplyPending,
   clearAfterReplyPendingIfMatches,
@@ -90,6 +94,17 @@ type FloorWorkflowExecutionState = {
   skip_reason?: string;
 };
 
+type BeforeReplyBindingMigrationResult = {
+  migrated: boolean;
+  snapshot_migrated: boolean;
+  execution_migrated: boolean;
+  capsule_migrated: boolean;
+  snapshot_reason?: string;
+  execution_reason?: string;
+  capsule_reason?: string;
+  reason?: string;
+};
+
 type FailedAfterReplyQueueJob = {
   chat_key: string;
   message_id: number;
@@ -124,6 +139,15 @@ const EW_GENERATE_INTERCEPTOR_KEY = "ew_generation_interceptor";
 let sendIntentRetryTimer: ReturnType<typeof setTimeout> | null = null;
 const NON_SEND_GENERATION_TYPES = new Set(["continue", "regenerate", "swipe"]);
 const WORKFLOW_NOTICE_COLLAPSE_MS = 5000;
+const workflowTaskQueue: Array<{
+  label: string;
+  priority: number;
+  seq: number;
+  run: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+}> = [];
+const queuedBeforeReplyJobKeys = new Set<string>();
 const queuedAfterReplyJobKeys = new Set<string>();
 const queuedAfterReplyDedupKeys = new Set<string>();
 const processedAfterReplyIdentityKeys = new Set<string>();
@@ -131,8 +155,13 @@ const failedAfterReplyJobsByChat = new Map<
   string,
   FailedAfterReplyQueueJob[]
 >();
+let workflowTaskDrainPromise: Promise<void> | null = null;
+let workflowTaskSeq = 0;
+const lastBeforeReplyTriggerByIdentityKey = new Map<string, number>();
 const lastAfterReplyTriggerByIdentityKey = new Map<string, number>();
+const MIN_BEFORE_REPLY_INTERVAL_MS = 2500;
 const MIN_AFTER_REPLY_INTERVAL_MS = 3000;
+let runtimeEventsInitialized = false;
 
 // ST 扩展直接运行在主页面，无需 getHostWindow/getChatDocument
 function getChatDocument(): Document {
@@ -253,6 +282,83 @@ function resolveAfterReplyUserInput(): string {
     runtimeState.last_send_intent?.user_input,
     getLatestUserMessageText(),
   );
+}
+
+function resolveWorkflowJobPriority(jobType: WorkflowJobType): number {
+  if (jobType === "live_auto") {
+    return 0;
+  }
+  if (jobType === "live_reroll") {
+    return 1;
+  }
+  return 2;
+}
+
+function resolveAfterReplyContextWindowMs(settings: EwSettings): number {
+  return Math.max(
+    settings.total_timeout_ms + 10000,
+    settings.gate_ttl_ms,
+    600000,
+  );
+}
+
+function clearQueuedWorkflowTasks(reason: string) {
+  for (const task of workflowTaskQueue.splice(0, workflowTaskQueue.length)) {
+    task.reject(new Error(reason));
+  }
+  queuedBeforeReplyJobKeys.clear();
+  queuedAfterReplyJobKeys.clear();
+  queuedAfterReplyDedupKeys.clear();
+  processedAfterReplyIdentityKeys.clear();
+  lastBeforeReplyTriggerByIdentityKey.clear();
+  lastAfterReplyTriggerByIdentityKey.clear();
+}
+
+function enqueueWorkflowTask<T>(
+  label: string,
+  run: () => Promise<T>,
+  priority = 1,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    workflowTaskQueue.push({
+      label,
+      priority,
+      seq: workflowTaskSeq++,
+      run: run as () => Promise<unknown>,
+      resolve: (value) => resolve(value as T),
+      reject,
+    });
+    workflowTaskQueue.sort(
+      (left, right) => left.priority - right.priority || left.seq - right.seq,
+    );
+
+    if (!workflowTaskDrainPromise) {
+      workflowTaskDrainPromise = (async () => {
+        while (workflowTaskQueue.length > 0) {
+          const task = workflowTaskQueue.shift();
+          if (!task) {
+            continue;
+          }
+
+          try {
+            task.resolve(await task.run());
+          } catch (error) {
+            task.reject(error);
+          }
+        }
+      })().finally(() => {
+        workflowTaskDrainPromise = null;
+      });
+    }
+  });
+}
+
+function enqueueWorkflowJob<T>(
+  jobType: WorkflowJobType,
+  label: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  return enqueueWorkflowTask(label, run, resolveWorkflowJobPriority(jobType));
 }
 
 function getFailedAfterReplyJobs(chatKey: string): FailedAfterReplyQueueJob[] {
@@ -420,6 +526,22 @@ function buildFailureToastMessage(
     parts.push(failure.suggestion);
   }
   return parts.join(" · ");
+}
+
+function buildFailureNoticeAction(
+  failure: WorkflowFailureDiagnostic | null | undefined,
+) {
+  if (!failure) {
+    return undefined;
+  }
+
+  return {
+    label: "打开面板",
+    kind: "neutral" as const,
+    onClick: () => {
+      patchSettings({ ui_open: true });
+    },
+  };
 }
 
 function collectSuccessfulDispatchResultsFromAttempts(
@@ -880,6 +1002,253 @@ async function migrateFloorWorkflowCapsuleToAssistant(
   );
 
   return { migrated: true };
+}
+
+function resolveExecutionStateForVersion(
+  map: FloorWorkflowExecutionVersionedMap,
+  versionKey: string,
+): { key: string; state: FloorWorkflowExecutionState } | null {
+  const exact = map[versionKey];
+  if (exact) {
+    return { key: versionKey, state: exact };
+  }
+
+  const entries = Object.entries(map) as Array<
+    [string, FloorWorkflowExecutionState]
+  >;
+  if (entries.length === 1) {
+    const [key, state] = entries[0];
+    return { key, state };
+  }
+
+  return null;
+}
+
+async function migrateFloorWorkflowExecutionToAssistant(
+  sourceMessageId: number,
+  assistantMessageId: number,
+): Promise<{ migrated: boolean; reason?: string }> {
+  if (sourceMessageId === assistantMessageId) {
+    return { migrated: false, reason: "same_message" };
+  }
+
+  const sourceMsg = getChatMessages(sourceMessageId)[0];
+  const assistantMsg = getChatMessages(assistantMessageId)[0];
+  if (!sourceMsg || !assistantMsg) {
+    return { migrated: false, reason: "message_not_found" };
+  }
+
+  const sourceVersionInfo = getMessageVersionInfo(sourceMsg);
+  const assistantVersionInfo = getMessageVersionInfo(assistantMsg);
+  const sourceMap = readFloorWorkflowExecutionMap(sourceMessageId);
+  const sourceResolved = resolveExecutionStateForVersion(
+    sourceMap,
+    buildExecutionVersionKey(sourceVersionInfo),
+  );
+  if (!sourceResolved) {
+    return { migrated: false, reason: "source_execution_missing" };
+  }
+
+  const sourceNextMap = { ...sourceMap };
+  const assistantMap = readFloorWorkflowExecutionMap(assistantMessageId);
+  const assistantNextMap = { ...assistantMap };
+  const assistantVersionKey = buildExecutionVersionKey(assistantVersionInfo);
+  let mutated = false;
+
+  if (!assistantNextMap[assistantVersionKey]) {
+    assistantNextMap[assistantVersionKey] = {
+      ...sourceResolved.state,
+      swipe_id: assistantVersionInfo.swipe_id,
+      content_hash: assistantVersionInfo.content_hash,
+    };
+    mutated = true;
+  }
+
+  if (sourceNextMap[sourceResolved.key]) {
+    delete sourceNextMap[sourceResolved.key];
+    mutated = true;
+  }
+
+  if (!mutated) {
+    return { migrated: false, reason: "already_migrated" };
+  }
+
+  const sourceNextData: Record<string, unknown> = {
+    ...(sourceMsg.data ?? {}),
+  };
+  if (Object.keys(sourceNextMap).length > 0) {
+    sourceNextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY] = sourceNextMap;
+  } else {
+    delete sourceNextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY];
+  }
+
+  const assistantNextData: Record<string, unknown> = {
+    ...(assistantMsg.data ?? {}),
+    [EW_FLOOR_WORKFLOW_EXECUTION_KEY]: assistantNextMap,
+  };
+
+  await setChatMessages(
+    [
+      { message_id: sourceMessageId, data: sourceNextData },
+      { message_id: assistantMessageId, data: assistantNextData },
+    ],
+    { refresh: "none" },
+  );
+
+  return { migrated: true };
+}
+
+async function writeBeforeReplyBindingMeta(
+  sourceMessageId: number,
+  assistantMessageId: number,
+  requestId: string,
+): Promise<void> {
+  const sourceMsg = getChatMessages(sourceMessageId)[0];
+  const assistantMsg = getChatMessages(assistantMessageId)[0];
+  if (!sourceMsg || !assistantMsg) {
+    return;
+  }
+
+  const migratedAt = Date.now();
+  const sourceData: Record<string, unknown> = {
+    ...(sourceMsg.data ?? {}),
+    [EW_BEFORE_REPLY_BINDING_KEY]: {
+      role: "source",
+      paired_message_id: assistantMessageId,
+      request_id: requestId,
+      migrated_at: migratedAt,
+    },
+  };
+  const assistantData: Record<string, unknown> = {
+    ...(assistantMsg.data ?? {}),
+    [EW_BEFORE_REPLY_BINDING_KEY]: {
+      role: "assistant_anchor",
+      paired_message_id: sourceMessageId,
+      request_id: requestId,
+      migrated_at: migratedAt,
+    },
+  };
+
+  await setChatMessages(
+    [
+      { message_id: sourceMessageId, data: sourceData },
+      { message_id: assistantMessageId, data: assistantData },
+    ],
+    { refresh: "none" },
+  );
+}
+
+async function migrateBeforeReplyBindingToAssistant(
+  settings: EwSettings,
+  assistantMessageId: number,
+  pendingUserMessageId: number | null,
+): Promise<BeforeReplyBindingMigrationResult> {
+  const pending = pruneExpiredBeforeReplyBindingPending();
+  if (!pending) {
+    return {
+      migrated: false,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      capsule_migrated: false,
+      reason: "pending_missing_or_expired",
+    };
+  }
+
+  if (pending.migrated) {
+    return {
+      migrated: false,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      capsule_migrated: false,
+      reason: "already_migrated",
+    };
+  }
+
+  if (
+    !Number.isFinite(pendingUserMessageId) ||
+    pending.user_message_id !== pendingUserMessageId
+  ) {
+    return {
+      migrated: false,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      capsule_migrated: false,
+      reason: "user_floor_mismatch",
+    };
+  }
+
+  if (
+    !Number.isFinite(pending.source_message_id) ||
+    pending.source_message_id < 0
+  ) {
+    clearBeforeReplyBindingPending();
+    return {
+      migrated: false,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      capsule_migrated: false,
+      reason: "invalid_source_floor",
+    };
+  }
+
+  const snapshotMove = await migrateBeforeReplyArtifactsToAssistant(
+    settings,
+    pending.source_message_id,
+    assistantMessageId,
+    pending.request_id,
+  );
+  const executionMove = await migrateFloorWorkflowExecutionToAssistant(
+    pending.source_message_id,
+    assistantMessageId,
+  );
+  const capsuleMove = await migrateFloorWorkflowCapsuleToAssistant(
+    pending.source_message_id,
+    assistantMessageId,
+  );
+  const migrated =
+    snapshotMove.migrated || executionMove.migrated || capsuleMove.migrated;
+  const result: BeforeReplyBindingMigrationResult = {
+    migrated,
+    snapshot_migrated: snapshotMove.migrated,
+    execution_migrated: executionMove.migrated,
+    capsule_migrated: capsuleMove.migrated,
+    snapshot_reason: snapshotMove.reason,
+    execution_reason: executionMove.reason,
+    capsule_reason: capsuleMove.reason,
+    reason: `snapshot:${snapshotMove.reason ?? "migrated"},execution:${executionMove.reason ?? "migrated"},capsule:${capsuleMove.reason ?? "migrated"}`,
+  };
+
+  if (migrated) {
+    await writeBeforeReplyBindingMeta(
+      pending.source_message_id,
+      assistantMessageId,
+      pending.request_id,
+    );
+    markBeforeReplyBindingMigrated(assistantMessageId);
+    console.info(
+      "[Evolution World] before_reply binding migrated to assistant anchor",
+      {
+        source_message_id: pending.source_message_id,
+        assistant_message_id: assistantMessageId,
+        snapshot_migrated: snapshotMove.migrated,
+        execution_migrated: executionMove.migrated,
+        capsule_migrated: capsuleMove.migrated,
+        snapshot_reason: snapshotMove.reason ?? "migrated",
+        execution_reason: executionMove.reason ?? "migrated",
+        capsule_reason: capsuleMove.reason ?? "migrated",
+      },
+    );
+    return result;
+  }
+
+  console.warn("[Evolution World] before_reply binding migration failed", {
+    source_message_id: pending.source_message_id,
+    assistant_message_id: assistantMessageId,
+    snapshot_reason: snapshotMove.reason ?? "not_migrated",
+    execution_reason: executionMove.reason ?? "not_migrated",
+    capsule_reason: capsuleMove.reason ?? "not_migrated",
+  });
+  return result;
 }
 
 function buildFloorWorkflowExecutionState(
@@ -2034,6 +2403,34 @@ async function runPrimaryBeforeReplyIntercept(
   const messageId =
     getRuntimeState().last_send?.message_id ?? getLastMessageId();
   const pendingUserMessageId = getRuntimeState().last_send?.message_id ?? null;
+  const identityKey = buildBeforeReplyIdentityKey(
+    messageId,
+    generationType,
+    userInput,
+  );
+  if (queuedBeforeReplyJobKeys.has(identityKey)) {
+    console.debug(
+      `[Evolution World] before_reply skipped in generate interceptor: duplicate in-flight (${identityKey})`,
+    );
+    abort(true);
+    return;
+  }
+  const lastTriggerAt =
+    lastBeforeReplyTriggerByIdentityKey.get(identityKey) ?? 0;
+  if (Date.now() - lastTriggerAt < MIN_BEFORE_REPLY_INTERVAL_MS) {
+    console.debug(
+      `[Evolution World] before_reply skipped in generate interceptor: identity-windowed dedup (${Date.now() - lastTriggerAt}ms, key=${identityKey})`,
+    );
+    abort(true);
+    return;
+  }
+
+  markIntercepted(userInput, {
+    messageId,
+    generationType,
+  });
+  queuedBeforeReplyJobKeys.add(identityKey);
+  lastBeforeReplyTriggerByIdentityKey.set(identityKey, Date.now());
 
   let workflowOutcome: WorkflowExecutionOutcome = {
     shouldAbortGeneration: false,
@@ -2041,28 +2438,39 @@ async function runPrimaryBeforeReplyIntercept(
     abortedByUser: false,
   };
 
-  setProcessing(true);
   try {
-    workflowOutcome = await executeWorkflowWithPolicy(settings, {
-      messageId,
-      userInput,
-      injectReply: true,
-      timingFilter: "before_reply",
-      trigger: {
-        timing: "before_reply",
-        source: "generate_interceptor",
-        generation_type: generationType,
-        user_message_id: getRuntimeState().last_send?.message_id,
+    workflowOutcome = await enqueueWorkflowJob(
+      "live_auto",
+      `before_reply:generate_interceptor:${messageId}`,
+      async () => {
+        setProcessing(true);
+        try {
+          return await executeWorkflowWithPolicy(settings, {
+            messageId,
+            userInput,
+            injectReply: true,
+            timingFilter: "before_reply",
+            jobType: "live_auto",
+            trigger: {
+              timing: "before_reply",
+              source: "generate_interceptor",
+              generation_type: generationType,
+              user_message_id: getRuntimeState().last_send?.message_id,
+            },
+            reminderMessage: "正在读取上下文并处理本轮工作流，请稍后…",
+            successMessage: "动态世界流程处理完成，已更新本轮上下文。",
+          });
+        } finally {
+          setProcessing(false);
+          clearSendContextIfMatches(pendingUserMessageId, userInput);
+        }
       },
-      reminderMessage: "正在读取上下文并处理本轮工作流，请稍后…",
-      successMessage: "动态世界流程处理完成，已更新本轮上下文。",
-    });
+    );
   } catch (error) {
     console.error("[Evolution World] Error in generate interceptor:", error);
     clearReplyInstruction();
   } finally {
-    setProcessing(false);
-    clearSendContextIfMatches(pendingUserMessageId, userInput);
+    queuedBeforeReplyJobKeys.delete(identityKey);
   }
 
   if (workflowOutcome.shouldAbortGeneration) {
@@ -2144,16 +2552,40 @@ async function onGenerationAfterCommands(
     getRuntimeState().last_send?.message_id ?? getLastMessageId();
   const genType = getRuntimeState().last_generation?.type ?? "";
   const userInput = resolveFallbackWorkflowUserInput(genType);
+  const identityKey = buildBeforeReplyIdentityKey(
+    messageId,
+    genType || type,
+    userInput,
+  );
   const isNonSendType = NON_SEND_GENERATION_TYPES.has(genType);
 
-  // Only block on empty input for normal send — continue/regen/swipe can proceed without it
   if (!userInput.trim() && !isNonSendType) {
     console.debug("[Evolution World] skipped workflow: user input is empty");
     return;
   }
 
-  // Dedup check 2: hash-based guard against recent TavernHelper interception
-  if (wasRecentlyIntercepted(userInput)) {
+  if (queuedBeforeReplyJobKeys.has(identityKey)) {
+    console.debug(
+      "[Evolution World] GENERATION_AFTER_COMMANDS skipped: duplicate before_reply job already in-flight",
+    );
+    return;
+  }
+
+  const lastTriggerAt =
+    lastBeforeReplyTriggerByIdentityKey.get(identityKey) ?? 0;
+  if (Date.now() - lastTriggerAt < MIN_BEFORE_REPLY_INTERVAL_MS) {
+    console.debug(
+      `[Evolution World] GENERATION_AFTER_COMMANDS skipped: identity-windowed before_reply dedup (${Date.now() - lastTriggerAt}ms, key=${identityKey})`,
+    );
+    return;
+  }
+
+  if (
+    wasRecentlyIntercepted(userInput, {
+      messageId,
+      generationType: genType || type,
+    })
+  ) {
     console.debug(
       "[Evolution World] GENERATION_AFTER_COMMANDS skipped: recently intercepted by TavernHelper hook (hash match)",
     );
@@ -2163,28 +2595,44 @@ async function onGenerationAfterCommands(
   console.debug(
     "[Evolution World] GENERATION_AFTER_COMMANDS executing workflow (fallback path)",
   );
-  setProcessing(true);
   try {
-    // Return value (shouldAbort) is only relevant for the primary path;
-    // in the fallback path, stopGenerationNow() inside executeWorkflowWithPolicy
-    // handles abort directly since generation is already in progress.
-    await executeWorkflowWithPolicy(settings, {
-      messageId,
-      userInput,
-      injectReply: true,
-      timingFilter: "before_reply",
-      trigger: {
-        timing: "before_reply",
-        source: "generation_after_commands",
-        generation_type: genType || type,
-        user_message_id: getRuntimeState().last_send?.message_id,
+    queuedBeforeReplyJobKeys.add(identityKey);
+    lastBeforeReplyTriggerByIdentityKey.set(identityKey, Date.now());
+    await enqueueWorkflowJob(
+      "live_auto",
+      `before_reply:fallback:${messageId}`,
+      async () => {
+        setProcessing(true);
+        try {
+          await executeWorkflowWithPolicy(settings, {
+            messageId,
+            userInput,
+            injectReply: true,
+            timingFilter: "before_reply",
+            jobType: "live_auto",
+            trigger: {
+              timing: "before_reply",
+              source: "generation_after_commands",
+              generation_type: genType || type,
+              user_message_id:
+                getRuntimeState().last_send?.message_id ?? messageId,
+            },
+            reminderMessage: "正在读取上下文并处理本轮工作流，请稍后…",
+            successMessage: "动态世界流程处理完成，已更新本轮上下文。",
+          });
+        } finally {
+          clearSendContextIfMatches(messageId, userInput);
+          setProcessing(false);
+        }
       },
-      reminderMessage: "正在读取上下文并处理本轮工作流，请稍后…",
-      successMessage: "动态世界流程处理完成，已更新本轮上下文。",
-    });
+    );
+  } catch (error) {
+    console.error(
+      "[Evolution World] GENERATION_AFTER_COMMANDS workflow failed:",
+      error,
+    );
   } finally {
-    clearSendContextIfMatches(messageId, userInput);
-    setProcessing(false);
+    queuedBeforeReplyJobKeys.delete(identityKey);
   }
 }
 
@@ -2195,6 +2643,17 @@ function getMessageText(messageId: number): string {
   } catch {
     return "";
   }
+}
+
+function buildBeforeReplyIdentityKey(
+  messageId: number,
+  generationType: string,
+  userInput: string,
+): string {
+  const normalizedText = String(userInput ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `${getCurrentChatKey()}:before_reply:${messageId}:${generationType}:${simpleHash(normalizedText)}`;
 }
 
 function buildAfterReplyDedupKey(
@@ -2261,15 +2720,11 @@ async function onAfterReplyMessage(
     runtimeState.last_send?.message_id ??
     null;
   const pendingBeforeReplyBinding = pruneExpiredBeforeReplyBindingPending();
-  const activeBeforeReplyBinding =
+  const shouldAttemptBeforeReplyBindingMigration = Boolean(
     pendingBeforeReplyBinding &&
     !pendingBeforeReplyBinding.migrated &&
     Number.isFinite(pendingUserMessageId) &&
-    pendingBeforeReplyBinding.user_message_id === pendingUserMessageId
-      ? pendingBeforeReplyBinding
-      : null;
-  const shouldAttemptBeforeReplyBindingMigration = Boolean(
-    activeBeforeReplyBinding,
+    pendingBeforeReplyBinding.user_message_id === pendingUserMessageId,
   );
   const hasAfterReplyFlows = hasFlowsForTiming(settings, "after_reply");
   const decision = hasAfterReplyFlows
@@ -2331,73 +2786,60 @@ async function onAfterReplyMessage(
   lastAfterReplyTriggerByIdentityKey.set(identityKey, Date.now());
   queuedAfterReplyJobKeys.add(queueKey);
   queuedAfterReplyDedupKeys.add(dedupKey);
-  try {
-    setProcessing(true);
-    if (shouldRunAfterReplyWorkflow) {
-      await executeWorkflowWithPolicy(settings, {
-        messageId,
-        userInput,
-        injectReply: false,
-        timingFilter: "after_reply",
-        jobType: "live_auto",
-        trigger: {
-          timing: "after_reply",
-          source,
-          generation_type: generationType,
-          user_message_id: pendingUserMessageId ?? undefined,
-          assistant_message_id: messageId,
-        },
-        reminderMessage: "正在根据最新回复更新动态世界，请稍后…",
-        successMessage: "动态世界已根据最新回复完成更新。",
-      });
-    }
-    if (activeBeforeReplyBinding) {
-      const sourceMessageId = activeBeforeReplyBinding.source_message_id;
-      const requestId = activeBeforeReplyBinding.request_id;
-      const sourceMsg = getChatMessages(sourceMessageId)[0];
-      const assistantMsg = getChatMessages(messageId)[0];
-      if (sourceMsg && assistantMsg) {
-        const artifactMigration = await migrateBeforeReplyArtifactsToAssistant(
-          settings,
-          sourceMessageId,
-          messageId,
-          requestId,
-        );
-        const capsuleMigration = await migrateFloorWorkflowCapsuleToAssistant(
-          sourceMessageId,
-          messageId,
-        );
-        const migrationSettled = settleBeforeReplyMigration({
-          assistantMessageId: messageId,
-          artifactMigration,
-          capsuleMigration,
-          markPending: true,
-        });
-        if (
-          !migrationSettled &&
-          shouldWarnBeforeReplyMigration({
-            artifactMigration,
-            capsuleMigration,
-          })
-        ) {
-          console.warn(
-            "[Evolution World] before_reply migration did not complete:",
-            artifactMigration,
+  await enqueueWorkflowJob(
+    "live_auto",
+    `after_reply:${messageId}`,
+    async () => {
+      setProcessing(true);
+      try {
+        if (shouldAttemptBeforeReplyBindingMigration) {
+          const bindingMigration = await migrateBeforeReplyBindingToAssistant(
+            settings,
+            messageId,
+            pendingUserMessageId,
           );
+          if (bindingMigration.migrated) {
+            console.info(
+              `[Evolution World] before_reply binding migrated to assistant floor #${messageId} (snapshot=${bindingMigration.snapshot_migrated}, execution=${bindingMigration.execution_migrated})`,
+            );
+          }
         }
+
+        if (!shouldRunAfterReplyWorkflow) {
+          return;
+        }
+
+        await executeWorkflowWithPolicy(settings, {
+          messageId,
+          userInput,
+          injectReply: false,
+          timingFilter: "after_reply",
+          jobType: "live_auto",
+          trigger: appendTriggerMessageIds(
+            {
+              timing: "after_reply",
+              source,
+              generation_type: generationType,
+            },
+            {
+              userMessageId: pendingUserMessageId,
+              assistantMessageId: messageId,
+            },
+          ),
+          reminderMessage: "正在根据最新回复更新动态世界，请稍后…",
+          successMessage: "动态世界已根据最新回复完成更新。",
+        });
+        markAfterReplyHandled(messageId, messageText);
+      } finally {
+        processedAfterReplyIdentityKeys.add(identityKey);
+        clearAfterReplyPendingIfMatches(pendingUserMessageId);
+        clearSendContextIfMatches(pendingUserMessageId, userInput);
+        queuedAfterReplyJobKeys.delete(queueKey);
+        queuedAfterReplyDedupKeys.delete(dedupKey);
+        setProcessing(false);
       }
-    }
-    if (shouldRunAfterReplyWorkflow) {
-      markAfterReplyHandled(messageId, messageText);
-    }
-  } finally {
-    processedAfterReplyIdentityKeys.add(identityKey);
-    clearAfterReplyPendingIfMatches(pendingUserMessageId);
-    clearSendContextIfMatches(pendingUserMessageId, userInput);
-    queuedAfterReplyJobKeys.delete(queueKey);
-    queuedAfterReplyDedupKeys.delete(dedupKey);
-    setProcessing(false);
-  }
+    },
+  );
 }
 
 function isBeforeReplyMigrationSettled(reason?: string): boolean {
@@ -2820,102 +3262,12 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
   const rerollScope = settings.reroll_scope ?? "all";
 
   if (rerollScope === "queued_failed") {
-    const queuedOutcome = await (async () => {
-      const chatKey = getCurrentChatKey();
-      const jobs = getFailedAfterReplyJobs(chatKey);
-      if (jobs.length === 0) {
-        return { ok: false, reason: "当前聊天没有失败队列可供重跑" };
-      }
-
-      let retriedCount = 0;
-      let successCount = 0;
-      let failedCount = 0;
-      let skippedCount = 0;
-
-      for (let index = 0; index < jobs.length; index += 1) {
-        const job = jobs[index];
-        const resolved = await resolveFailedOnlyRerollTarget(
-          settings,
-          job.message_id,
-        );
-        if (!resolved.ok) {
-          removeFailedAfterReplyJob(chatKey, job.message_id);
-          skippedCount += 1;
-          continue;
-        }
-
-        retriedCount += 1;
-        if (settings.floor_binding_enabled) {
-          await rollbackBeforeFloor(settings, job.message_id);
-        }
-
-        const outcome = await executeWorkflowWithPolicy(settings, {
-          messageId: job.message_id,
-          userInput: job.user_input,
-          injectReply: false,
-          flowIds: resolved.flowIds,
-          timingFilter: "after_reply",
-          preservedResults: resolved.preservedResults,
-          jobType: "live_reroll",
-          trigger: {
-            timing: "after_reply",
-            source: "queued_failed_reroll",
-            generation_type: job.generation_type,
-            user_message_id: Number.isFinite(job.user_message_id)
-              ? Number(job.user_message_id)
-              : undefined,
-            assistant_message_id: job.message_id,
-          },
-          reminderMessage: `正在重跑失败队列 ${index + 1}/${jobs.length}，请稍后…`,
-          successMessage: `失败队列 ${index + 1}/${jobs.length} 已处理完成。`,
-        });
-
-        if (outcome.abortedByUser) {
-          return {
-            ok: false,
-            reason: `已终止失败队列重跑，已完成 ${successCount}/${retriedCount} 条。`,
-          };
-        }
-
-        if (outcome.workflowSucceeded) {
-          const queuedMessageText = getMessageText(job.message_id);
-          if (queuedMessageText.trim()) {
-            markAfterReplyHandled(job.message_id, queuedMessageText);
-          }
-          successCount += 1;
-        } else {
-          failedCount += 1;
-        }
-      }
-
-      if (retriedCount === 0) {
-        return {
-          ok: false,
-          reason: "失败队列中的楼层记录已失效，已自动清理。",
-        };
-      }
-
-      if (failedCount > 0) {
-        return {
-          ok: false,
-          reason: `失败队列已重跑 ${retriedCount} 条，其中 ${successCount} 条成功，${failedCount} 条仍失败${skippedCount > 0 ? `，${skippedCount} 条已跳过` : ""}。`,
-        };
-      }
-
-      return {
-        ok: true,
-        reason:
-          skippedCount > 0
-            ? `失败队列已重跑完成，共成功 ${successCount} 条，另有 ${skippedCount} 条失效记录已跳过。`
-            : `失败队列已重跑完成，共成功 ${successCount} 条。`,
-      };
-    })();
-
-    return queuedOutcome;
+    return rerollQueuedFailedAfterReplyWorkflows(settings);
   }
 
   let flowIds: string[] | undefined;
   let preservedResults: FloorWorkflowStoredResult[] = [];
+  let failedOnlyFallbackToAll = false;
 
   if (rerollScope === "failed_only") {
     const resolved = await resolveFailedOnlyRerollTarget(settings, messageId);
@@ -2924,40 +3276,59 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
     }
     flowIds = resolved.flowIds;
     preservedResults = resolved.preservedResults;
+    failedOnlyFallbackToAll = Boolean(resolved.fallbackToAll);
   }
 
-  setProcessing(true);
   try {
-    if (settings.floor_binding_enabled) {
-      await rollbackBeforeFloor(settings, messageId);
-    }
+    const outcome = await enqueueWorkflowJob(
+      "live_reroll",
+      `reroll_after_reply:${messageId}`,
+      async () => {
+        setProcessing(true);
+        try {
+          if (settings.floor_binding_enabled) {
+            await rollbackBeforeFloor(settings, messageId);
+          }
 
-    const outcome = await executeWorkflowWithPolicy(settings, {
-      messageId,
-      userInput,
-      injectReply: false,
-      flowIds,
-      timingFilter: "after_reply",
-      preservedResults,
-      jobType: "live_reroll",
-      trigger: {
-        timing: "after_reply",
-        source: "fab_double_click",
-        generation_type: generationType,
-        user_message_id:
-          runtimeState.after_reply.pending_user_message_id ??
-          runtimeState.last_send?.message_id,
-        assistant_message_id: messageId,
+          return await executeWorkflowWithPolicy(settings, {
+            messageId,
+            userInput,
+            injectReply: false,
+            flowIds,
+            timingFilter: "after_reply",
+            preservedResults,
+            jobType: "live_reroll",
+            trigger: appendTriggerMessageIds(
+              {
+                timing: "after_reply",
+                source: "fab_double_click",
+                generation_type: generationType,
+              },
+              {
+                userMessageId:
+                  runtimeState.after_reply.pending_user_message_id ??
+                  runtimeState.last_send?.message_id,
+                assistantMessageId: messageId,
+              },
+            ),
+            reminderMessage:
+              rerollScope === "failed_only" && flowIds?.length
+                ? failedOnlyFallbackToAll
+                  ? `当前楼上次失败发生在合并或写回阶段，正在回退重跑该楼关联的 ${flowIds.length} 条工作流，请稍后…`
+                  : `正在重跑当前楼失败的 ${flowIds.length} 条工作流，请稍后…`
+                : "正在重跑当前楼的回复后工作流，请稍后…",
+            successMessage:
+              rerollScope === "failed_only" && flowIds?.length
+                ? failedOnlyFallbackToAll
+                  ? "当前楼因整轮失败而回退重跑的工作流已完成。"
+                  : "当前楼失败的工作流已重跑完成。"
+                : "当前楼的动态世界工作流已重跑完成。",
+          });
+        } finally {
+          setProcessing(false);
+        }
       },
-      reminderMessage:
-        rerollScope === "failed_only" && flowIds?.length
-          ? `正在重跑当前楼失败的 ${flowIds.length} 条工作流，请稍后…`
-          : "正在重跑当前楼的回复后工作流，请稍后…",
-      successMessage:
-        rerollScope === "failed_only" && flowIds?.length
-          ? "当前楼失败的工作流已重跑完成。"
-          : "当前楼的动态世界工作流已重跑完成。",
-    });
+    );
 
     if (outcome.workflowSucceeded) {
       markAfterReplyHandled(messageId, messageText);
@@ -2974,13 +3345,130 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
       ok: false,
       reason: error instanceof Error ? error.message : String(error),
     };
-  } finally {
-    setProcessing(false);
+  }
+}
+
+async function rerollQueuedFailedAfterReplyWorkflows(
+  settings: EwSettings,
+): Promise<{ ok: boolean; reason?: string }> {
+  const chatKey = getCurrentChatKey();
+  const jobs = getFailedAfterReplyJobs(chatKey);
+  if (jobs.length === 0) {
+    return { ok: false, reason: "当前聊天没有失败队列可供重跑" };
+  }
+
+  try {
+    const outcome = await enqueueWorkflowJob(
+      "live_reroll",
+      `reroll_failed_queue:${chatKey}`,
+      async () => {
+        setProcessing(true);
+        try {
+          let retriedCount = 0;
+          let successCount = 0;
+          let failedCount = 0;
+          let skippedCount = 0;
+
+          for (let index = 0; index < jobs.length; index += 1) {
+            const job = jobs[index];
+            const resolved = await resolveFailedOnlyRerollTarget(
+              settings,
+              job.message_id,
+            );
+            if (!resolved.ok) {
+              removeFailedAfterReplyJob(chatKey, job.message_id);
+              skippedCount += 1;
+              continue;
+            }
+
+            retriedCount += 1;
+            if (settings.floor_binding_enabled) {
+              await rollbackBeforeFloor(settings, job.message_id);
+            }
+
+            const outcome = await executeWorkflowWithPolicy(settings, {
+              messageId: job.message_id,
+              userInput: job.user_input,
+              injectReply: false,
+              flowIds: resolved.flowIds,
+              timingFilter: "after_reply",
+              preservedResults: resolved.preservedResults,
+              jobType: "live_reroll",
+              trigger: {
+                timing: "after_reply",
+                source: "queued_failed_reroll",
+                generation_type: job.generation_type,
+                user_message_id: Number.isFinite(job.user_message_id)
+                  ? Number(job.user_message_id)
+                  : undefined,
+                assistant_message_id: job.message_id,
+              },
+              reminderMessage: `正在重跑失败队列 ${index + 1}/${jobs.length}，请稍后…`,
+              successMessage: `失败队列 ${index + 1}/${jobs.length} 已处理完成。`,
+            });
+
+            if (outcome.abortedByUser) {
+              return {
+                ok: false,
+                reason: `已终止失败队列重跑，已完成 ${successCount}/${retriedCount} 条。`,
+              };
+            }
+
+            if (outcome.workflowSucceeded) {
+              const queuedMessageText = getMessageText(job.message_id);
+              if (queuedMessageText.trim()) {
+                markAfterReplyHandled(job.message_id, queuedMessageText);
+              }
+              successCount += 1;
+            } else {
+              failedCount += 1;
+            }
+          }
+
+          if (retriedCount === 0) {
+            return {
+              ok: false,
+              reason: "失败队列中的楼层记录已失效，已自动清理。",
+            };
+          }
+
+          if (failedCount > 0) {
+            return {
+              ok: false,
+              reason: `失败队列已重跑 ${retriedCount} 条，其中 ${successCount} 条成功，${failedCount} 条仍失败${skippedCount > 0 ? `，${skippedCount} 条已跳过` : ""}。`,
+            };
+          }
+
+          return {
+            ok: true,
+            reason:
+              skippedCount > 0
+                ? `失败队列已重跑完成，共成功 ${successCount} 条，另有 ${skippedCount} 条失效记录已跳过。`
+                : `失败队列已重跑完成，共成功 ${successCount} 条。`,
+          };
+        } finally {
+          setProcessing(false);
+        }
+      },
+    );
+
+    return outcome;
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
 export function initRuntimeEvents() {
   const eventTypes = getEventTypes();
+  const hostWindow = globalThis as Record<string, unknown>;
+  if (runtimeEventsInitialized || hostWindow.__ewRuntimeEventsInitialized) {
+    return;
+  }
+  runtimeEventsInitialized = true;
+  hostWindow.__ewRuntimeEventsInitialized = true;
 
   installPrimaryGenerateInterceptor();
   installSendIntentHooks();
@@ -3029,10 +3517,12 @@ export function initRuntimeEvents() {
 
   listenerStops.push(
     onSTEvent(eventTypes.CHAT_CHANGED, () => {
+      clearQueuedWorkflowTasks("workflow queue cleared because chat changed");
       resetRuntimeState();
       resetInterceptGuard();
       setTimeout(() => {
         installSendIntentHooks();
+        installPrimaryGenerateInterceptor();
       }, 300);
     }),
   );
@@ -3042,6 +3532,9 @@ export function initRuntimeEvents() {
 }
 
 export function disposeRuntimeEvents() {
+  runtimeEventsInitialized = false;
+  delete (globalThis as Record<string, unknown>).__ewRuntimeEventsInitialized;
+  clearQueuedWorkflowTasks("runtime events disposed");
   for (const stop of listenerStops.splice(0, listenerStops.length)) {
     stop();
   }

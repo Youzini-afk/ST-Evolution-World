@@ -24,7 +24,7 @@ export type EwWorkflowNoticeInput = EwNoticeInput & {
     extra_count?: number;
   };
   workflow_name?: string;
-  flow_progress?: { completed: number; total: number };
+  flow_progress?: { completed: number; total: number; failed?: number };
 };
 
 export type EwNoticeHandle = {
@@ -45,7 +45,18 @@ const WORKFLOW_STYLE_ID = "ew-workflow-notice-style";
 const WORKFLOW_HOST_ID = "ew-workflow-notice-host";
 
 function resolveNoticeDocument(): Document {
-  return document;
+  const runtime = globalThis as Record<string, any>;
+  const chatDocument = runtime.SillyTavern?.Chat?.document;
+  if (chatDocument && typeof chatDocument.querySelector === "function") {
+    return chatDocument as Document;
+  }
+
+  try {
+    return (window.parent && window.parent !== window ? window.parent : window)
+      .document;
+  } catch {
+    return document;
+  }
 }
 
 function ensureStyle(doc: Document) {

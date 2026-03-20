@@ -388,11 +388,14 @@ export const EwSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   total_timeout_ms: z.coerce.number().int().positive().default(300000),
   dispatch_mode: z.enum(["parallel", "serial"]).default("parallel"),
+  workflow_chat_context_mode: z
+    .enum(["host_processed", "raw_chat_preferred"])
+    .default("host_processed"),
   after_reply_delay_seconds: z.coerce.number().min(0).default(0),
   strip_workflow_image_blocks: z.boolean().default(true),
   auto_reroll_max_attempts: z.coerce.number().int().min(1).default(1),
   auto_reroll_interval_seconds: z.coerce.number().min(0).default(0),
-  parallel_dispatch_interval_seconds: z.coerce.number().min(0).default(10),
+  parallel_dispatch_interval_seconds: z.coerce.number().min(0).default(0),
   serial_dispatch_interval_seconds: z.coerce.number().min(0).default(2),
   workflow_timing: z
     .enum(["after_reply", "before_reply"])
@@ -703,9 +706,20 @@ export type ControllerTemplateSlot = {
   content: string;
 };
 
+export type MergedWorldbookDesiredEntry = {
+  name: string;
+  content: string;
+  enabled: boolean;
+  source_flow_id: string;
+  source_flow_name: string;
+  priority: number;
+  flow_order: number;
+  dyn_write: DynWriteConfig;
+};
+
 export type MergedPlan = {
   worldbook: {
-    desired_entries: Array<{ name: string; content: string; enabled: boolean }>;
+    desired_entries: MergedWorldbookDesiredEntry[];
     remove_entries: Array<{ name: string }>;
   };
   controller_models: ControllerModelSlot[];
