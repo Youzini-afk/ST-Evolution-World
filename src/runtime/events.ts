@@ -875,7 +875,10 @@ function buildFloorWorkflowExecutionSummaryMap(
 function isExecutionSummaryOnlyMap(raw: unknown): boolean {
   const map = normalizeFloorWorkflowExecutionMap(raw);
   const values = Object.values(map);
-  return values.length > 0 && values.every((value) => Boolean(value.details_externalized));
+  return (
+    values.length > 0 &&
+    values.every((value) => Boolean(value.details_externalized))
+  );
 }
 
 async function readFloorWorkflowExecutionMapComplete(
@@ -1219,7 +1222,10 @@ function buildWorkflowReplayCapsuleSummaryMap(
 function isWorkflowReplayCapsuleSummaryMap(raw: unknown): boolean {
   const map = normalizeWorkflowReplayCapsuleMap(raw);
   const values = Object.values(map);
-  return values.length > 0 && values.every((value) => Boolean(value.details_externalized));
+  return (
+    values.length > 0 &&
+    values.every((value) => Boolean(value.details_externalized))
+  );
 }
 
 async function readWorkflowReplayCapsuleMapComplete(
@@ -3403,6 +3409,73 @@ function resolveAssistantSourceUserMessageId(messageId: number): number | null {
   return null;
 }
 
+export async function compactCurrentChatArtifacts(
+  settings = getSettings(),
+): Promise<{ compacted: number; warnings: string[] }> {
+  if (settings.snapshot_storage !== "file") {
+    return { compacted: 0, warnings: [] };
+  }
+
+  const chatKey = getCurrentChatKey();
+  const existing = artifactCompactionInFlightByChat.get(chatKey);
+  if (existing) {
+    return existing;
+  }
+
+  const task = (async () => {
+    const warnings: string[] = [];
+    let compacted = 0;
+    const lastId = getLastMessageId();
+    if (lastId < 0) {
+      return { compacted, warnings };
+    }
+
+    const allMessages = getChatMessages(`0-${lastId}`);
+    for (const msg of allMessages) {
+      const rawExecution = msg?.data?.[EW_FLOOR_WORKFLOW_EXECUTION_KEY];
+      const rawCapsule = msg?.data?.[EW_WORKFLOW_REPLAY_CAPSULE_KEY];
+      const executionMap = normalizeFloorWorkflowExecutionMap(rawExecution);
+      const capsuleMap = normalizeWorkflowReplayCapsuleMap(rawCapsule);
+      const shouldCompactExecution =
+        Object.keys(executionMap).length > 0 &&
+        !isExecutionSummaryOnlyMap(rawExecution);
+      const shouldCompactCapsule =
+        Object.keys(capsuleMap).length > 0 &&
+        !isWorkflowReplayCapsuleSummaryMap(rawCapsule);
+      if (!shouldCompactExecution && !shouldCompactCapsule) {
+        continue;
+      }
+
+      try {
+        if (shouldCompactExecution) {
+          await persistFloorWorkflowExecutionMap(msg.message_id, executionMap);
+        }
+        if (shouldCompactCapsule) {
+          await persistWorkflowReplayCapsuleMap(msg.message_id, capsuleMap);
+        }
+        compacted += 1;
+      } catch (error) {
+        warnings.push(
+          `message #${msg.message_id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (warnings.length > 0) {
+      console.warn("[Evolution World] artifact compaction warnings:", warnings);
+    }
+
+    return { compacted, warnings };
+  })();
+
+  artifactCompactionInFlightByChat.set(chatKey, task);
+  try {
+    return await task;
+  } finally {
+    artifactCompactionInFlightByChat.delete(chatKey);
+  }
+}
+
 async function writeRederiveMeta(
   messageId: number,
   meta: {
@@ -3953,11 +4026,55 @@ export function initRuntimeEvents() {
         installSendIntentHooks();
         installPrimaryGenerateInterceptor();
       }, 300);
+      setTimeout(() => {
+        if (getSettings().enabled) {
+          void (async () => {
+            try {
+              await compactCurrentChatArtifacts(getSettings());
+            } catch (error) {
+              console.warn(
+                "[Evolution World] artifact compaction during chat change failed:",
+                error,
+              );
+            }
+            try {
+              await repairCurrentChatSuspiciousEmptySnapshots();
+            } catch (error) {
+              console.warn(
+                "[Evolution World] suspicious empty snapshot repair during chat change failed:",
+                error,
+              );
+            }
+          })();
+        }
+      }, 900);
     }),
   );
 
   // Initialize floor binding event listeners for automatic cleanup.
   initFloorBindingEvents(getSettings);
+  setTimeout(() => {
+    if (getSettings().enabled) {
+      void (async () => {
+        try {
+          await compactCurrentChatArtifacts(getSettings());
+        } catch (error) {
+          console.warn(
+            "[Evolution World] artifact compaction during init failed:",
+            error,
+          );
+        }
+        try {
+          await repairCurrentChatSuspiciousEmptySnapshots();
+        } catch (error) {
+          console.warn(
+            "[Evolution World] suspicious empty snapshot repair during init failed:",
+            error,
+          );
+        }
+      })();
+    }
+  }, 900);
 }
 
 export function disposeRuntimeEvents() {

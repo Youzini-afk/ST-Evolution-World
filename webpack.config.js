@@ -48,15 +48,31 @@ const config = {
           transpileOnly: true,
         },
       },
-      // CSS (包括 Vue SFC <style> 和 node_modules CSS 如 @vue-flow)
+      // CSS：Vue SFC 使用运行时注入，普通样式仍抽离到静态文件
       {
         test: /\.css$/,
-        use: [MiniCssExtractPlugin.loader, "css-loader"],
+        oneOf: [
+          {
+            resourceQuery: /vue/,
+            use: ["vue-style-loader", "css-loader"],
+          },
+          {
+            use: [MiniCssExtractPlugin.loader, "css-loader"],
+          },
+        ],
       },
-      // SCSS
+      // SCSS：Vue SFC 使用运行时注入，普通样式仍抽离到静态文件
       {
         test: /\.s[ac]ss$/,
-        use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
+        oneOf: [
+          {
+            resourceQuery: /vue/,
+            use: ["vue-style-loader", "css-loader", "sass-loader"],
+          },
+          {
+            use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
+          },
+        ],
       },
     ],
   },
@@ -69,6 +85,12 @@ const config = {
     }),
 
     AutoImport({
+      include: [
+        /\.[tj]sx?$/,
+        /\.vue$/,
+        /\.vue\?vue&type=script/,
+        /\.vue\.[tj]sx?\?vue/,
+      ],
       imports: [
         "vue",
         "pinia",
