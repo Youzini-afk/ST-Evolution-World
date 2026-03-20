@@ -448,12 +448,12 @@ function normalizeSettings(raw: unknown): EwSettings {
     flows: normalizedFlows,
   });
 
-  // Auto-migrate legacy flows → WorkbenchGraphs (if workbench is empty)
-  if (
-    (!result.graph_canvas_slots || result.graph_canvas_slots.length === 0) &&
-    normalizedFlows.length > 0 &&
-    !(result as any).workbench_graphs?.length
-  ) {
+  // Auto-migrate legacy flows → WorkbenchGraphs whenever graphs are still empty.
+  // `graph_canvas_slots` is UI canvas state and may legitimately be populated even
+  // when legacy-flow users still rely on runtime `workbench_graphs` hydration.
+  // Gating on slots here can silently skip migration and break graph runtime
+  // compatibility after settings hydration/normalization.
+  if (normalizedFlows.length > 0 && !(result as any).workbench_graphs?.length) {
     try {
       // Direct import — flow-migrator is bundled by webpack
       (result as any).workbench_graphs = migrateAllFlows(normalizedFlows);

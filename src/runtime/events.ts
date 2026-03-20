@@ -1377,14 +1377,15 @@ async function migrateFloorWorkflowCapsuleToAssistant(
     return { migrated: false, reason: "message_not_found" };
   }
 
-  const sourceMap = readWorkflowReplayCapsuleMap(sourceMessageId);
+  const sourceMap = await readWorkflowReplayCapsuleMapComplete(sourceMessageId);
   const sourceVersionInfo = getMessageVersionInfo(sourceMsg);
   const sourceCapsule = sourceMap[sourceVersionInfo.version_key];
   if (!sourceCapsule) {
     return { migrated: false, reason: "source_capsule_missing" };
   }
 
-  const assistantMap = readWorkflowReplayCapsuleMap(assistantMessageId);
+  const assistantMap =
+    await readWorkflowReplayCapsuleMapComplete(assistantMessageId);
   const assistantVersionInfo = getMessageVersionInfo(assistantMsg);
   const targetKey = assistantVersionInfo.version_key;
   const nextCapsule: WorkflowReplayCapsule = {
@@ -1405,27 +1406,8 @@ async function migrateFloorWorkflowCapsuleToAssistant(
   assistantMap[targetKey] = nextCapsule;
   delete sourceMap[sourceVersionInfo.version_key];
 
-  const sourceNextData: Record<string, unknown> = {
-    ...(sourceMsg.data ?? {}),
-  };
-  if (Object.keys(sourceMap).length > 0) {
-    sourceNextData[EW_WORKFLOW_REPLAY_CAPSULE_KEY] = sourceMap;
-  } else {
-    delete sourceNextData[EW_WORKFLOW_REPLAY_CAPSULE_KEY];
-  }
-
-  const assistantNextData: Record<string, unknown> = {
-    ...(assistantMsg.data ?? {}),
-    [EW_WORKFLOW_REPLAY_CAPSULE_KEY]: assistantMap,
-  };
-
-  await setChatMessages(
-    [
-      { message_id: sourceMessageId, data: sourceNextData },
-      { message_id: assistantMessageId, data: assistantNextData },
-    ],
-    { refresh: "none" },
-  );
+  await persistWorkflowReplayCapsuleMap(sourceMessageId, sourceMap);
+  await persistWorkflowReplayCapsuleMap(assistantMessageId, assistantMap);
 
   return { migrated: true };
 }
@@ -1466,7 +1448,8 @@ async function migrateFloorWorkflowExecutionToAssistant(
 
   const sourceVersionInfo = getMessageVersionInfo(sourceMsg);
   const assistantVersionInfo = getMessageVersionInfo(assistantMsg);
-  const sourceMap = readFloorWorkflowExecutionMap(sourceMessageId);
+  const sourceMap =
+    await readFloorWorkflowExecutionMapComplete(sourceMessageId);
   const sourceResolved = resolveExecutionStateForVersion(
     sourceMap,
     buildExecutionVersionKey(sourceVersionInfo),
@@ -1476,7 +1459,8 @@ async function migrateFloorWorkflowExecutionToAssistant(
   }
 
   const sourceNextMap = { ...sourceMap };
-  const assistantMap = readFloorWorkflowExecutionMap(assistantMessageId);
+  const assistantMap =
+    await readFloorWorkflowExecutionMapComplete(assistantMessageId);
   const assistantNextMap = { ...assistantMap };
   const assistantVersionKey = buildExecutionVersionKey(assistantVersionInfo);
   let mutated = false;
@@ -1499,27 +1483,8 @@ async function migrateFloorWorkflowExecutionToAssistant(
     return { migrated: false, reason: "already_migrated" };
   }
 
-  const sourceNextData: Record<string, unknown> = {
-    ...(sourceMsg.data ?? {}),
-  };
-  if (Object.keys(sourceNextMap).length > 0) {
-    sourceNextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY] = sourceNextMap;
-  } else {
-    delete sourceNextData[EW_FLOOR_WORKFLOW_EXECUTION_KEY];
-  }
-
-  const assistantNextData: Record<string, unknown> = {
-    ...(assistantMsg.data ?? {}),
-    [EW_FLOOR_WORKFLOW_EXECUTION_KEY]: assistantNextMap,
-  };
-
-  await setChatMessages(
-    [
-      { message_id: sourceMessageId, data: sourceNextData },
-      { message_id: assistantMessageId, data: assistantNextData },
-    ],
-    { refresh: "none" },
-  );
+  await persistFloorWorkflowExecutionMap(sourceMessageId, sourceNextMap);
+  await persistFloorWorkflowExecutionMap(assistantMessageId, assistantNextMap);
 
   return { migrated: true };
 }
@@ -1918,7 +1883,10 @@ async function resolveFailedOnlyRerollTarget(
       reason: string;
     }
 > {
-  const executionState = readFloorWorkflowExecution(messageId);
+  const executionState = await readFloorWorkflowExecutionComplete(
+    messageId,
+    "history",
+  );
   if (!executionState) {
     return { ok: false, reason: "当前楼还没有可用的失败执行记录" };
   }
