@@ -27,6 +27,7 @@ import {
   cleanupSnapshotFiles,
   deleteSnapshot,
   FILE_ARTIFACT_VERSION,
+  hasSnapshotStorePayload,
   readSnapshotStore,
   writeSnapshot,
   writeSnapshotStore,
@@ -601,6 +602,166 @@ async function readSnapshotForMessageDetailed(
 async function readSnapshotForMessage(msg: any): Promise<SnapshotData | null> {
   const readResult = await readSnapshotForMessageDetailed(msg, "strict");
   return readResult.snapshot;
+}
+
+function isEmptySnapshotPayload(
+  snapshot: SnapshotData | null | undefined,
+): boolean {
+  if (!snapshot) {
+    return false;
+  }
+  return (
+    (snapshot.controllers?.length ?? 0) === 0 &&
+    (snapshot.dyn_entries?.length ?? 0) === 0
+  );
+}
+
+export async function repairCurrentChatSuspiciousEmptySnapshots(): Promise<{
+  repaired: number;
+  warnings: string[];
+}> {
+  const warnings: string[] = [];
+  let repaired = 0;
+  const lastId = getLastMessageId();
+  if (lastId < 0) {
+    return { repaired, warnings };
+  }
+
+  const allMessages = getChatMessages(`0-${lastId}`);
+  for (const msg of allMessages) {
+    if (String(msg?.role ?? "") !== "assistant") {
+      continue;
+    }
+
+    const versionInfo = getMessageVersionInfo(msg);
+    const currentVersionKey = versionInfo.version_key;
+    const sources = await loadSnapshotVersionSources(msg);
+    if (sources.length === 0) {
+      continue;
+    }
+
+    const exactEmptySources = sources.filter((source) =>
+      isEmptySnapshotPayload(source.versions[currentVersionKey]),
+    );
+    if (exactEmptySources.length === 0) {
+      continue;
+    }
+
+    const executionState = resolveExecutionEntryForMessage(msg)?.state;
+    if (!executionState || !executionState.workflow_failed) {
+      continue;
+    }
+
+    const fallbackSources = sources
+      .map((source) => {
+        if (!source.versions[currentVersionKey]) {
+          return source;
+        }
+        const nextVersions = { ...source.versions };
+        delete nextVersions[currentVersionKey];
+        return {
+          ...source,
+          versions: nextVersions,
+        };
+      })
+      .filter((source) => Object.keys(source.versions).length > 0);
+
+    if (fallbackSources.length === 0) {
+      continue;
+    }
+
+    const fallbackReadResult = selectSnapshotFromSources(
+      fallbackSources,
+      versionInfo,
+      "history",
+    );
+    if (
+      !fallbackReadResult.snapshot ||
+      isEmptySnapshotPayload(fallbackReadResult.snapshot)
+    ) {
+      continue;
+    }
+
+    const nextData: Record<string, unknown> = {
+      ...(msg.data ?? {}),
+    };
+    let mutated = false;
+
+    const inlineVersions = readInlineSnapshotVersions(msg.data ?? {});
+    if (isEmptySnapshotPayload(inlineVersions[currentVersionKey])) {
+      delete inlineVersions[currentVersionKey];
+      mutated = true;
+      if (Object.keys(inlineVersions).length > 0) {
+        writeInlineSnapshotVersions(nextData, inlineVersions);
+      } else {
+        delete nextData[EW_INLINE_SNAPSHOT_VERSIONS_KEY];
+      }
+    }
+
+    for (const source of exactEmptySources) {
+      if (source.source !== "file" || !source.fileName) {
+        continue;
+      }
+
+      try {
+        const store = await readSnapshotStore(source.fileName);
+        if (
+          !store ||
+          !isEmptySnapshotPayload(store.versions[currentVersionKey])
+        ) {
+          continue;
+        }
+
+        delete store.versions[currentVersionKey];
+        if (hasSnapshotStorePayload(store)) {
+          await writeSnapshotStore(source.fileName, store);
+        } else {
+          await deleteSnapshot(source.fileName);
+        }
+        mutated = true;
+      } catch (error) {
+        warnings.push(
+          `message #${msg.message_id} file ${source.fileName}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    if (!mutated) {
+      continue;
+    }
+
+    nextData[EW_SWIPE_ID_KEY] = versionInfo.swipe_id;
+    if (versionInfo.content_hash) {
+      nextData[EW_CONTENT_HASH_KEY] = versionInfo.content_hash;
+    } else {
+      delete nextData[EW_CONTENT_HASH_KEY];
+    }
+
+    const explicitFileName =
+      typeof nextData[EW_SNAPSHOT_FILE_KEY] === "string"
+        ? String(nextData[EW_SNAPSHOT_FILE_KEY]).trim()
+        : "";
+    if (explicitFileName) {
+      const explicitStore = await readSnapshotStore(explicitFileName);
+      if (!explicitStore || !hasSnapshotStorePayload(explicitStore)) {
+        delete nextData[EW_SNAPSHOT_FILE_KEY];
+      }
+    }
+
+    await setChatMessages([{ message_id: msg.message_id, data: nextData }], {
+      refresh: "none",
+    });
+    repaired += 1;
+  }
+
+  if (warnings.length > 0) {
+    console.warn(
+      "[Evolution World] suspicious empty snapshot repair warnings:",
+      warnings,
+    );
+  }
+
+  return { repaired, warnings };
 }
 
 export async function pinMessageSnapshotToCurrentVersion(

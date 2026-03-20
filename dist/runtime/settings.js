@@ -1,0 +1,618 @@
+import { klona } from "klona";
+import _ from "lodash";
+import { createDefaultApiPreset, createDefaultFlow } from "./factory";
+import { migrateAllFlows } from "./flow-migrator";
+import { simpleHash } from "./helpers";
+import { readSharedSettings, writeSharedSettings, } from "./shared-settings-storage";
+import { DEFAULT_PROMPT_ORDER, EwApiPresetSchema, EwFlowConfigSchema, EwSettingsSchema, LastIoSummarySchema, RunSummarySchema, } from "./types";
+const LOCAL_STORAGE_KEY = "evolution_world_assistant";
+const settingsListeners = new Set();
+const runListeners = new Set();
+const ioListeners = new Set();
+const SHARED_SETTINGS_WRITE_DELAY_MS = 120;
+const MAX_WORKFLOW_ROUND_COUNTER_CHATS = 40;
+const MAX_DEBUG_RECORD_CHATS = 80;
+let cachedSettings = null;
+let cachedLastRun = undefined;
+let cachedLastIo = undefined;
+let sharedSettingsHydrationPromise = null;
+let sharedSettingsWriteTimer = null;
+let pendingSharedSettings = null;
+let sharedSettingsWritePromise = Promise.resolve();
+let hydrationComplete = false;
+// M-3: 使用 factory.ts 中的共享工厂函数。
+const makeDefaultApiPreset = createDefaultApiPreset;
+const makeDefaultFlow = createDefaultFlow;
+function readScriptStorage() {
+    try {
+        const raw = globalThis.localStorage?.getItem(LOCAL_STORAGE_KEY);
+        if (!raw) {
+            return {};
+        }
+        const parsed = JSON.parse(raw);
+        if (!_.isPlainObject(parsed)) {
+            return {};
+        }
+        return parsed;
+    }
+    catch (error) {
+        console.warn("[Evolution World] Failed to read local storage cache:", error);
+        return {};
+    }
+}
+function writeScriptStorage(updater) {
+    const previous = readScriptStorage();
+    const nextStorage = updater(previous);
+    try {
+        globalThis.localStorage?.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextStorage));
+    }
+    catch (error) {
+        console.warn("[Evolution World] Failed to write local storage cache:", error);
+    }
+}
+function persistLocalSettings(settings) {
+    writeScriptStorage((previous) => ({ ...previous, settings }));
+}
+function normalizeWorkflowRoundCounterEntry(raw) {
+    return {
+        before_reply: Math.max(0, Math.trunc(Number(raw?.before_reply ?? 0) || 0)),
+        after_reply: Math.max(0, Math.trunc(Number(raw?.after_reply ?? 0) || 0)),
+        updated_at: Math.max(0, Math.trunc(Number(raw?.updated_at ?? 0) || 0)),
+    };
+}
+export function advanceWorkflowRoundCounter(chatId, timing) {
+    let nextValue = 1;
+    writeScriptStorage((previous) => {
+        const counters = {
+            ...(previous.workflow_round_counters ?? {}),
+        };
+        const entry = normalizeWorkflowRoundCounterEntry(counters[chatId]);
+        nextValue = entry[timing] + 1;
+        counters[chatId] = {
+            ...entry,
+            [timing]: nextValue,
+            updated_at: Date.now(),
+        };
+        const entries = Object.entries(counters);
+        if (entries.length > MAX_WORKFLOW_ROUND_COUNTER_CHATS) {
+            entries.sort((left, right) => (Number(right[1]?.updated_at ?? 0) || 0) -
+                (Number(left[1]?.updated_at ?? 0) || 0));
+            for (const [staleChatId] of entries.slice(MAX_WORKFLOW_ROUND_COUNTER_CHATS)) {
+                delete counters[staleChatId];
+            }
+        }
+        return {
+            ...previous,
+            workflow_round_counters: counters,
+        };
+    });
+    return nextValue;
+}
+function queueSharedSettingsPersist(settings) {
+    pendingSharedSettings = klona(settings);
+    if (sharedSettingsWriteTimer !== null) {
+        clearTimeout(sharedSettingsWriteTimer);
+    }
+    sharedSettingsWriteTimer = setTimeout(() => {
+        sharedSettingsWriteTimer = null;
+        const nextSettings = pendingSharedSettings;
+        pendingSharedSettings = null;
+        if (!nextSettings) {
+            return;
+        }
+        sharedSettingsWritePromise = sharedSettingsWritePromise
+            .catch(() => undefined)
+            .then(async () => {
+            await writeSharedSettings(nextSettings);
+        })
+            .catch((error) => {
+            console.warn("[Evolution World] Failed to persist shared settings:", error);
+        });
+    }, SHARED_SETTINGS_WRITE_DELAY_MS);
+}
+function ensurePresetId(rawId, index, usedIds) {
+    let nextId = rawId.trim() ||
+        `api_${index + 1}_${simpleHash(`api-${index}-${Date.now()}`)}`;
+    while (usedIds.has(nextId)) {
+        nextId = `${nextId}_${usedIds.size + 1}`;
+    }
+    usedIds.add(nextId);
+    return nextId;
+}
+function ensurePresetName(baseName, usedNames) {
+    const trimmed = baseName.trim() || "API配置";
+    if (!usedNames.has(trimmed)) {
+        usedNames.add(trimmed);
+        return trimmed;
+    }
+    let counter = 2;
+    let nextName = `${trimmed} ${counter}`;
+    while (usedNames.has(nextName)) {
+        counter += 1;
+        nextName = `${trimmed} ${counter}`;
+    }
+    usedNames.add(nextName);
+    return nextName;
+}
+function ensureFlowId(rawId, index, flowName, usedIds) {
+    const trimmed = rawId.trim();
+    const baseId = trimmed ||
+        `flow_${index + 1}_${simpleHash(`${index}:${flowName || "flow"}`)}`;
+    let nextId = baseId;
+    let counter = 2;
+    while (usedIds.has(nextId)) {
+        nextId = `${baseId}__${counter}`;
+        counter += 1;
+    }
+    usedIds.add(nextId);
+    return nextId;
+}
+function normalizeApiPresets(rawPresets) {
+    const usedIds = new Set();
+    const usedNames = new Set();
+    const normalized = rawPresets.map((preset, index) => {
+        const parsed = EwApiPresetSchema.parse(preset);
+        const id = ensurePresetId(parsed.id, index, usedIds);
+        const name = ensurePresetName(parsed.name, usedNames);
+        return EwApiPresetSchema.parse({
+            ...parsed,
+            id,
+            name,
+            mode: parsed.mode ?? "workflow_http",
+            use_main_api: parsed.use_main_api ?? false,
+            model: parsed.model ?? "",
+            api_source: parsed.api_source ?? "openai",
+            model_candidates: parsed.model_candidates ?? [],
+        });
+    });
+    if (normalized.length > 0) {
+        return normalized;
+    }
+    return [];
+}
+function findPresetByLegacyFields(presets, flow) {
+    const legacyUrl = flow.api_url.trim();
+    const legacyKey = flow.api_key.trim();
+    const legacyHeaders = flow.headers_json.trim();
+    if (!legacyUrl && !legacyKey && !legacyHeaders) {
+        return null;
+    }
+    return (presets.find((preset) => {
+        return (preset.api_url.trim() === legacyUrl &&
+            preset.api_key.trim() === legacyKey &&
+            preset.headers_json.trim() === legacyHeaders);
+    }) ?? null);
+}
+function migratePromptItems(flow) {
+    // 如果 prompt_order 已被自定义（长度与默认不同），跳过迁移
+    if (flow.prompt_order.length !== DEFAULT_PROMPT_ORDER.length)
+        return flow;
+    // 检查 prompt_order 是否仍为默认值（从未被用户配置）
+    const isDefault = flow.prompt_order.every((entry, idx) => entry.identifier === DEFAULT_PROMPT_ORDER[idx].identifier);
+    if (!isDefault)
+        return flow;
+    // 如果存在 prompt_items，将其作为自定义条目追加到 prompt_order
+    if (flow.prompt_items.length === 0)
+        return flow;
+    const migratedOrder = [...flow.prompt_order];
+    for (const item of flow.prompt_items) {
+        // 避免重复 —— 检查 identifier 是否已存在
+        if (migratedOrder.some((e) => e.identifier === item.id))
+            continue;
+        const oldItem = item; // may carry legacy depth field
+        migratedOrder.push({
+            identifier: item.id,
+            name: item.name || "迁移提示词",
+            enabled: item.enabled,
+            type: "prompt",
+            role: item.role,
+            content: item.content,
+            injection_position: item.position === "in_chat" ? "in_chat" : "relative",
+            injection_depth: typeof oldItem.injection_depth === "number"
+                ? oldItem.injection_depth
+                : typeof oldItem.depth === "number"
+                    ? oldItem.depth
+                    : 0,
+        });
+    }
+    return { ...flow, prompt_order: migratedOrder };
+}
+function normalizeSettings(raw) {
+    // Migrate legacy controller_entry_name → controller_entry_prefix.
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const obj = raw;
+        if (typeof obj["controller_entry_name"] === "string" &&
+            !obj["controller_entry_prefix"]) {
+            const oldName = obj["controller_entry_name"];
+            obj["controller_entry_prefix"] = oldName.endsWith("/")
+                ? oldName
+                : oldName + "/";
+            delete obj["controller_entry_name"];
+        }
+        // Migrate legacy implicit parallel staggering.
+        // Old versions defaulted to 10s, which is easily misread as a duplicate reroll.
+        // Treat that legacy default as unsafe and collapse it back to true parallel dispatch.
+        if (Number(obj["parallel_dispatch_interval_seconds"] ?? 0) === 10) {
+            obj["parallel_dispatch_interval_seconds"] = 0;
+        }
+    }
+    const parsed = EwSettingsSchema.safeParse(raw);
+    const base = parsed.success ? parsed.data : EwSettingsSchema.parse({});
+    const apiPresets = normalizeApiPresets(base.api_presets ?? []);
+    const usedPresetNames = new Set(apiPresets.map((preset) => preset.name));
+    const defaultPresetId = apiPresets[0]?.id ?? "";
+    const flowSeed = base.flows;
+    const usedFlowIds = new Set();
+    const normalizedFlows = flowSeed.map((flow, index) => {
+        let nextFlow = EwFlowConfigSchema.parse(flow);
+        // Ensure unique flow IDs — deduplicate collisions
+        const uniqueFlowId = ensureFlowId(nextFlow.id, index, nextFlow.name, usedFlowIds);
+        if (uniqueFlowId !== nextFlow.id) {
+            console.warn(`[Evolution World] normalized duplicate flow id "${nextFlow.id}" -> "${uniqueFlowId}"`);
+            nextFlow = EwFlowConfigSchema.parse({
+                ...nextFlow,
+                id: uniqueFlowId,
+            });
+        }
+        // FEAT-2: 将旧的 prompt_items 迁移到 prompt_order
+        nextFlow = migratePromptItems(nextFlow);
+        const boundPreset = apiPresets.find((preset) => preset.id === nextFlow.api_preset_id);
+        if (boundPreset) {
+            return nextFlow;
+        }
+        const legacyPreset = findPresetByLegacyFields(apiPresets, nextFlow);
+        if (legacyPreset) {
+            return EwFlowConfigSchema.parse({
+                ...nextFlow,
+                api_preset_id: legacyPreset.id,
+            });
+        }
+        const hasLegacyApiConfig = Boolean(nextFlow.api_url.trim() ||
+            nextFlow.api_key.trim() ||
+            nextFlow.headers_json.trim());
+        if (hasLegacyApiConfig) {
+            const createdPreset = EwApiPresetSchema.parse({
+                id: ensurePresetId("", apiPresets.length, new Set(apiPresets.map((preset) => preset.id))),
+                name: ensurePresetName(`${nextFlow.name || "工作流"} API`, usedPresetNames),
+                mode: "workflow_http",
+                use_main_api: false,
+                api_url: nextFlow.api_url,
+                api_key: nextFlow.api_key,
+                model: "",
+                api_source: "openai",
+                model_candidates: [],
+                headers_json: nextFlow.headers_json,
+            });
+            apiPresets.push(createdPreset);
+            return EwFlowConfigSchema.parse({
+                ...nextFlow,
+                api_preset_id: createdPreset.id,
+            });
+        }
+        return EwFlowConfigSchema.parse({
+            ...nextFlow,
+            api_preset_id: defaultPresetId,
+        });
+    });
+    const result = EwSettingsSchema.parse({
+        ...base,
+        api_presets: apiPresets,
+        flows: normalizedFlows,
+    });
+    // Auto-migrate legacy flows → WorkbenchGraphs (if workbench is empty)
+    if ((!result.graph_canvas_slots || result.graph_canvas_slots.length === 0) &&
+        normalizedFlows.length > 0 &&
+        !result.workbench_graphs?.length) {
+        try {
+            // Direct import — flow-migrator is bundled by webpack
+            result.workbench_graphs = migrateAllFlows(normalizedFlows);
+            console.info(`[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs`);
+        }
+        catch (e) {
+            console.debug("[Evolution World] Auto-migration skipped:", e);
+        }
+    }
+    return result;
+}
+function normalizeRunRecordMap(storage) {
+    const raw = storage.last_run_by_chat;
+    if (!raw || typeof raw !== "object") {
+        return {};
+    }
+    const next = {};
+    for (const [chatId, summary] of Object.entries(raw)) {
+        const parsed = RunSummarySchema.safeParse(summary);
+        if (parsed.success) {
+            next[chatId] = parsed.data;
+        }
+    }
+    return next;
+}
+function normalizeIoRecordMap(storage) {
+    const raw = storage.last_io_by_chat;
+    if (!raw || typeof raw !== "object") {
+        return {};
+    }
+    const next = {};
+    for (const [chatId, summary] of Object.entries(raw)) {
+        const parsed = LastIoSummarySchema.safeParse(summary);
+        if (parsed.success) {
+            next[chatId] = parsed.data;
+        }
+    }
+    return next;
+}
+function trimDebugRecordMap(records, maxEntries) {
+    const entries = Object.entries(records);
+    if (entries.length <= maxEntries) {
+        return records;
+    }
+    entries.sort((left, right) => Number(right[1]?.at ?? 0) - Number(left[1]?.at ?? 0));
+    return Object.fromEntries(entries.slice(0, maxEntries));
+}
+function emitSettings(settings) {
+    settingsListeners.forEach((listener) => listener(settings));
+}
+function emitRun(summary) {
+    runListeners.forEach((listener) => listener(summary));
+}
+function emitIo(summary) {
+    ioListeners.forEach((listener) => listener(summary));
+}
+export function loadSettings() {
+    const storage = readScriptStorage();
+    const normalized = normalizeSettings(storage.settings);
+    cachedSettings = normalized;
+    persistLocalSettings(normalized);
+    return normalized;
+}
+export async function hydrateSharedSettings() {
+    if (sharedSettingsHydrationPromise) {
+        return sharedSettingsHydrationPromise;
+    }
+    sharedSettingsHydrationPromise = (async () => {
+        const localStorage = readScriptStorage();
+        const localNormalized = cachedSettings ?? normalizeSettings(localStorage.settings);
+        try {
+            const shared = await readSharedSettings();
+            if (shared?.settings) {
+                const normalized = normalizeSettings(shared.settings);
+                const changed = !_.isEqual(cachedSettings, normalized);
+                cachedSettings = normalized;
+                persistLocalSettings(normalized);
+                if (changed) {
+                    emitSettings(klona(normalized));
+                }
+                hydrationComplete = true;
+                console.info("[Evolution World] Shared settings loaded from server file");
+                return klona(normalized);
+            }
+            cachedSettings = localNormalized;
+            await writeSharedSettings(localNormalized);
+            persistLocalSettings(localNormalized);
+            hydrationComplete = true;
+            console.info(localStorage.settings
+                ? "[Evolution World] Migrated legacy local settings to shared server file"
+                : "[Evolution World] Initialized shared server settings file");
+            return klona(localNormalized);
+        }
+        catch (error) {
+            console.warn("[Evolution World] Shared settings hydration failed, using local cache:", error);
+            cachedSettings = localNormalized;
+            persistLocalSettings(localNormalized);
+            hydrationComplete = true;
+            return klona(localNormalized);
+        }
+    })();
+    return sharedSettingsHydrationPromise;
+}
+export function getSettings() {
+    if (!cachedSettings) {
+        cachedSettings = loadSettings();
+    }
+    return klona(cachedSettings);
+}
+export function isHydrationComplete() {
+    return hydrationComplete;
+}
+export function replaceSettings(nextSettings) {
+    const normalized = normalizeSettings(nextSettings);
+    cachedSettings = normalized;
+    queueSharedSettingsPersist(normalized);
+    persistLocalSettings(normalized);
+    emitSettings(klona(normalized));
+    return klona(normalized);
+}
+export function persistSettingsDraft(nextSettings) {
+    const draft = klona(nextSettings);
+    cachedSettings = draft;
+    queueSharedSettingsPersist(draft);
+    persistLocalSettings(draft);
+}
+export function patchSettings(partial) {
+    // 使用展开运算符（浅合并）替代 _.merge，避免按索引合并数组导致的数据损坏。
+    // _.merge 在新数组较短时会保留旧数组的条目。
+    const current = getSettings();
+    const merged = { ...current, ...partial };
+    return replaceSettings(merged);
+}
+export function subscribeSettings(listener) {
+    settingsListeners.add(listener);
+    return { stop: () => settingsListeners.delete(listener) };
+}
+export function loadLastRun() {
+    const storage = readScriptStorage();
+    const parsed = RunSummarySchema.safeParse(storage.last_run);
+    cachedLastRun = parsed.success ? parsed.data : null;
+    return cachedLastRun ? klona(cachedLastRun) : null;
+}
+export function getLastRun() {
+    if (cachedLastRun === undefined) {
+        return loadLastRun();
+    }
+    return cachedLastRun ? klona(cachedLastRun) : null;
+}
+export function setLastRun(summary) {
+    const normalized = RunSummarySchema.parse(summary);
+    cachedLastRun = normalized;
+    writeScriptStorage((previous) => {
+        const byChat = normalizeRunRecordMap(previous);
+        if (normalized.chat_id.trim()) {
+            byChat[normalized.chat_id.trim()] = normalized;
+        }
+        return {
+            ...previous,
+            last_run: normalized,
+            last_run_by_chat: trimDebugRecordMap(byChat, MAX_DEBUG_RECORD_CHATS),
+        };
+    });
+    emitRun(klona(normalized));
+}
+export function subscribeLastRun(listener) {
+    runListeners.add(listener);
+    return { stop: () => runListeners.delete(listener) };
+}
+export function loadLastIo() {
+    const storage = readScriptStorage();
+    const parsed = LastIoSummarySchema.safeParse(storage.last_io);
+    cachedLastIo = parsed.success ? parsed.data : null;
+    return cachedLastIo ? klona(cachedLastIo) : null;
+}
+export function getLastIo() {
+    if (cachedLastIo === undefined) {
+        return loadLastIo();
+    }
+    return cachedLastIo ? klona(cachedLastIo) : null;
+}
+export function setLastIo(summary) {
+    const normalized = LastIoSummarySchema.parse(summary);
+    cachedLastIo = normalized;
+    writeScriptStorage((previous) => {
+        const byChat = normalizeIoRecordMap(previous);
+        if (normalized.chat_id.trim()) {
+            byChat[normalized.chat_id.trim()] = normalized;
+        }
+        return {
+            ...previous,
+            last_io: normalized,
+            last_io_by_chat: trimDebugRecordMap(byChat, MAX_DEBUG_RECORD_CHATS),
+        };
+    });
+    emitIo(klona(normalized));
+}
+export function subscribeLastIo(listener) {
+    ioListeners.add(listener);
+    return { stop: () => ioListeners.delete(listener) };
+}
+export function loadLastRunForChat(chatId) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    if (!normalizedChatId) {
+        return loadLastRun();
+    }
+    const storage = readScriptStorage();
+    const byChat = normalizeRunRecordMap(storage);
+    const summary = byChat[normalizedChatId] ?? null;
+    if (summary) {
+        cachedLastRun = summary;
+        return klona(summary);
+    }
+    const globalSummary = RunSummarySchema.safeParse(storage.last_run);
+    if (globalSummary.success &&
+        globalSummary.data.chat_id.trim() === normalizedChatId) {
+        cachedLastRun = globalSummary.data;
+        return klona(globalSummary.data);
+    }
+    return null;
+}
+export function loadLastIoForChat(chatId) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    if (!normalizedChatId) {
+        return loadLastIo();
+    }
+    const storage = readScriptStorage();
+    const byChat = normalizeIoRecordMap(storage);
+    const summary = byChat[normalizedChatId] ?? null;
+    if (summary) {
+        cachedLastIo = summary;
+        return klona(summary);
+    }
+    const globalSummary = LastIoSummarySchema.safeParse(storage.last_io);
+    if (globalSummary.success &&
+        globalSummary.data.chat_id.trim() === normalizedChatId) {
+        cachedLastIo = globalSummary.data;
+        return klona(globalSummary.data);
+    }
+    return null;
+}
+export function saveControllerBackup(chatId, worldbookName, controllerContent) {
+    const MAX_BACKUPS = 10;
+    writeScriptStorage((previous) => {
+        const backups = { ...(previous.backups ?? {}) };
+        backups[chatId] = {
+            at: Date.now(),
+            worldbook_name: worldbookName,
+            controller_content: controllerContent,
+        };
+        // CR-4: LRU 淘汰 —— 仅保留最近的 MAX_BACKUPS 条记录。
+        const entries = Object.entries(backups);
+        if (entries.length > MAX_BACKUPS) {
+            entries.sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0));
+            const keysToRemove = entries.slice(MAX_BACKUPS).map((e) => e[0]);
+            for (const key of keysToRemove) {
+                delete backups[key];
+            }
+        }
+        return { ...previous, backups };
+    });
+}
+export function readControllerBackup(chatId) {
+    const storage = readScriptStorage();
+    const backup = storage.backups?.[chatId];
+    if (!backup)
+        return null;
+    const content = backup.controller_content;
+    let controllers = [];
+    if (Array.isArray(content)) {
+        controllers = content
+            .filter((entry) => entry && typeof entry === "object")
+            .map((entry) => ({
+            entry_name: String(entry.entry_name ?? ""),
+            content: String(entry.content ?? ""),
+            flow_id: entry.flow_id,
+            flow_name: entry.flow_name,
+            legacy: Boolean(entry.legacy),
+        }))
+            .filter((entry) => entry.content);
+    }
+    else if (typeof content === "string") {
+        controllers = content
+            ? [
+                {
+                    entry_name: "",
+                    content,
+                    flow_name: "Legacy Controller",
+                    legacy: true,
+                },
+            ]
+            : [];
+    }
+    else if (content && typeof content === "object") {
+        controllers = Object.entries(content).map(([entryName, value]) => ({
+            entry_name: entryName,
+            content: String(value ?? ""),
+        }));
+    }
+    return klona({
+        at: backup.at,
+        worldbook_name: backup.worldbook_name,
+        controller_content: controllers,
+    });
+}
+export function clearControllerBackup(chatId) {
+    writeScriptStorage((previous) => {
+        const backups = { ...(previous.backups ?? {}) };
+        delete backups[chatId];
+        return { ...previous, backups };
+    });
+}
+//# sourceMappingURL=settings.js.map
