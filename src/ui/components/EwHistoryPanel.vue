@@ -389,29 +389,29 @@ const timelineItems = computed(() => {
 
     if (bindingMeta?.role === "assistant_anchor" && role === "assistant") {
       semantic = {
-        role,
+        ...semantic,
         anchor_kind: "assistant_anchor",
         paired_message_id: bindingMeta.paired_message_id,
       };
     } else if (bindingMeta?.role === "legacy_user_anchor" && role === "user") {
       semantic = {
-        role,
+        ...semantic,
         anchor_kind: "legacy_user_anchor",
       };
     } else if (bindingMeta?.role === "source" && role === "user") {
       semantic = {
-        role,
+        ...semantic,
         anchor_kind: "source_user",
         paired_message_id: bindingMeta.paired_message_id,
       };
     } else if (role === "assistant" && hasArtifacts) {
       semantic = {
-        role,
+        ...semantic,
         anchor_kind: "assistant_anchor",
       };
     } else if (role === "user" && hasArtifacts) {
       semantic = {
-        role,
+        ...semantic,
         anchor_kind: "legacy_user_anchor",
       };
     } else if (role === "user") {
@@ -425,7 +425,7 @@ const timelineItems = computed(() => {
         : false;
       if (nextFloor && nextRole === "assistant" && nextHasArtifacts) {
         semantic = {
-          role,
+          ...semantic,
           anchor_kind: "source_user",
           paired_message_id: nextFloor.messageId,
         };
