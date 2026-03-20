@@ -25,7 +25,11 @@ import {
   rollbackBeforeFloor,
 } from "./floor-binding";
 import { getMessageVersionInfo, simpleHash } from "./helpers";
-import { runIncrementalHideCheck } from "./hide-engine";
+import {
+  resetHideState,
+  runIncrementalHideCheck,
+  scheduleHideSettingsApply,
+} from "./hide-engine";
 import {
   markIntercepted,
   resetInterceptGuard,
@@ -34,6 +38,7 @@ import {
 import { runWorkflow } from "./pipeline";
 import { getSettings, patchSettings } from "./settings";
 import {
+  buildArchivedArtifactVersionKey,
   buildFileName,
   buildLegacyFileName,
   buildSnapshotStoreOwner,
@@ -852,18 +857,7 @@ export function readFloorWorkflowExecution(
   return null;
 }
 
-function buildArchivedVersionedKey<T>(
-  baseKey: string,
-  map: Record<string, T>,
-): string {
-  let candidate = `${baseKey}@rev:${Date.now()}`;
-  let counter = 0;
-  while (map[candidate]) {
-    counter += 1;
-    candidate = `${baseKey}@rev:${Date.now()}_${counter}`;
-  }
-  return candidate;
-}
+// buildArchivedArtifactVersionKey replaced by buildArchivedArtifactVersionKey from snapshot-storage
 
 async function writeFloorWorkflowExecution(
   messageId: number,
@@ -886,7 +880,7 @@ async function writeFloorWorkflowExecution(
       const existingJson = JSON.stringify(existing);
       const nextJson = JSON.stringify(state);
       if (existingJson !== nextJson) {
-        map[buildArchivedVersionedKey(versionKey, map)] = existing;
+        map[buildArchivedArtifactVersionKey(versionKey, map)] = existing;
       }
     }
     map[versionKey] = state;
@@ -1045,7 +1039,7 @@ async function writeWorkflowReplayCapsule(
     const existingJson = JSON.stringify(existing);
     const nextJson = JSON.stringify(capsule);
     if (existingJson !== nextJson) {
-      map[buildArchivedVersionedKey(key, map)] = existing;
+      map[buildArchivedArtifactVersionKey(key, map)] = existing;
     }
   }
   map[key] = capsule;
@@ -1093,7 +1087,7 @@ async function migrateFloorWorkflowCapsuleToAssistant(
     const existingJson = JSON.stringify(existingAssistantCapsule);
     const nextJson = JSON.stringify(nextCapsule);
     if (existingJson !== nextJson) {
-      assistantMap[buildArchivedVersionedKey(targetKey, assistantMap)] =
+      assistantMap[buildArchivedArtifactVersionKey(targetKey, assistantMap)] =
         existingAssistantCapsule;
     }
   }
@@ -1416,6 +1410,7 @@ function buildFloorWorkflowExecutionState(
     content_hash: versionInfo?.content_hash,
     attempted_flow_ids: [...attemptedFlowIds],
     successful_results: [...successfulResults.values()],
+    successful_flow_ids: [...successfulResults.keys()],
     failed_flow_ids: [...failedFlowIds],
     workflow_failed: workflowFailed,
     execution_status: meta?.execution_status ?? "executed",
@@ -2341,7 +2336,11 @@ async function executeWorkflowWithPolicy(
           .filter(Boolean),
       );
       const capsuleMode: WorkflowCapsuleMode =
-        options.rederiveOptions?.capsule_mode === "light" ? "light" : "full";
+        options.rederiveOptions?.capsule_mode === "full"
+          ? "full"
+          : options.jobType === "historical_rederive"
+            ? "full"
+            : "light";
       const replayCapsule: WorkflowReplayCapsule = {
         at: Date.now(),
         request_id: result.request_id,
@@ -3617,6 +3616,7 @@ export function initRuntimeEvents() {
     onSTEvent(
       eventTypes.MESSAGE_RECEIVED,
       async (messageId: number, type: string) => {
+        scheduleHideSettingsApply(getSettings().hide_settings, 120);
         await onAfterReplyMessage(messageId, type, "message_received");
       },
     ),
@@ -3624,6 +3624,7 @@ export function initRuntimeEvents() {
 
   listenerStops.push(
     onSTEvent(eventTypes.GENERATION_ENDED, async (messageId: number) => {
+      scheduleHideSettingsApply(getSettings().hide_settings, 180);
       const type = getRuntimeState().last_generation?.type ?? "normal";
       await onAfterReplyMessage(messageId, type, "generation_ended");
     }),
@@ -3641,6 +3642,8 @@ export function initRuntimeEvents() {
       clearQueuedWorkflowTasks("workflow queue cleared because chat changed");
       resetRuntimeState();
       resetInterceptGuard();
+      resetHideState();
+      scheduleHideSettingsApply(getSettings().hide_settings, 360);
       setTimeout(() => {
         installSendIntentHooks();
         installPrimaryGenerateInterceptor();
