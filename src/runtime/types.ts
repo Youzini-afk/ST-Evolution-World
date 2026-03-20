@@ -21,8 +21,8 @@ export const EwFlowGenerationOptionsSchema = z.object({
   n_candidates: z.coerce.number().int().min(1).default(1),
   stream: z.boolean().default(true),
   temperature: z.coerce.number().min(0).max(2).default(1.2),
-  frequency_penalty: z.coerce.number().min(0).max(2).default(0.85),
-  presence_penalty: z.coerce.number().min(0).max(2).default(0.5),
+  frequency_penalty: z.coerce.number().min(0).max(2).default(0),
+  presence_penalty: z.coerce.number().min(0).max(2).default(0),
   top_p: z.coerce.number().min(0).max(1).default(0.92),
 });
 
@@ -37,6 +37,107 @@ export const EwFlowBehaviorOptionsSchema = z.object({
   request_thinking: z.boolean().default(false),
   reasoning_effort: z.enum(["auto", "low", "medium", "high"]).default("auto"),
   verbosity: z.enum(["auto", "low", "medium", "high"]).default("auto"),
+});
+
+const DynSecondaryLogicSchema = z.enum([
+  "and_any",
+  "and_all",
+  "not_any",
+  "not_all",
+]);
+const DynPositionRoleSchema = z.enum(["system", "user", "assistant"]);
+const DynScanDepthSchema = z.union([
+  z.literal("same_as_global"),
+  z.coerce.number().int().min(0),
+  z.string().min(1),
+]);
+
+const DEFAULT_DYN_POSITION = {
+  type: "before_character_definition",
+  role: "system" as const,
+  depth: 0,
+  order: 100,
+};
+
+const DEFAULT_DYN_SECONDARY = {
+  logic: "and_any" as const,
+  keys: [] as string[],
+};
+
+const DEFAULT_DYN_STRATEGY = {
+  type: "constant",
+  keys: [] as string[],
+  keys_secondary: DEFAULT_DYN_SECONDARY,
+  scan_depth: "same_as_global" as const,
+};
+
+const DEFAULT_DYN_EFFECT = {
+  sticky: null,
+  cooldown: null,
+  delay: null,
+};
+
+const DEFAULT_DYN_EXTRA = {
+  caseSensitive: false,
+  matchWholeWords: false,
+  group: "",
+  groupOverride: false,
+  groupWeight: 100,
+  useGroupScoring: false,
+};
+
+export const DynWorldbookProfileSchema = z.object({
+  comment: z.string().default(""),
+  position: z
+    .object({
+      type: z.string().default("before_character_definition"),
+      role: DynPositionRoleSchema.default("system"),
+      depth: z.coerce.number().int().min(0).default(0),
+      order: z.coerce.number().int().default(100),
+    })
+    .default(DEFAULT_DYN_POSITION),
+  strategy: z
+    .object({
+      type: z.string().default("constant"),
+      keys: z.array(z.string()).default([]),
+      keys_secondary: z
+        .object({
+          logic: DynSecondaryLogicSchema.default("and_any"),
+          keys: z.array(z.string()).default([]),
+        })
+        .default(DEFAULT_DYN_SECONDARY),
+      scan_depth: DynScanDepthSchema.default("same_as_global"),
+    })
+    .default(DEFAULT_DYN_STRATEGY),
+  probability: z.coerce.number().min(0).max(100).default(100),
+  effect: z
+    .object({
+      sticky: z.coerce.number().int().min(0).nullable().default(null),
+      cooldown: z.coerce.number().int().min(0).nullable().default(null),
+      delay: z.coerce.number().int().min(0).nullable().default(null),
+    })
+    .default(DEFAULT_DYN_EFFECT),
+  extra: z
+    .object({
+      caseSensitive: z.boolean().default(false),
+      matchWholeWords: z.boolean().default(false),
+      group: z.string().default(""),
+      groupOverride: z.boolean().default(false),
+      groupWeight: z.coerce.number().default(100),
+      useGroupScoring: z.boolean().default(false),
+    })
+    .default(DEFAULT_DYN_EXTRA),
+});
+
+export const DynWriteConfigSchema = z.object({
+  mode: z.enum(["overwrite", "add", "add_remove"]).default("overwrite"),
+  item_format: z.literal("markdown_list").default("markdown_list"),
+  activation_mode: z
+    .enum(["controller_only", "worldbook_direct"])
+    .default("controller_only"),
+  profile: DynWorldbookProfileSchema.default(() =>
+    DynWorldbookProfileSchema.parse({}),
+  ),
 });
 
 export const EwPromptOrderEntrySchema = z.object({
@@ -256,9 +357,9 @@ export const EwFlowConfigSchema = z.object({
   behavior_options: EwFlowBehaviorOptionsSchema.default(() =>
     EwFlowBehaviorOptionsSchema.parse({}),
   ),
+  dyn_write: DynWriteConfigSchema.default(() => DynWriteConfigSchema.parse({})),
   prompt_order: z.array(EwPromptOrderEntrySchema).default(DEFAULT_PROMPT_ORDER),
   prompt_items: z.array(EwFlowPromptItemSchema).default([]),
-  // 旧版字段，保留用于向后兼容旧配置的迁移。
   api_url: z.string().default(""),
   api_key: z.string().default(""),
   context_turns: z.coerce.number().int().min(1).default(8),
@@ -340,28 +441,24 @@ export const EwSettingsSchema = z.object({
       }),
     )
     .default([]),
-
-  // 已弃用：仅保留用于向后兼容迁移。
   meta_entry_name: z.string().default("EW/Meta"),
   meta_marker: z.string().default("EW_RUNTIME_META"),
   runtime_worldbook_prefix: z.string().default("EW_RUNTIME::"),
   max_scan_worldbooks: z.coerce.number().int().min(1).default(20),
-
-  // ── 隐藏设置（全局） ──
   hide_settings: z
     .object({
-      enabled: z.boolean().default(false),
-      hide_last_n: z.coerce.number().int().min(0).default(0),
+      enabled: z.boolean().default(true),
+      hide_last_n: z.coerce.number().int().min(0).default(10),
       affect_workflow_context: z.boolean().default(false),
-      limiter_enabled: z.boolean().default(false),
-      limiter_count: z.coerce.number().int().min(1).default(20),
+      limiter_enabled: z.boolean().default(true),
+      limiter_count: z.coerce.number().int().min(1).default(10),
     })
     .default({
-      enabled: false,
-      hide_last_n: 0,
+      enabled: true,
+      hide_last_n: 10,
       affect_workflow_context: false,
-      limiter_enabled: false,
-      limiter_count: 20,
+      limiter_enabled: true,
+      limiter_count: 10,
     }),
 });
 
@@ -489,6 +586,8 @@ export type EwFlowGenerationOptions = z.infer<
   typeof EwFlowGenerationOptionsSchema
 >;
 export type EwFlowBehaviorOptions = z.infer<typeof EwFlowBehaviorOptionsSchema>;
+export type DynWorldbookProfile = z.infer<typeof DynWorldbookProfileSchema>;
+export type DynWriteConfig = z.infer<typeof DynWriteConfigSchema>;
 export type EwFlowPromptItem = z.infer<typeof EwFlowPromptItemSchema>;
 export type EwFlowPromptTriggerType = z.infer<
   typeof EwFlowPromptTriggerTypeSchema
@@ -497,6 +596,12 @@ export type EwSettings = z.infer<typeof EwSettingsSchema>;
 export type RunSummary = z.infer<typeof RunSummarySchema>;
 export type LastIoSummary = z.infer<typeof LastIoSummarySchema>;
 export type WorkflowFailureDiagnostic = NonNullable<RunSummary["failure"]>;
+
+export type DynSnapshot = {
+  name: string;
+  content: string;
+  enabled: boolean;
+} & DynWorldbookProfile;
 
 export type DispatchFlowResult = {
   flow: EwFlowConfig;
@@ -510,7 +615,7 @@ export type DispatchFlowAttempt = {
   api_preset_id: string;
   api_preset_name: string;
   api_url: string;
-  request: import("./contracts").FlowRequestV1;
+  request?: import("./contracts").FlowRequestV1;
   request_debug?: Record<string, any>;
   response?: import("./contracts").FlowResponseV1;
   ok: boolean;

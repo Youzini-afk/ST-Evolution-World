@@ -35,6 +35,8 @@ type ScriptStorageShape = {
   settings?: EwSettings;
   last_run?: RunSummary | null;
   last_io?: LastIoSummary | null;
+  last_run_by_chat?: Record<string, RunSummary | null | undefined>;
+  last_io_by_chat?: Record<string, LastIoSummary | null | undefined>;
   workflow_round_counters?: Record<
     string,
     Partial<WorkflowRoundCounterEntry> | undefined
@@ -59,6 +61,7 @@ const runListeners = new Set<RunListener>();
 const ioListeners = new Set<IoListener>();
 const SHARED_SETTINGS_WRITE_DELAY_MS = 120;
 const MAX_WORKFLOW_ROUND_COUNTER_CHATS = 40;
+const MAX_DEBUG_RECORD_CHATS = 80;
 
 let cachedSettings: EwSettings | null = null;
 let cachedLastRun: RunSummary | null | undefined = undefined;
@@ -241,7 +244,7 @@ function normalizeApiPresets(rawPresets: EwApiPreset[]): EwApiPreset[] {
       id,
       name,
       mode: parsed.mode ?? "workflow_http",
-      use_main_api: parsed.use_main_api ?? parsed.mode === "llm_connector",
+      use_main_api: parsed.use_main_api ?? false,
       model: parsed.model ?? "",
       api_source: parsed.api_source ?? "openai",
       model_candidates: parsed.model_candidates ?? [],
@@ -420,6 +423,57 @@ function normalizeSettings(raw: unknown): EwSettings {
   return result;
 }
 
+function normalizeRunRecordMap(
+  storage: ScriptStorageShape,
+): Record<string, RunSummary> {
+  const raw = storage.last_run_by_chat;
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+
+  const next: Record<string, RunSummary> = {};
+  for (const [chatId, summary] of Object.entries(raw)) {
+    const parsed = RunSummarySchema.safeParse(summary);
+    if (parsed.success) {
+      next[chatId] = parsed.data;
+    }
+  }
+  return next;
+}
+
+function normalizeIoRecordMap(
+  storage: ScriptStorageShape,
+): Record<string, LastIoSummary> {
+  const raw = storage.last_io_by_chat;
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+
+  const next: Record<string, LastIoSummary> = {};
+  for (const [chatId, summary] of Object.entries(raw)) {
+    const parsed = LastIoSummarySchema.safeParse(summary);
+    if (parsed.success) {
+      next[chatId] = parsed.data;
+    }
+  }
+  return next;
+}
+
+function trimDebugRecordMap<T extends { at: number }>(
+  records: Record<string, T>,
+  maxEntries: number,
+): Record<string, T> {
+  const entries = Object.entries(records);
+  if (entries.length <= maxEntries) {
+    return records;
+  }
+
+  entries.sort(
+    (left, right) => Number(right[1]?.at ?? 0) - Number(left[1]?.at ?? 0),
+  );
+  return Object.fromEntries(entries.slice(0, maxEntries));
+}
+
 function emitSettings(settings: EwSettings) {
   settingsListeners.forEach((listener) => listener(settings));
 }
@@ -552,7 +606,17 @@ export function getLastRun(): RunSummary | null {
 export function setLastRun(summary: RunSummary) {
   const normalized = RunSummarySchema.parse(summary);
   cachedLastRun = normalized;
-  writeScriptStorage((previous) => ({ ...previous, last_run: normalized }));
+  writeScriptStorage((previous) => {
+    const byChat = normalizeRunRecordMap(previous);
+    if (normalized.chat_id.trim()) {
+      byChat[normalized.chat_id.trim()] = normalized;
+    }
+    return {
+      ...previous,
+      last_run: normalized,
+      last_run_by_chat: trimDebugRecordMap(byChat, MAX_DEBUG_RECORD_CHATS),
+    };
+  });
   emitRun(klona(normalized));
 }
 
@@ -578,13 +642,75 @@ export function getLastIo(): LastIoSummary | null {
 export function setLastIo(summary: LastIoSummary) {
   const normalized = LastIoSummarySchema.parse(summary);
   cachedLastIo = normalized;
-  writeScriptStorage((previous) => ({ ...previous, last_io: normalized }));
+  writeScriptStorage((previous) => {
+    const byChat = normalizeIoRecordMap(previous);
+    if (normalized.chat_id.trim()) {
+      byChat[normalized.chat_id.trim()] = normalized;
+    }
+    return {
+      ...previous,
+      last_io: normalized,
+      last_io_by_chat: trimDebugRecordMap(byChat, MAX_DEBUG_RECORD_CHATS),
+    };
+  });
   emitIo(klona(normalized));
 }
 
 export function subscribeLastIo(listener: IoListener): { stop: () => void } {
   ioListeners.add(listener);
   return { stop: () => ioListeners.delete(listener) };
+}
+
+export function loadLastRunForChat(chatId: string): RunSummary | null {
+  const normalizedChatId = String(chatId ?? "").trim();
+  if (!normalizedChatId) {
+    return loadLastRun();
+  }
+
+  const storage = readScriptStorage();
+  const byChat = normalizeRunRecordMap(storage);
+  const summary = byChat[normalizedChatId] ?? null;
+  if (summary) {
+    cachedLastRun = summary;
+    return klona(summary);
+  }
+
+  const globalSummary = RunSummarySchema.safeParse(storage.last_run);
+  if (
+    globalSummary.success &&
+    globalSummary.data.chat_id.trim() === normalizedChatId
+  ) {
+    cachedLastRun = globalSummary.data;
+    return klona(globalSummary.data);
+  }
+
+  return null;
+}
+
+export function loadLastIoForChat(chatId: string): LastIoSummary | null {
+  const normalizedChatId = String(chatId ?? "").trim();
+  if (!normalizedChatId) {
+    return loadLastIo();
+  }
+
+  const storage = readScriptStorage();
+  const byChat = normalizeIoRecordMap(storage);
+  const summary = byChat[normalizedChatId] ?? null;
+  if (summary) {
+    cachedLastIo = summary;
+    return klona(summary);
+  }
+
+  const globalSummary = LastIoSummarySchema.safeParse(storage.last_io);
+  if (
+    globalSummary.success &&
+    globalSummary.data.chat_id.trim() === normalizedChatId
+  ) {
+    cachedLastIo = globalSummary.data;
+    return klona(globalSummary.data);
+  }
+
+  return null;
 }
 
 export function saveControllerBackup(

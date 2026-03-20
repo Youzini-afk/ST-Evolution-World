@@ -1,6 +1,13 @@
-import { disposeGlobalApi, initGlobalApi } from './api';
-import { disposeRuntimeEvents, initRuntimeEvents } from './events';
-import { hydrateSharedSettings, loadLastIo, loadLastRun, loadSettings } from './settings';
+import { disposeGlobalApi, initGlobalApi } from "./api";
+import { disposeRuntimeEvents, initRuntimeEvents } from "./events";
+import { scheduleHideSettingsApply } from "./hide-engine";
+import {
+  getSettings,
+  hydrateSharedSettings,
+  loadLastIo,
+  loadLastRun,
+  loadSettings,
+} from "./settings";
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
@@ -20,12 +27,13 @@ export async function initRuntime() {
     await hydrateSharedSettings();
     initGlobalApi();
     initRuntimeEvents();
+    scheduleHideSettingsApply(getSettings().hide_settings, 220);
 
-    // 在 ST 扩展环境中，直接在 window 上暴露 API
-    (window as any).EvolutionWorldAPI = (window as any).EvolutionWorldAPI ?? {};
+    // 与脚本版保持一致：EvolutionWorldAPI 只由 initGlobalApi() 负责挂载，
+    // 避免初始化阶段出现空对象覆盖或 API 暴露边界不一致。
 
     initialized = true;
-    console.info('[Evolution World] runtime initialized');
+    console.info("[Evolution World] runtime initialized");
   })();
 
   try {
@@ -44,5 +52,5 @@ export function disposeRuntime() {
   disposeGlobalApi();
 
   initialized = false;
-  console.info('[Evolution World] runtime disposed');
+  console.info("[Evolution World] runtime disposed");
 }

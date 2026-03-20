@@ -11,15 +11,24 @@ import { mergeFlowResults } from "./merger";
 import { getSettings, setLastIo, setLastRun } from "./settings";
 import { commitMergedPlan } from "./transaction";
 import {
+  ContextCursor,
   ControllerTemplateSlot,
   DispatchFlowAttempt,
   DispatchFlowResult,
   RunSummarySchema,
+  WorkflowCapsuleMode,
   WorkflowFailureDiagnostic,
+  WorkflowJobType,
   WorkflowProgressUpdate,
+  WorkflowWritebackPolicy,
 } from "./types";
 
-type WorkflowExecutionStage = "preparing" | "dispatch" | "merge" | "commit" | "completed";
+type WorkflowExecutionStage =
+  | "preparing"
+  | "dispatch"
+  | "merge"
+  | "commit"
+  | "completed";
 
 type RunWorkflowInput = {
   message_id: number;
@@ -30,6 +39,13 @@ type RunWorkflowInput = {
   flow_ids?: string[];
   timing_filter?: "before_reply" | "after_reply";
   preserved_results?: DispatchFlowResult[];
+  job_type?: WorkflowJobType;
+  context_cursor?: ContextCursor;
+  writeback_policy?: WorkflowWritebackPolicy;
+  rederive_options?: {
+    legacy_approx?: boolean;
+    capsule_mode?: WorkflowCapsuleMode;
+  };
   abortSignal?: AbortSignal;
   isCancelled?: () => boolean;
   onProgress?: (update: WorkflowProgressUpdate) => void;
@@ -52,11 +68,15 @@ function extractHttpStatus(reason: string): number | null {
 }
 
 function hasJsonSyntaxHint(reason: string): boolean {
-  return /unexpected token|unterminated|stringified|jsonrepair|json5|parse json|JSON at position/i.test(reason);
+  return /unexpected token|unterminated|stringified|jsonrepair|json5|parse json|JSON at position/i.test(
+    reason,
+  );
 }
 
 function hasRegexExtractHint(reason: string): boolean {
-  return /response_extract_regex|extract regex|did not match|未匹配/i.test(reason);
+  return /response_extract_regex|extract regex|did not match|未匹配/i.test(
+    reason,
+  );
 }
 
 function inferFailureKind(
@@ -79,7 +99,11 @@ function inferFailureKind(
   if (httpStatus === 429) {
     return "rate_limit";
   }
-  if (/secure TLS connection was not established|tls|certificate|ssl/i.test(reason)) {
+  if (
+    /secure TLS connection was not established|tls|certificate|ssl/i.test(
+      reason,
+    )
+  ) {
     return "tls_error";
   }
   if (/ECONNRESET|connection reset|socket disconnected/i.test(reason)) {
@@ -106,10 +130,16 @@ function inferFailureKind(
   if (/bound worldbook|worldbook/i.test(reason) && stage === "config") {
     return "worldbook_missing";
   }
-  if (/no enabled flows|api_url is empty|model is empty|generateRaw is unavailable/i.test(reason)) {
+  if (
+    /no enabled flows|api_url is empty|model is empty|generateRaw is unavailable/i.test(
+      reason,
+    )
+  ) {
     return "config_invalid";
   }
-  if (/上游 API|ST backend error|HTTP\s+\d{3}|ECONNRESET|ETIMEDOUT/i.test(reason)) {
+  if (
+    /上游 API|ST backend error|HTTP\s+\d{3}|ECONNRESET|ETIMEDOUT/i.test(reason)
+  ) {
     return "http_error";
   }
   if (stage === "merge") {
@@ -177,7 +207,9 @@ function inferFailureSuggestion(
       if (stage === "commit") {
         return "优先检查世界书绑定、控制器模板和宿主写回路径。";
       }
-      return reason ? "请结合下方运行记录和请求/响应详情继续排查。" : "请结合运行记录继续排查。";
+      return reason
+        ? "请结合下方运行记录和请求/响应详情继续排查。"
+        : "请结合运行记录继续排查。";
   }
 }
 
@@ -195,7 +227,10 @@ function shouldRunFlowOnRound(
   flow: DispatchFlowAttempt["flow"] | DispatchFlowResult["flow"],
   round: number,
 ): boolean {
-  const interval = Math.max(1, Math.trunc(Number(flow.run_every_n_floors ?? 1) || 1));
+  const interval = Math.max(
+    1,
+    Math.trunc(Number(flow.run_every_n_floors ?? 1) || 1),
+  );
   if (interval <= 1) {
     return true;
   }
@@ -230,7 +265,8 @@ function resolveAutoTriggerOrdinal(input: RunWorkflowInput): number {
   }
 
   const anchorMessageId = resolveAutoTriggerAnchorMessageId(input);
-  const expectedRole = input.timing_filter === "after_reply" ? "assistant" : "user";
+  const expectedRole =
+    input.timing_filter === "after_reply" ? "assistant" : "user";
   let matchedCount = 0;
 
   try {
@@ -248,7 +284,10 @@ function resolveAutoTriggerOrdinal(input: RunWorkflowInput): number {
       }
     }
   } catch (error) {
-    console.warn("[Evolution World] resolveAutoTriggerOrdinal failed, fallback to 1:", error);
+    console.warn(
+      "[Evolution World] resolveAutoTriggerOrdinal failed, fallback to 1:",
+      error,
+    );
   }
 
   return Math.max(1, matchedCount);
@@ -263,7 +302,8 @@ function buildWorkflowFailureDiagnostic(params: {
   const { stage, reason, requestId, attempts } = params;
   const failedAttempts = attempts.filter((attempt) => !attempt.ok);
   const successfulAttempts = attempts.filter((attempt) => attempt.ok);
-  const primaryAttempt = failedAttempts[0] ?? attempts[attempts.length - 1] ?? null;
+  const primaryAttempt =
+    failedAttempts[0] ?? attempts[attempts.length - 1] ?? null;
   const kind = inferFailureKind(stage, reason);
   const flowName = primaryAttempt?.flow.name?.trim() || "";
   const flowId = primaryAttempt?.flow.id ?? "";
@@ -311,7 +351,9 @@ function buildWorkflowFailureDiagnostic(params: {
           summary = `工作流“${flowLabel}”请求模板配置无效`;
           break;
         case "http_error":
-          summary = httpStatus ? `工作流“${flowLabel}”请求失败（HTTP ${httpStatus}）` : `请求工作流“${flowLabel}”失败`;
+          summary = httpStatus
+            ? `工作流“${flowLabel}”请求失败（HTTP ${httpStatus}）`
+            : `请求工作流“${flowLabel}”失败`;
           break;
         default:
           summary = `请求工作流“${flowLabel}”失败`;
@@ -319,7 +361,10 @@ function buildWorkflowFailureDiagnostic(params: {
       }
       break;
     case "merge":
-      summary = successfulAttempts.length > 0 ? "工作流响应已返回，但在合并结果时失败" : "工作流结果合并失败";
+      summary =
+        successfulAttempts.length > 0
+          ? "工作流响应已返回，但在合并结果时失败"
+          : "工作流结果合并失败";
       break;
     case "commit":
       summary = "工作流结果已生成，但写回世界书或控制器时失败";
@@ -352,7 +397,10 @@ function buildWorkflowFailureDiagnostic(params: {
     successful_flow_count: successfulAttempts.length,
     failed_flow_count: failedAttempts.length,
     partial_success: failedAttempts.length > 0 && successfulAttempts.length > 0,
-    whole_workflow_failed: attempts.length > 0 && failedAttempts.length === 0 && stage !== "dispatch",
+    whole_workflow_failed:
+      attempts.length > 0 &&
+      failedAttempts.length === 0 &&
+      stage !== "dispatch",
   };
 }
 
@@ -412,6 +460,29 @@ function saveIoSummary(
   });
 }
 
+function persistIoSummarySafe(
+  requestId: string,
+  chatId: string,
+  mode: "auto" | "manual",
+  attempts: DispatchFlowAttempt[],
+) {
+  try {
+    saveIoSummary(requestId, chatId, mode, attempts);
+  } catch (error) {
+    console.warn("[Evolution World] saveIoSummary failed:", error);
+  }
+}
+
+function persistRunSummarySafe(
+  summary: ReturnType<typeof RunSummarySchema.parse>,
+) {
+  try {
+    setLastRun(summary);
+  } catch (error) {
+    console.warn("[Evolution World] setLastRun failed:", error);
+  }
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -461,7 +532,9 @@ async function waitWithCancellation(
   while (Date.now() - startedAt < ms) {
     throwIfWorkflowCancelled(input);
     const remaining = ms - (Date.now() - startedAt);
-    await new Promise((resolve) => setTimeout(resolve, Math.min(remaining, 200)));
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(remaining, 200)),
+    );
   }
   throwIfWorkflowCancelled(input);
 }
@@ -546,7 +619,7 @@ async function runGraphWorkflow(
     mode: input.mode,
     diagnostics: {},
   });
-  setLastRun(summary);
+  persistRunSummarySafe(summary);
 
   return {
     ok: true,
@@ -674,6 +747,10 @@ export async function runWorkflow(
         user_input: input.user_input,
         trigger: input.trigger,
         request_id: requestId,
+        context_cursor: input.context_cursor,
+        job_type: input.job_type,
+        writeback_policy: input.writeback_policy,
+        rederive_options: input.rederive_options,
         abortSignal: input.abortSignal,
         isCancelled: input.isCancelled,
         onProgress: input.onProgress,
@@ -681,7 +758,7 @@ export async function runWorkflow(
       settings.total_timeout_ms,
     );
     attempts = dispatchOutput.attempts;
-    saveIoSummary(requestId, currentChatId, input.mode, attempts);
+    persistIoSummarySafe(requestId, currentChatId, input.mode, attempts);
 
     throwIfWorkflowCancelled(input);
 
@@ -741,7 +818,7 @@ export async function runWorkflow(
       mode: input.mode,
       diagnostics: mergedPlan.diagnostics,
     });
-    setLastRun(summary);
+    persistRunSummarySafe(summary);
 
     input.onProgress?.({
       phase: "completed",

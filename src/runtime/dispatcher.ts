@@ -1,17 +1,30 @@
-import { buildFlowRequest } from './context-builder';
-import { FlowResponseSchema, FlowTriggerV1 } from './contracts';
-import { assembleOrderedPrompts, collectPromptComponents, PromptComponents } from './prompt-assembler';
+import { EVENT_STREAM_TOKEN, onEvent } from "./compat/events";
 import {
+  getSillyTavernContext,
+  getStRequestHeaders,
+  resolveGenerateRaw,
+  stopSpecificGeneration,
+} from "./compat/generation";
+import { buildFlowRequest } from "./context-builder";
+import { FlowResponseSchema, FlowTriggerV1 } from "./contracts";
+import {
+  assembleOrderedPrompts,
+  collectPromptComponents,
+  PromptComponents,
+} from "./prompt-assembler";
+import {
+  ContextCursor,
   DispatchFlowAttempt,
   DispatchFlowResult,
   EwApiPreset,
   EwFlowConfig,
   EwSettings,
+  WorkflowCapsuleMode,
+  WorkflowJobType,
   WorkflowProgressUpdate,
   WorkflowStreamPreview,
-} from './types';
-import { onEvent, EVENT_STREAM_TOKEN, type StopFn } from './compat/events';
-import { resolveGenerateRaw, stopSpecificGeneration, stopGeneration, getStRequestHeaders, getSillyTavernContext } from './compat/generation';
+  WorkflowWritebackPolicy,
+} from "./types";
 
 type DispatchInput = {
   settings: EwSettings;
@@ -20,6 +33,13 @@ type DispatchInput = {
   user_input?: string;
   trigger?: FlowTriggerV1;
   request_id: string;
+  context_cursor?: ContextCursor;
+  job_type?: WorkflowJobType;
+  writeback_policy?: WorkflowWritebackPolicy;
+  rederive_options?: {
+    legacy_approx?: boolean;
+    capsule_mode?: WorkflowCapsuleMode;
+  };
   abortSignal?: AbortSignal;
   isCancelled?: () => boolean;
   onProgress?: (update: WorkflowProgressUpdate) => void;
@@ -35,36 +55,42 @@ export class DispatchFlowsError extends Error {
 
   constructor(message: string, attempts: DispatchFlowAttempt[]) {
     super(message);
-    this.name = 'DispatchFlowsError';
+    this.name = "DispatchFlowsError";
     this.attempts = attempts;
   }
 }
 
 export const DEFAULT_WORKFLOW_SYSTEM_PROMPT = [
-  '你是 Evolution World 的工作流执行器。',
-  '你会收到一个 FlowRequestV1 JSON，请返回一个 JSON 对象。',
-  '输出必须包含一个有效的 JSON 对象。允许使用 <thinking> 等标签进行思考推理，插件会自动提取 JSON 内容。',
-  'operations.worldbook 字段必须存在（允许为空数组）。',
-  'version/flow_id/status/priority 等固定字段可省略，插件会自动补全。',
-].join('\n');
+  "你是 Evolution World 的工作流执行器。",
+  "你会收到一个 FlowRequestV1 JSON，请返回一个 JSON 对象。",
+  "输出必须包含一个有效的 JSON 对象。允许使用 <thinking> 等标签进行思考推理，插件会自动提取 JSON 内容。",
+  "operations.worldbook 字段必须存在（允许为空数组）。",
+  "version/flow_id/status/priority 等固定字段可省略，插件会自动补全。",
+].join("\n");
 
 // ── getHostRuntime / resolveGenerateRaw / getSillyTavernContext ──
 // 已迁移至 compat/generation.ts。不再需要本地实现。
 // resolveGenerateRaw, getStRequestHeaders, getSillyTavernContext
 // 均从 compat/generation 导入。
 
-function isDispatchAborted(signal?: AbortSignal, isCancelled?: () => boolean): boolean {
+function isDispatchAborted(
+  signal?: AbortSignal,
+  isCancelled?: () => boolean,
+): boolean {
   return Boolean(signal?.aborted || isCancelled?.());
 }
 
-function throwIfDispatchAborted(signal?: AbortSignal, isCancelled?: () => boolean): void {
+function throwIfDispatchAborted(
+  signal?: AbortSignal,
+  isCancelled?: () => boolean,
+): void {
   if (isDispatchAborted(signal, isCancelled)) {
-    throw new Error('workflow cancelled by user');
+    throw new Error("workflow cancelled by user");
   }
 }
 
 function buildTemplateContext(base: Record<string, any>): Record<string, any> {
-  const userInput = typeof base.user_input === 'string' ? base.user_input : '';
+  const userInput = typeof base.user_input === "string" ? base.user_input : "";
   return _.merge({}, base, {
     lastUserMessage: userInput,
     last_user_message: userInput,
@@ -72,26 +98,32 @@ function buildTemplateContext(base: Record<string, any>): Record<string, any> {
   });
 }
 
-function applyTemplate(base: Record<string, any>, templateText: string): Record<string, any> {
+function applyTemplate(
+  base: Record<string, any>,
+  templateText: string,
+): Record<string, any> {
   if (!templateText.trim()) {
     return base;
   }
 
   const templateContext = buildTemplateContext(base);
 
-  const replaced = templateText.replace(/\{\{\s*([a-zA-Z0-9_.$]+)\s*\}\}/g, (_match, path) => {
-    const value = _.get(templateContext, path);
-    if (_.isPlainObject(value) || Array.isArray(value)) {
-      return JSON.stringify(value);
-    }
-    return value === undefined ? '' : String(value);
-  });
+  const replaced = templateText.replace(
+    /\{\{\s*([a-zA-Z0-9_.$]+)\s*\}\}/g,
+    (_match, path) => {
+      const value = _.get(templateContext, path);
+      if (_.isPlainObject(value) || Array.isArray(value)) {
+        return JSON.stringify(value);
+      }
+      return value === undefined ? "" : String(value);
+    },
+  );
 
   let templateObject: Record<string, any>;
   try {
     const parsed = JSON.parse(replaced);
     if (!_.isPlainObject(parsed)) {
-      throw new Error('request_template must parse to JSON object');
+      throw new Error("request_template must parse to JSON object");
     }
     templateObject = parsed as Record<string, any>;
   } catch (error) {
@@ -117,14 +149,17 @@ function parseStBackendErrorPayload(errTxt: string): {
   try {
     const parsed = JSON.parse(errTxt);
     const payload = parsed?.error;
-    if (!payload || typeof payload !== 'object') {
+    if (!payload || typeof payload !== "object") {
       return null;
     }
 
     return {
-      message: typeof payload.message === 'string' ? payload.message : String(payload.message ?? ''),
-      code: typeof payload.code === 'string' ? payload.code : undefined,
-      type: typeof payload.type === 'string' ? payload.type : undefined,
+      message:
+        typeof payload.message === "string"
+          ? payload.message
+          : String(payload.message ?? ""),
+      code: typeof payload.code === "string" ? payload.code : undefined,
+      type: typeof payload.type === "string" ? payload.type : undefined,
     };
   } catch {
     return null;
@@ -139,30 +174,40 @@ function getApiHostLabel(apiUrl: string): string {
   }
 }
 
-function summarizeStBackendError(flowId: string, status: number, apiUrl: string, errTxt: string): string {
+function summarizeStBackendError(
+  flowId: string,
+  status: number,
+  apiUrl: string,
+  errTxt: string,
+): string {
   const payload = parseStBackendErrorPayload(errTxt);
   const host = getApiHostLabel(apiUrl);
   const rawMessage = payload?.message || errTxt;
-  const normalizedMessage = rawMessage.replace(/\s+/g, ' ').trim();
-  const code = payload?.code ?? (normalizedMessage.includes('ECONNRESET') ? 'ECONNRESET' : undefined);
+  const normalizedMessage = rawMessage.replace(/\s+/g, " ").trim();
+  const code =
+    payload?.code ??
+    (normalizedMessage.includes("ECONNRESET") ? "ECONNRESET" : undefined);
 
   if (
-    code === 'ECONNRESET' ||
+    code === "ECONNRESET" ||
     /secure TLS connection was not established/i.test(normalizedMessage) ||
     /Client network socket disconnected/i.test(normalizedMessage)
   ) {
-    return `[${flowId}] 上游 API 连接失败：与 ${host} 建立安全连接时被重置（HTTP ${status}${code ? ` / ${code}` : ''}）`;
+    return `[${flowId}] 上游 API 连接失败：与 ${host} 建立安全连接时被重置（HTTP ${status}${code ? ` / ${code}` : ""}）`;
   }
 
-  if (code === 'ETIMEDOUT' || /timed? out/i.test(normalizedMessage)) {
-    return `[${flowId}] 上游 API 连接超时：${host}（HTTP ${status}${code ? ` / ${code}` : ''}）`;
+  if (code === "ETIMEDOUT" || /timed? out/i.test(normalizedMessage)) {
+    return `[${flowId}] 上游 API 连接超时：${host}（HTTP ${status}${code ? ` / ${code}` : ""}）`;
   }
 
   if (payload?.message) {
-    return `[${flowId}] 上游 API 请求失败：${payload.message}${code ? ` (${code})` : ''}`;
+    return `[${flowId}] 上游 API 请求失败：${payload.message}${code ? ` (${code})` : ""}`;
   }
 
-  const compact = normalizedMessage.length > 180 ? `${normalizedMessage.slice(0, 180)}...` : normalizedMessage;
+  const compact =
+    normalizedMessage.length > 180
+      ? `${normalizedMessage.slice(0, 180)}...`
+      : normalizedMessage;
   return `[${flowId}] ST backend error: ${status} ${compact}`;
 }
 
@@ -174,11 +219,16 @@ function parseHeadersJson(headersJson: string): Record<string, string> {
 
   try {
     const parsed = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('headers_json must be a JSON object');
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("headers_json must be a JSON object");
     }
 
-    return Object.fromEntries(Object.entries(parsed).map(([key, value]) => [String(key), String(value)]));
+    return Object.fromEntries(
+      Object.entries(parsed).map(([key, value]) => [
+        String(key),
+        String(value),
+      ]),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`headers_json invalid: ${message}`);
@@ -194,24 +244,26 @@ function buildCustomIncludeHeaders(apiPreset: EwApiPreset): string {
 
   return Object.entries(headers)
     .map(([key, value]) => `${key}: ${value}`)
-    .join('\n');
+    .join("\n");
 }
 
 function shouldUseGenerateRawCustomApi(apiPreset: EwApiPreset): boolean {
   return !apiPreset.headers_json.trim();
 }
 
-function resolveCurrentChatCompletionModel(context: Record<string, any> | undefined): string {
+function resolveCurrentChatCompletionModel(
+  context: Record<string, any> | undefined,
+): string {
   const getChatCompletionModel = context?.getChatCompletionModel;
-  if (typeof getChatCompletionModel === 'function') {
+  if (typeof getChatCompletionModel === "function") {
     const resolved = getChatCompletionModel(context?.chatCompletionSettings);
-    if (typeof resolved === 'string' && resolved.trim()) {
+    if (typeof resolved === "string" && resolved.trim()) {
       return resolved.trim();
     }
   }
 
   const settings = context?.chatCompletionSettings;
-  const source = String(settings?.chat_completion_source ?? '').trim();
+  const source = String(settings?.chat_completion_source ?? "").trim();
   const modelBySource: Record<string, string | undefined> = {
     claude: settings?.claude_model,
     openai: settings?.openai_model,
@@ -239,27 +291,33 @@ function resolveCurrentChatCompletionModel(context: Record<string, any> | undefi
     zai: settings?.zai_model,
   };
 
-  return String(modelBySource[source] ?? '').trim();
+  return String(modelBySource[source] ?? "").trim();
 }
 
 function buildMainApiStBackendRequestBody(
   flow: EwFlowConfig,
-  orderedPrompts: Array<{ role: 'system' | 'assistant' | 'user'; content: string }>,
+  orderedPrompts: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>,
 ): Record<string, any> | null {
   const context = getSillyTavernContext();
-  const mainApi = String(context?.mainApi ?? context?.main_api ?? '')
+  const mainApi = String(context?.mainApi ?? context?.main_api ?? "")
     .trim()
     .toLowerCase();
-  if (mainApi !== 'openai') {
+  if (mainApi !== "openai") {
     return null;
   }
 
   const chatSettings = context?.chatCompletionSettings;
-  if (!chatSettings || typeof chatSettings !== 'object') {
+  if (!chatSettings || typeof chatSettings !== "object") {
     return null;
   }
 
-  const model = resolveCurrentChatCompletionModel(context).replace(/^models\//, '');
+  const model = resolveCurrentChatCompletionModel(context).replace(
+    /^models\//,
+    "",
+  );
   if (!model) {
     return null;
   }
@@ -273,24 +331,30 @@ function buildMainApiStBackendRequestBody(
     frequency_penalty: flow.generation_options.frequency_penalty,
     presence_penalty: flow.generation_options.presence_penalty,
     stream: flow.generation_options.stream,
-    chat_completion_source: String(chatSettings.chat_completion_source ?? 'openai'),
+    chat_completion_source: String(
+      chatSettings.chat_completion_source ?? "openai",
+    ),
     group_names: [],
     include_reasoning: flow.behavior_options.request_thinking,
     reasoning_effort: flow.behavior_options.reasoning_effort,
     verbosity: flow.behavior_options.verbosity,
     enable_web_search: false,
     request_images: flow.behavior_options.send_inline_media,
-    reverse_proxy: String(chatSettings.reverse_proxy ?? ''),
-    proxy_password: String(chatSettings.proxy_password ?? ''),
-    custom_url: String(chatSettings.custom_url ?? ''),
-    custom_include_headers: String(chatSettings.custom_include_headers ?? ''),
-    custom_include_body: String(chatSettings.custom_include_body ?? ''),
-    custom_exclude_body: String(chatSettings.custom_exclude_body ?? ''),
-    custom_prompt_post_processing: String(chatSettings.custom_prompt_post_processing ?? 'strict'),
+    reverse_proxy: String(chatSettings.reverse_proxy ?? ""),
+    proxy_password: String(chatSettings.proxy_password ?? ""),
+    custom_url: String(chatSettings.custom_url ?? ""),
+    custom_include_headers: String(chatSettings.custom_include_headers ?? ""),
+    custom_include_body: String(chatSettings.custom_include_body ?? ""),
+    custom_exclude_body: String(chatSettings.custom_exclude_body ?? ""),
+    custom_prompt_post_processing: String(
+      chatSettings.custom_prompt_post_processing ?? "strict",
+    ),
     use_sysprompt: Boolean(chatSettings.use_sysprompt),
-    assistant_prefill: String(chatSettings.assistant_prefill ?? ''),
-    assistant_impersonation: String(chatSettings.assistant_impersonation ?? ''),
-    continue_prefill: flow.behavior_options.continue_prefill || Boolean(chatSettings.continue_prefill),
+    assistant_prefill: String(chatSettings.assistant_prefill ?? ""),
+    assistant_impersonation: String(chatSettings.assistant_impersonation ?? ""),
+    continue_prefill:
+      flow.behavior_options.continue_prefill ||
+      Boolean(chatSettings.continue_prefill),
     squash_system_messages: flow.behavior_options.squash_system_messages,
   };
 }
@@ -298,39 +362,45 @@ function buildMainApiStBackendRequestBody(
 function buildCustomStBackendRequestBody(
   flow: EwFlowConfig,
   apiPreset: EwApiPreset,
-  orderedPrompts: Array<{ role: 'system' | 'assistant' | 'user'; content: string }>,
+  orderedPrompts: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>,
 ): Record<string, any> {
   return {
     messages: orderedPrompts,
-    model: apiPreset.model.trim().replace(/^models\//, ''),
+    model: apiPreset.model.trim().replace(/^models\//, ""),
     max_tokens: flow.generation_options.max_reply_tokens,
     temperature: flow.generation_options.temperature,
     top_p: flow.generation_options.top_p,
     frequency_penalty: flow.generation_options.frequency_penalty,
     presence_penalty: flow.generation_options.presence_penalty,
     stream: flow.generation_options.stream,
-    chat_completion_source: 'custom',
+    chat_completion_source: "custom",
     group_names: [],
     include_reasoning: flow.behavior_options.request_thinking,
     reasoning_effort: flow.behavior_options.reasoning_effort,
     enable_web_search: false,
     request_images: flow.behavior_options.send_inline_media,
     reverse_proxy: apiPreset.api_url.trim(),
-    proxy_password: '',
+    proxy_password: "",
     custom_url: apiPreset.api_url.trim(),
     custom_include_headers: buildCustomIncludeHeaders(apiPreset),
-    custom_prompt_post_processing: 'strict',
+    custom_prompt_post_processing: "strict",
   };
 }
 
-function extractLatestJsonStringField(source: string, fieldName: string): { raw: string; index: number } | null {
-  const pattern = new RegExp(`\\"${fieldName}\\"\\s*:\\s*\\"`, 'g');
+function extractLatestJsonStringField(
+  source: string,
+  fieldName: string,
+): { raw: string; index: number } | null {
+  const pattern = new RegExp(`\\"${fieldName}\\"\\s*:\\s*\\"`, "g");
   let match: RegExpExecArray | null;
   let last: { raw: string; index: number } | null = null;
 
   while ((match = pattern.exec(source))) {
     const start = match.index + match[0].length;
-    let raw = '';
+    let raw = "";
     let escaped = false;
 
     for (let cursor = start; cursor < source.length; cursor += 1) {
@@ -340,7 +410,7 @@ function extractLatestJsonStringField(source: string, fieldName: string): { raw:
         escaped = false;
         continue;
       }
-      if (char === '\\') {
+      if (char === "\\") {
         raw += char;
         escaped = true;
         continue;
@@ -358,11 +428,11 @@ function extractLatestJsonStringField(source: string, fieldName: string): { raw:
 }
 
 function decodePartialJsonString(raw: string): string {
-  let result = '';
+  let result = "";
 
   for (let index = 0; index < raw.length; index += 1) {
     const char = raw[index];
-    if (char !== '\\') {
+    if (char !== "\\") {
       result += char;
       continue;
     }
@@ -374,27 +444,27 @@ function decodePartialJsonString(raw: string): string {
 
     index += 1;
     switch (next) {
-      case 'n':
-        result += '\n';
+      case "n":
+        result += "\n";
         break;
-      case 'r':
-        result += '\r';
+      case "r":
+        result += "\r";
         break;
-      case 't':
-        result += '\t';
+      case "t":
+        result += "\t";
         break;
-      case 'b':
-        result += '\b';
+      case "b":
+        result += "\b";
         break;
-      case 'f':
-        result += '\f';
+      case "f":
+        result += "\f";
         break;
       case '"':
-      case '\\':
-      case '/':
+      case "\\":
+      case "/":
         result += next;
         break;
-      case 'u': {
+      case "u": {
         const code = raw.slice(index + 1, index + 5);
         if (/^[0-9a-fA-F]{4}$/.test(code)) {
           result += String.fromCharCode(Number.parseInt(code, 16));
@@ -411,18 +481,25 @@ function decodePartialJsonString(raw: string): string {
   return result;
 }
 
-function extractStreamPreview(fullText: string): WorkflowStreamPreview | undefined {
+function extractStreamPreview(
+  fullText: string,
+): WorkflowStreamPreview | undefined {
   const desiredEntriesIndex = fullText.lastIndexOf('"desired_entries"');
-  const searchArea = desiredEntriesIndex >= 0 ? fullText.slice(desiredEntriesIndex) : fullText;
-  const nameField = extractLatestJsonStringField(searchArea, 'name');
-  const contentField = extractLatestJsonStringField(searchArea, 'content');
+  const searchArea =
+    desiredEntriesIndex >= 0 ? fullText.slice(desiredEntriesIndex) : fullText;
+  const nameField = extractLatestJsonStringField(searchArea, "name");
+  const contentField = extractLatestJsonStringField(searchArea, "content");
 
   if (!nameField && !contentField) {
     return undefined;
   }
 
-  const entryName = nameField ? decodePartialJsonString(nameField.raw).trim() : '';
-  const content = contentField ? decodePartialJsonString(contentField.raw).replace(/\s+/g, ' ').trim() : '';
+  const entryName = nameField
+    ? decodePartialJsonString(nameField.raw).trim()
+    : "";
+  const content = contentField
+    ? decodePartialJsonString(contentField.raw).replace(/\s+/g, " ").trim()
+    : "";
 
   if (!entryName && !content) {
     return undefined;
@@ -434,41 +511,50 @@ function extractStreamPreview(fullText: string): WorkflowStreamPreview | undefin
   };
 }
 
-function extractStreamDeltaFromPayload(payload: any): { delta?: string; full?: string } {
+function extractStreamDeltaFromPayload(payload: any): {
+  delta?: string;
+  full?: string;
+} {
   const openAiDelta = payload?.choices?.[0]?.delta?.content;
-  if (typeof openAiDelta === 'string' && openAiDelta) {
+  if (typeof openAiDelta === "string" && openAiDelta) {
     return { delta: openAiDelta };
   }
 
-  const openAiFull = payload?.choices?.[0]?.message?.content ?? payload?.choices?.[0]?.text ?? payload?.content;
-  if (typeof openAiFull === 'string' && openAiFull) {
+  const openAiFull =
+    payload?.choices?.[0]?.message?.content ??
+    payload?.choices?.[0]?.text ??
+    payload?.content;
+  if (typeof openAiFull === "string" && openAiFull) {
     return { full: openAiFull };
   }
 
   const anthropicDelta = payload?.delta?.text ?? payload?.content_block?.text;
-  if (typeof anthropicDelta === 'string' && anthropicDelta) {
+  if (typeof anthropicDelta === "string" && anthropicDelta) {
     return { delta: anthropicDelta };
   }
 
   const candidatesText = payload?.candidates?.[0]?.content?.parts
-    ?.map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
-    .join('');
-  if (typeof candidatesText === 'string' && candidatesText) {
+    ?.map((part: any) => (typeof part?.text === "string" ? part.text : ""))
+    .join("");
+  if (typeof candidatesText === "string" && candidatesText) {
     return { full: candidatesText };
   }
 
   return {};
 }
 
-async function readStreamingSseText(response: Response, onText?: (fullText: string) => void): Promise<string> {
+async function readStreamingSseText(
+  response: Response,
+  onText?: (fullText: string) => void,
+): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error('stream response body is unavailable');
+    throw new Error("stream response body is unavailable");
   }
 
   const decoder = new TextDecoder();
-  let buffer = '';
-  let fullText = '';
+  let buffer = "";
+  let fullText = "";
 
   const processEventBlock = (block: string) => {
     const trimmed = block.trim();
@@ -478,15 +564,15 @@ async function readStreamingSseText(response: Response, onText?: (fullText: stri
 
     const dataLines = trimmed
       .split(/\r?\n/)
-      .filter(line => line.startsWith('data:'))
-      .map(line => line.slice(5).trim());
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim());
 
     if (!dataLines.length) {
       return;
     }
 
-    const payloadText = dataLines.join('\n');
-    if (!payloadText || payloadText === '[DONE]') {
+    const payloadText = dataLines.join("\n");
+    if (!payloadText || payloadText === "[DONE]") {
       return;
     }
 
@@ -498,12 +584,12 @@ async function readStreamingSseText(response: Response, onText?: (fullText: stri
     }
 
     const extracted = extractStreamDeltaFromPayload(parsed);
-    if (typeof extracted.full === 'string' && extracted.full) {
+    if (typeof extracted.full === "string" && extracted.full) {
       fullText = extracted.full;
       onText?.(fullText);
       return;
     }
-    if (typeof extracted.delta === 'string' && extracted.delta) {
+    if (typeof extracted.delta === "string" && extracted.delta) {
       fullText += extracted.delta;
       onText?.(fullText);
     }
@@ -513,9 +599,9 @@ async function readStreamingSseText(response: Response, onText?: (fullText: stri
     const { value, done } = await reader.read();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
-    const normalized = buffer.replace(/\r\n/g, '\n');
-    const chunks = normalized.split('\n\n');
-    buffer = chunks.pop() ?? '';
+    const normalized = buffer.replace(/\r\n/g, "\n");
+    const chunks = normalized.split("\n\n");
+    buffer = chunks.pop() ?? "";
     for (const chunk of chunks) {
       processEventBlock(chunk);
     }
@@ -539,13 +625,17 @@ async function buildOrderedPromptsForFlow(
   flow: EwFlowConfig,
   components: PromptComponents,
   body: Record<string, any>,
-): Promise<Array<{ role: 'system' | 'assistant' | 'user'; content: string }>> {
-  const orderedPrompts = await assembleOrderedPrompts(flow.prompt_order, components, { templateContext: body });
-  const systemPrompt = flow.system_prompt?.trim() || '';
+): Promise<Array<{ role: "system" | "assistant" | "user"; content: string }>> {
+  const orderedPrompts = await assembleOrderedPrompts(
+    flow.prompt_order,
+    components,
+    { templateContext: body },
+  );
+  const systemPrompt = flow.system_prompt?.trim() || "";
   if (systemPrompt) {
-    orderedPrompts.push({ role: 'system', content: systemPrompt });
+    orderedPrompts.push({ role: "system", content: systemPrompt });
   }
-  orderedPrompts.push({ role: 'user', content: JSON.stringify(body, null, 2) });
+  orderedPrompts.push({ role: "user", content: JSON.stringify(body, null, 2) });
   return orderedPrompts;
 }
 
@@ -561,17 +651,17 @@ function buildGenerateRawCustomApi(
   key?: string;
   model: string;
   source?: string;
-  max_tokens?: 'same_as_preset' | 'unset' | number;
-  temperature?: 'same_as_preset' | 'unset' | number;
-  frequency_penalty?: 'same_as_preset' | 'unset' | number;
-  presence_penalty?: 'same_as_preset' | 'unset' | number;
-  top_p?: 'same_as_preset' | 'unset' | number;
+  max_tokens?: "same_as_preset" | "unset" | number;
+  temperature?: "same_as_preset" | "unset" | number;
+  frequency_penalty?: "same_as_preset" | "unset" | number;
+  presence_penalty?: "same_as_preset" | "unset" | number;
+  top_p?: "same_as_preset" | "unset" | number;
 } {
   return {
     apiurl: apiPreset.api_url.trim(),
     key: apiPreset.api_key.trim() || undefined,
-    model: apiPreset.model.trim().replace(/^models\//, ''),
-    source: apiPreset.api_source?.trim() || 'openai',
+    model: apiPreset.model.trim().replace(/^models\//, ""),
+    source: apiPreset.api_source?.trim() || "openai",
     max_tokens: flow.generation_options.max_reply_tokens,
     temperature: flow.generation_options.temperature,
     frequency_penalty: flow.generation_options.frequency_penalty,
@@ -580,13 +670,16 @@ function buildGenerateRawCustomApi(
   };
 }
 
-function parseJsonFromText(rawText: string, flowId: string): Record<string, any> {
+function parseJsonFromText(
+  rawText: string,
+  flowId: string,
+): Record<string, any> {
   const preview = rawText.slice(0, 300);
 
   // CR-10: Try direct parse first — handles clean JSON output without regex issues
   try {
     const direct = JSON.parse(rawText.trim());
-    if (direct && typeof direct === 'object' && !Array.isArray(direct)) {
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) {
       return direct;
     }
   } catch {
@@ -594,35 +687,43 @@ function parseJsonFromText(rawText: string, flowId: string): Record<string, any>
   }
   const trimmed = rawText.trim();
   const withoutFence = trimmed
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
     .trim();
 
   try {
     const parsed = JSON.parse(withoutFence);
     if (!_.isPlainObject(parsed)) {
-      throw new Error('model output is not a JSON object');
+      throw new Error("model output is not a JSON object");
     }
     return parsed as Record<string, any>;
   } catch {
-    const start = withoutFence.indexOf('{');
-    const end = withoutFence.lastIndexOf('}');
+    const start = withoutFence.indexOf("{");
+    const end = withoutFence.lastIndexOf("}");
     if (start >= 0 && end > start) {
       try {
         const sliced = withoutFence.slice(start, end + 1);
         const parsed = JSON.parse(sliced);
         if (!_.isPlainObject(parsed)) {
-          throw new Error('model output is not a JSON object');
+          throw new Error("model output is not a JSON object");
         }
         return parsed as Record<string, any>;
       } catch (error) {
-        throw new Error(`[${flowId}] JSON 解析失败: ${toErrorMessage(error)}\n` + `原始响应前300字: ${preview}`);
+        throw new Error(
+          `[${flowId}] JSON 解析失败: ${toErrorMessage(error)}\n` +
+            `原始响应前300字: ${preview}`,
+        );
       }
     }
     if (!trimmed) {
-      throw new Error(`[${flowId}] 模型返回了空响应（可能被响应后处理正则清空）`);
+      throw new Error(
+        `[${flowId}] 模型返回了空响应（可能被响应后处理正则清空）`,
+      );
     }
-    throw new Error(`[${flowId}] 模型输出中找不到 JSON 对象\n` + `原始响应前300字: ${preview}`);
+    throw new Error(
+      `[${flowId}] 模型输出中找不到 JSON 对象\n` +
+        `原始响应前300字: ${preview}`,
+    );
   }
 }
 
@@ -643,9 +744,11 @@ function applyResponseRegex(rawText: string, flow: EwFlowConfig): string {
   if (removePattern) {
     try {
       const before = text;
-      text = text.replace(new RegExp(removePattern, 'gis'), '');
+      text = text.replace(new RegExp(removePattern, "gis"), "");
       if (text.trim() !== before.trim()) {
-        console.debug(`[${flow.id}] response_remove_regex matched: removed ${before.length - text.length} chars`);
+        console.debug(
+          `[${flow.id}] response_remove_regex matched: removed ${before.length - text.length} chars`,
+        );
       }
     } catch (e) {
       console.warn(
@@ -658,13 +761,17 @@ function applyResponseRegex(rawText: string, flow: EwFlowConfig): string {
   const extractPattern = flow.response_extract_regex?.trim();
   if (extractPattern) {
     try {
-      const match = new RegExp(extractPattern, 'is').exec(text);
+      const match = new RegExp(extractPattern, "is").exec(text);
       if (match) {
         // Use first capture group if available, else full match
         text = match[1] ?? match[0];
-        console.debug(`[${flow.id}] response_extract_regex matched: extracted ${text.length} chars`);
+        console.debug(
+          `[${flow.id}] response_extract_regex matched: extracted ${text.length} chars`,
+        );
       } else {
-        console.warn(`[${flow.id}] response_extract_regex "${extractPattern}" did not match anything, using full text`);
+        console.warn(
+          `[${flow.id}] response_extract_regex "${extractPattern}" did not match anything, using full text`,
+        );
       }
     } catch (e) {
       console.warn(
@@ -690,32 +797,43 @@ function applyResponseRegex(rawText: string, flow: EwFlowConfig): string {
  * AI 可以省略 version / flow_id / status / priority / diagnostics，
  * 脚本在 Schema 校验前注入默认值。若 AI 已输出则不覆盖（向后兼容）。
  */
-function normalizeAiResponse(raw: Record<string, any>, flowId: string, flowPriority: number): Record<string, any> {
-  if (!raw.version) raw.version = 'ew-flow/v1';
+function normalizeAiResponse(
+  raw: Record<string, any>,
+  flowId: string,
+  flowPriority: number,
+): Record<string, any> {
+  if (!raw.version) raw.version = "ew-flow/v1";
   if (!raw.flow_id) raw.flow_id = flowId;
-  if (!raw.status) raw.status = 'ok';
+  if (!raw.status) raw.status = "ok";
   if (raw.priority === undefined) raw.priority = flowPriority;
   if (!raw.diagnostics) raw.diagnostics = {};
   return raw;
 }
 
-function resolveApiPreset(settings: EwSettings, flow: EwFlowConfig): EwApiPreset {
-  const matchedPreset = settings.api_presets.find(preset => preset.id === flow.api_preset_id);
+function resolveApiPreset(
+  settings: EwSettings,
+  flow: EwFlowConfig,
+): EwApiPreset {
+  const matchedPreset = settings.api_presets.find(
+    (preset) => preset.id === flow.api_preset_id,
+  );
   if (matchedPreset) {
     return matchedPreset;
   }
 
-  const hasLegacyApiConfig = Boolean(flow.api_url.trim() || flow.api_key.trim() || flow.headers_json.trim());
+  const hasLegacyApiConfig = Boolean(
+    flow.api_url.trim() || flow.api_key.trim() || flow.headers_json.trim(),
+  );
   if (hasLegacyApiConfig) {
     return {
-      id: '__legacy__',
-      name: '兼容旧配置',
-      mode: 'workflow_http',
+      id: "__legacy__",
+      name: "兼容旧配置",
+      mode: "workflow_http",
       use_main_api: false,
       api_url: flow.api_url,
       api_key: flow.api_key,
-      model: '',
-      api_source: 'openai',
+      model: "",
+      api_source: "openai",
       model_candidates: [],
       headers_json: flow.headers_json,
     };
@@ -736,12 +854,15 @@ function resolveApiPreset(settings: EwSettings, flow: EwFlowConfig): EwApiPreset
  */
 async function executeFlowViaLlmConnector(
   flow: EwFlowConfig,
-  orderedPrompts: Array<{ role: 'system' | 'assistant' | 'user'; content: string }>,
+  orderedPrompts: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>,
   generationId: string,
   onStreamText?: (fullText: string) => void,
   abortSignal?: AbortSignal,
   isCancelled?: () => boolean,
-): Promise<NonNullable<DispatchFlowAttempt['response']>> {
+): Promise<NonNullable<DispatchFlowAttempt["response"]>> {
   throwIfDispatchAborted(abortSignal, isCancelled);
   const generateRawFn = resolveGenerateRaw();
   if (!generateRawFn) {
@@ -753,7 +874,7 @@ async function executeFlowViaLlmConnector(
     if (abortSignal.aborted) {
       abortGeneration();
     } else {
-      abortSignal.addEventListener('abort', abortGeneration, { once: true });
+      abortSignal.addEventListener("abort", abortGeneration, { once: true });
     }
   }
 
@@ -781,15 +902,15 @@ async function executeFlowViaLlmConnector(
     if (!parsed.success) {
       throw new Error(
         `[${flow.id}] response schema invalid: ${parsed.error.issues
-          .map(issue => `${issue.path.join('.')}: ${issue.message}`)
-          .join('; ')}`,
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ")}`,
       );
     }
     return parsed.data;
   } finally {
     stopStreamListener?.();
     if (abortSignal) {
-      abortSignal.removeEventListener('abort', abortGeneration);
+      abortSignal.removeEventListener("abort", abortGeneration);
     }
   }
 }
@@ -797,12 +918,15 @@ async function executeFlowViaLlmConnector(
 async function executeFlowViaGenerateRawCustomApi(
   flow: EwFlowConfig,
   apiPreset: EwApiPreset,
-  orderedPrompts: Array<{ role: 'system' | 'assistant' | 'user'; content: string }>,
+  orderedPrompts: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>,
   generationId: string,
   onStreamText?: (fullText: string) => void,
   abortSignal?: AbortSignal,
   isCancelled?: () => boolean,
-): Promise<NonNullable<DispatchFlowAttempt['response']>> {
+): Promise<NonNullable<DispatchFlowAttempt["response"]>> {
   throwIfDispatchAborted(abortSignal, isCancelled);
 
   if (!apiPreset.api_url.trim()) {
@@ -823,7 +947,7 @@ async function executeFlowViaGenerateRawCustomApi(
     if (abortSignal.aborted) {
       abortGeneration();
     } else {
-      abortSignal.addEventListener('abort', abortGeneration, { once: true });
+      abortSignal.addEventListener("abort", abortGeneration, { once: true });
     }
   }
 
@@ -852,15 +976,15 @@ async function executeFlowViaGenerateRawCustomApi(
     if (!parsed.success) {
       throw new Error(
         `[${flow.id}] response schema invalid: ${parsed.error.issues
-          .map(issue => `${issue.path.join('.')}: ${issue.message}`)
-          .join('; ')}`,
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ")}`,
       );
     }
     return parsed.data;
   } finally {
     stopStreamListener?.();
     if (abortSignal) {
-      abortSignal.removeEventListener('abort', abortGeneration);
+      abortSignal.removeEventListener("abort", abortGeneration);
     }
   }
 }
@@ -876,9 +1000,9 @@ async function executeFlowViaChatCompletionsBackend(
   onStreamText?: (fullText: string) => void,
   abortSignal?: AbortSignal,
   isCancelled?: () => boolean,
-): Promise<NonNullable<DispatchFlowAttempt['response']>> {
+): Promise<NonNullable<DispatchFlowAttempt["response"]>> {
   throwIfDispatchAborted(abortSignal, isCancelled);
-  if (!String(requestBody.model ?? '').trim()) {
+  if (!String(requestBody.model ?? "").trim()) {
     throw new Error(`[${flow.id}] model is empty`);
   }
 
@@ -892,13 +1016,13 @@ async function executeFlowViaChatCompletionsBackend(
     if (abortSignal.aborted) {
       controller.abort();
     } else {
-      abortSignal.addEventListener('abort', abortFromOuter, { once: true });
+      abortSignal.addEventListener("abort", abortFromOuter, { once: true });
     }
   }
 
   try {
-    const response = await fetch('/api/backends/chat-completions/generate', {
-      method: 'POST',
+    const response = await fetch("/api/backends/chat-completions/generate", {
+      method: "POST",
       headers: stHeaders,
       body: JSON.stringify(requestBody),
       signal: controller.signal,
@@ -906,14 +1030,28 @@ async function executeFlowViaChatCompletionsBackend(
 
     if (!response.ok) {
       const errTxt = await response.text();
-      throw new Error(summarizeStBackendError(flow.id, response.status, requestTargetLabel, errTxt));
+      throw new Error(
+        summarizeStBackendError(
+          flow.id,
+          response.status,
+          requestTargetLabel,
+          errTxt,
+        ),
+      );
     }
 
     throwIfDispatchAborted(abortSignal, isCancelled);
 
     const rawText = requestBody.stream
       ? await readStreamingSseText(response, onStreamText)
-      : await response.json().then(data => data?.choices?.[0]?.message?.content?.trim() ?? data?.content?.trim() ?? '');
+      : await response
+          .json()
+          .then(
+            (data) =>
+              data?.choices?.[0]?.message?.content?.trim() ??
+              data?.content?.trim() ??
+              "",
+          );
 
     if (!rawText) {
       throw new Error(`[${flow.id}] API returned empty response`);
@@ -926,15 +1064,15 @@ async function executeFlowViaChatCompletionsBackend(
     if (!parsed.success) {
       throw new Error(
         `[${flow.id}] response schema invalid: ${parsed.error.issues
-          .map(issue => `${issue.path.join('.')}: ${issue.message}`)
-          .join('; ')}`,
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; ")}`,
       );
     }
     return parsed.data;
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (error instanceof DOMException && error.name === "AbortError") {
       if (isDispatchAborted(abortSignal, isCancelled)) {
-        throw new Error('workflow cancelled by user');
+        throw new Error("workflow cancelled by user");
       }
       throw new Error(`[${flow.id}] timeout (${flow.timeout_ms}ms)`);
     }
@@ -942,7 +1080,7 @@ async function executeFlowViaChatCompletionsBackend(
   } finally {
     clearTimeout(timeout);
     if (abortSignal) {
-      abortSignal.removeEventListener('abort', abortFromOuter);
+      abortSignal.removeEventListener("abort", abortFromOuter);
     }
   }
 }
@@ -950,11 +1088,14 @@ async function executeFlowViaChatCompletionsBackend(
 async function executeFlowViaStBackend(
   flow: EwFlowConfig,
   apiPreset: EwApiPreset,
-  orderedPrompts: Array<{ role: 'system' | 'assistant' | 'user'; content: string }>,
+  orderedPrompts: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>,
   onStreamText?: (fullText: string) => void,
   abortSignal?: AbortSignal,
   isCancelled?: () => boolean,
-): Promise<NonNullable<DispatchFlowAttempt['response']>> {
+): Promise<NonNullable<DispatchFlowAttempt["response"]>> {
   if (!apiPreset.api_url.trim()) {
     throw new Error(`[${flow.id}] custom api_url is empty`);
   }
@@ -974,18 +1115,30 @@ async function executeFlowViaStBackend(
 
 async function executeFlowViaMainApiStBackend(
   flow: EwFlowConfig,
-  orderedPrompts: Array<{ role: 'system' | 'assistant' | 'user'; content: string }>,
+  orderedPrompts: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>,
   onStreamText?: (fullText: string) => void,
   abortSignal?: AbortSignal,
   isCancelled?: () => boolean,
-): Promise<NonNullable<DispatchFlowAttempt['response']>> {
+): Promise<NonNullable<DispatchFlowAttempt["response"]>> {
   const requestBody = buildMainApiStBackendRequestBody(flow, orderedPrompts);
   if (!requestBody) {
     throw new Error(`[${flow.id}] 当前主 API 不支持工作流静默流式桥接`);
   }
 
-  const targetLabel = String(requestBody.custom_url || requestBody.reverse_proxy || 'tavern://main_api');
-  return executeFlowViaChatCompletionsBackend(flow, requestBody, targetLabel, onStreamText, abortSignal, isCancelled);
+  const targetLabel = String(
+    requestBody.custom_url || requestBody.reverse_proxy || "tavern://main_api",
+  );
+  return executeFlowViaChatCompletionsBackend(
+    flow,
+    requestBody,
+    targetLabel,
+    onStreamText,
+    abortSignal,
+    isCancelled,
+  );
 }
 
 async function executeFlow(
@@ -1004,32 +1157,37 @@ async function executeFlow(
   const startedAt = Date.now();
   throwIfDispatchAborted(abortSignal, isCancelled);
   const apiPreset = resolveApiPreset(settings, flow);
-  const usesTavernMain = apiPreset.mode === 'llm_connector' || apiPreset.use_main_api;
-  const attemptApiUrl = usesTavernMain ? 'tavern://main_api' : apiPreset.api_url;
+  const usesTavernMain =
+    apiPreset.mode === "llm_connector" || apiPreset.use_main_api;
+  const attemptApiUrl = usesTavernMain
+    ? "tavern://main_api"
+    : apiPreset.api_url;
   const generationId = `${requestId}:${flow.id}`;
   const streamEnabled = flow.generation_options.stream;
-  let lastStreamSignature = '';
+  let lastStreamSignature = "";
 
   onProgress?.({
-    phase: 'flow_started',
+    phase: "flow_started",
     request_id: requestId,
     flow_id: flow.id,
     flow_name: flow.name,
     flow_order: flowOrder,
     generation_id: generationId,
     stream_enabled: streamEnabled,
-    message: flow.name.trim() ? `正在执行工作流「${flow.name}」…` : `正在执行工作流 ${flow.id}…`,
+    message: flow.name.trim()
+      ? `正在执行工作流「${flow.name}」…`
+      : `正在执行工作流 ${flow.id}…`,
   });
 
   const emitStreamProgress = (fullText: string) => {
     const preview = extractStreamPreview(fullText);
-    const signature = `${preview?.entry_name ?? ''}\u0000${preview?.content ?? ''}\u0000${fullText.length}`;
+    const signature = `${preview?.entry_name ?? ""}\u0000${preview?.content ?? ""}\u0000${fullText.length}`;
     if (signature === lastStreamSignature) {
       return;
     }
     lastStreamSignature = signature;
     onProgress?.({
-      phase: 'streaming',
+      phase: "streaming",
       request_id: requestId,
       flow_id: flow.id,
       flow_name: flow.name,
@@ -1056,26 +1214,35 @@ async function executeFlow(
 
   try {
     throwIfDispatchAborted(abortSignal, isCancelled);
-    const body = applyTemplate(request as unknown as Record<string, any>, flow.request_template);
+    const body = applyTemplate(
+      request as unknown as Record<string, any>,
+      flow.request_template,
+    );
     const promptComponents = await promptComponentsPromise;
-    const orderedPrompts = await buildOrderedPromptsForFlow(flow, promptComponents, body);
+    const orderedPrompts = await buildOrderedPromptsForFlow(
+      flow,
+      promptComponents,
+      body,
+    );
     const mainApiStreamBridgeRequest =
-      usesTavernMain && streamEnabled ? buildMainApiStBackendRequestBody(flow, orderedPrompts) : null;
+      usesTavernMain && streamEnabled
+        ? buildMainApiStBackendRequestBody(flow, orderedPrompts)
+        : null;
     const requestDebugBase = {
       route: usesTavernMain
         ? mainApiStreamBridgeRequest
-          ? '/api/backends/chat-completions/generate (main_api stream bridge)'
-          : 'generateRaw(main_api)'
+          ? "/api/backends/chat-completions/generate (main_api stream bridge)"
+          : "generateRaw(main_api)"
         : shouldUseGenerateRawCustomApi(apiPreset)
           ? streamEnabled
-            ? '/api/backends/chat-completions/generate (custom_api stream bridge)'
-            : 'generateRaw(custom_api)'
-          : '/api/backends/chat-completions/generate',
+            ? "/api/backends/chat-completions/generate (custom_api stream bridge)"
+            : "generateRaw(custom_api)"
+          : "/api/backends/chat-completions/generate",
       flow_request: request,
       assembled_messages: orderedPrompts,
     };
 
-    let response: NonNullable<DispatchFlowAttempt['response']>;
+    let response: NonNullable<DispatchFlowAttempt["response"]>;
     let requestDebug = requestDebugBase as Record<string, any>;
 
     if (usesTavernMain) {
@@ -1112,7 +1279,11 @@ async function executeFlow(
       }
     } else if (shouldUseGenerateRawCustomApi(apiPreset)) {
       if (streamEnabled) {
-        const streamBridgeRequest = buildCustomStBackendRequestBody(flow, apiPreset, orderedPrompts);
+        const streamBridgeRequest = buildCustomStBackendRequestBody(
+          flow,
+          apiPreset,
+          orderedPrompts,
+        );
         requestDebug = {
           ...requestDebugBase,
           transport_request: streamBridgeRequest,
@@ -1150,10 +1321,14 @@ async function executeFlow(
           console.warn(
             `[EW] Flow "${flow.id}": generateRaw.custom_api failed, fallback to ST backend — ${toErrorMessage(error)}`,
           );
-          const fallbackRequestBody = buildCustomStBackendRequestBody(flow, apiPreset, orderedPrompts);
+          const fallbackRequestBody = buildCustomStBackendRequestBody(
+            flow,
+            apiPreset,
+            orderedPrompts,
+          );
           requestDebug = {
             ...requestDebugBase,
-            route: '/api/backends/chat-completions/generate (fallback)',
+            route: "/api/backends/chat-completions/generate (fallback)",
             transport_request: fallbackRequestBody,
           };
           response = await executeFlowViaStBackend(
@@ -1167,7 +1342,11 @@ async function executeFlow(
         }
       }
     } else {
-      const stBackendRequest = buildCustomStBackendRequestBody(flow, apiPreset, orderedPrompts);
+      const stBackendRequest = buildCustomStBackendRequestBody(
+        flow,
+        apiPreset,
+        orderedPrompts,
+      );
       requestDebug = {
         ...requestDebugBase,
         transport_request: stBackendRequest,
@@ -1214,13 +1393,15 @@ async function executeFlow(
   }
 }
 
-export async function dispatchFlows(input: DispatchInput): Promise<DispatchFlowsOutput> {
-  const flows = input.flows.filter(flow => flow.enabled);
+export async function dispatchFlows(
+  input: DispatchInput,
+): Promise<DispatchFlowsOutput> {
+  const flows = input.flows.filter((flow) => flow.enabled);
   if (flows.length === 0) {
-    throw new Error('no enabled flows');
+    throw new Error("no enabled flows");
   }
 
-  if (input.settings.dispatch_mode === 'serial') {
+  if (input.settings.dispatch_mode === "serial") {
     const serialResults: Record<string, any>[] = [];
     const attempts: DispatchFlowAttempt[] = [];
     const outputs: DispatchFlowResult[] = [];
@@ -1243,7 +1424,10 @@ export async function dispatchFlows(input: DispatchInput): Promise<DispatchFlows
       attempts.push(attempt);
 
       if (!attempt.ok || !attempt.response) {
-        throw new DispatchFlowsError(attempt.error ?? `[${flow.id}] failed`, attempts);
+        throw new DispatchFlowsError(
+          attempt.error ?? `[${flow.id}] failed`,
+          attempts,
+        );
       }
 
       const output: DispatchFlowResult = {
@@ -1285,16 +1469,22 @@ export async function dispatchFlows(input: DispatchInput): Promise<DispatchFlows
   throwIfDispatchAborted(input.abortSignal, input.isCancelled);
 
   const succeeded = attempts.filter(
-    (attempt): attempt is DispatchFlowAttempt & { response: NonNullable<DispatchFlowAttempt['response']> } =>
-      attempt.ok && Boolean(attempt.response),
+    (
+      attempt,
+    ): attempt is DispatchFlowAttempt & {
+      response: NonNullable<DispatchFlowAttempt["response"]>;
+    } => attempt.ok && Boolean(attempt.response),
   );
-  const failed = attempts.filter(attempt => !attempt.ok);
+  const failed = attempts.filter((attempt) => !attempt.ok);
 
   if (failed.length > 0) {
     // CR-3: allow_partial_success — use whatever succeeded, only throw if nothing worked
-    if (input.settings.failure_policy === 'allow_partial_success') {
+    if (input.settings.failure_policy === "allow_partial_success") {
       if (succeeded.length === 0) {
-        throw new DispatchFlowsError(failed.map(f => f.error ?? `[${f.flow.id}] failed`).join('; '), attempts);
+        throw new DispatchFlowsError(
+          failed.map((f) => f.error ?? `[${f.flow.id}] failed`).join("; "),
+          attempts,
+        );
       }
       console.warn(
         `[EW] allow_partial_success: ${failed.length} flow(s) failed, ${succeeded.length} succeeded — using partial results`,
@@ -1302,12 +1492,15 @@ export async function dispatchFlows(input: DispatchInput): Promise<DispatchFlows
     } else {
       // Default: any failure → throw
       const first = failed[0];
-      throw new DispatchFlowsError(first.error ?? `[${first.flow.id}] failed`, attempts);
+      throw new DispatchFlowsError(
+        first.error ?? `[${first.flow.id}] failed`,
+        attempts,
+      );
     }
   }
 
   return {
-    results: succeeded.map(attempt => ({
+    results: succeeded.map((attempt) => ({
       flow: attempt.flow,
       flow_order: attempt.flow_order,
       response: attempt.response,

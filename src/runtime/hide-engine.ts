@@ -239,7 +239,29 @@ export function applyFloorLimit(settings: HideSettings): void {
   );
 }
 
-// ── 5. Reset state ───────────────────────────────────────────────────
+// ── 5. Delayed apply / reset state ───────────────────────────────────
+
+export function scheduleHideSettingsApply(
+  settings: HideSettings,
+  delayMs = 180,
+): ReturnType<typeof setTimeout> {
+  return setTimeout(
+    () => {
+      try {
+        if (settings.enabled) {
+          runFullHideCheck(settings);
+          applyFloorLimit(settings);
+        } else {
+          unhideAll();
+          applyFloorLimit({ ...settings, limiter_enabled: false });
+        }
+      } catch (error) {
+        console.warn("[Evolution World] apply hide settings failed:", error);
+      }
+    },
+    Math.max(0, Math.trunc(Number(delayMs) || 0)),
+  );
+}
 
 export function resetHideState(): void {
   hideState = { lastProcessedLength: 0 };
