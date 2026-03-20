@@ -4,28 +4,40 @@ import {
   readCharFlows,
   writeCharFlowDraft,
   writeCharFlows,
-} from '../runtime/char-flows';
-import { createDefaultApiPreset, createDefaultFlow } from '../runtime/factory';
+} from "../runtime/char-flows";
+import {
+  getChatMessages,
+  getCurrentCharacterName,
+  getLastMessageId,
+} from "../runtime/compat/character";
+import { createDefaultApiPreset, createDefaultFlow } from "../runtime/factory";
 import {
   collectAllFloorSnapshots,
   collectLatestSnapshots,
   rollbackToFloor,
   type DynSnapshot,
   type FloorSnapshot,
-} from '../runtime/floor-binding';
-import { runWorkflow } from '../runtime/pipeline';
-import { previewPrompt, type PromptPreviewMessage } from '../runtime/prompt-assembler';
+} from "../runtime/floor-binding";
+import { runWorkflow } from "../runtime/pipeline";
+import {
+  previewPrompt,
+  type PromptPreviewMessage,
+} from "../runtime/prompt-assembler";
 import {
   getLastIo,
   getLastRun,
   getSettings,
+  loadLastIo,
+  loadLastIoForChat,
+  loadLastRun,
+  loadLastRunForChat,
   patchSettings,
   persistSettingsDraft,
   replaceSettings,
   subscribeLastIo,
   subscribeLastRun,
   subscribeSettings,
-} from '../runtime/settings';
+} from "../runtime/settings";
 import {
   EwFlowConfig,
   EwFlowConfigSchema,
@@ -34,33 +46,35 @@ import {
   LastIoSummary,
   RunSummary,
   type ControllerEntrySnapshot,
-} from '../runtime/types';
-import { convertStPresetToFlow, isSillyTavernPreset } from './convertStPreset';
-import type { TabKey } from './help-meta';
-import { showEwNotice } from './notice';
-import { getCurrentCharacterName, getChatMessages, getLastMessageId } from '../runtime/compat/character';
+} from "../runtime/types";
+import { convertStPresetToFlow, isSillyTavernPreset } from "./convertStPreset";
+import type { TabKey } from "./help-meta";
+import { showEwNotice } from "./notice";
 
-export const useEwStore = defineStore('evolution-world-store', () => {
+export const useEwStore = defineStore("evolution-world-store", () => {
   const settings = ref<EwSettings>(getSettings());
   const lastRun = ref<RunSummary | null>(getLastRun());
   const lastIo = ref<LastIoSummary | null>(getLastIo());
-  const activeTab = ref<TabKey>('overview');
+  const activeTab = ref<TabKey>("overview");
   const globalAdvancedOpen = ref(false);
   const expandedApiPresetId = ref<string | null>(null);
   const expandedFlowId = ref<string | null>(null);
-  const importText = ref('');
+  const importText = ref("");
   const busy = ref(false);
 
   const charFlows = ref<EwFlowConfig[]>([]);
-  const activeCharName = ref<string>('');
-  const flowScope = ref<'global' | 'character'>('global');
+  const activeCharName = ref<string>("");
+  const flowScope = ref<"global" | "character">("global");
   const charFlowsLoading = ref(false);
   let suppressCharFlowDraftPersist = false;
   let charFlowRefreshTimer: number | null = null;
 
   const promptPreview = ref<PromptPreviewMessage[] | null>(null);
-  const snapshotPreview = ref<{ controllers: ControllerEntrySnapshot[]; dyn: Map<string, DynSnapshot> } | null>(null);
-  const previewFlowId = ref<string>('');
+  const snapshotPreview = ref<{
+    controllers: ControllerEntrySnapshot[];
+    dyn: Map<string, DynSnapshot>;
+  } | null>(null);
+  const previewFlowId = ref<string>("");
 
   const floorSnapshots = ref<FloorSnapshot[]>([]);
   const selectedFloorId = ref<number | null>(null);
@@ -69,12 +83,41 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   let persistTimeoutId: number | null = null;
   let persistIdleId: number | null = null;
 
+  function getHostRuntime(): Record<string, any> {
+    try {
+      if (window.parent && window.parent !== window) {
+        return window.parent as unknown as Record<string, any>;
+      }
+    } catch {
+      // ignore
+    }
+
+    return window as unknown as Record<string, any>;
+  }
+
+  function getCurrentChatIdSafe(): string {
+    try {
+      const hostRuntime = getHostRuntime();
+      const sillyTavern =
+        hostRuntime.SillyTavern ??
+        (globalThis as Record<string, any>).SillyTavern;
+      return String(
+        sillyTavern?.getCurrentChatId?.() ?? sillyTavern?.chatId ?? "",
+      ).trim();
+    } catch {
+      return "";
+    }
+  }
+
   function clearScheduledPersist() {
     if (persistTimeoutId !== null) {
       window.clearTimeout(persistTimeoutId);
       persistTimeoutId = null;
     }
-    if (persistIdleId !== null && typeof window.cancelIdleCallback === 'function') {
+    if (
+      persistIdleId !== null &&
+      typeof window.cancelIdleCallback === "function"
+    ) {
       window.cancelIdleCallback(persistIdleId);
       persistIdleId = null;
     }
@@ -93,7 +136,11 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function isCharacterFlowPanelActive() {
-    return settings.value.ui_open && activeTab.value === 'flows' && flowScope.value === 'character';
+    return (
+      settings.value.ui_open &&
+      activeTab.value === "flows" &&
+      flowScope.value === "character"
+    );
   }
 
   function scheduleCharFlowRefreshWatch() {
@@ -108,7 +155,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         return;
       }
 
-      const currentName = (getCurrentCharacterName?.() ?? '').trim();
+      const currentName = (getCurrentCharacterName?.() ?? "").trim();
       const loadedName = activeCharName.value.trim();
       if (currentName !== loadedName) {
         void loadCharFlows();
@@ -125,7 +172,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       flushSettingsPersist();
     };
 
-    if (typeof window.requestIdleCallback === 'function') {
+    if (typeof window.requestIdleCallback === "function") {
       persistIdleId = window.requestIdleCallback(runPersist, { timeout: 320 });
       return;
     }
@@ -133,7 +180,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     persistTimeoutId = window.setTimeout(runPersist, 180);
   }
 
-  const syncFromRuntime = subscribeSettings(next => {
+  const syncFromRuntime = subscribeSettings((next) => {
     suppressPersist = true;
     if (!_.isEqual(settings.value, next)) {
       settings.value = next;
@@ -143,11 +190,25 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     });
   });
 
-  const syncRun = subscribeLastRun(next => {
-    lastRun.value = next;
+  const syncRun = subscribeLastRun((next) => {
+    const currentChatId = getCurrentChatIdSafe();
+    if (
+      !currentChatId ||
+      !next?.chat_id ||
+      next.chat_id.trim() === currentChatId
+    ) {
+      lastRun.value = next;
+    }
   });
-  const syncIo = subscribeLastIo(next => {
-    lastIo.value = next;
+  const syncIo = subscribeLastIo((next) => {
+    const currentChatId = getCurrentChatIdSafe();
+    if (
+      !currentChatId ||
+      !next?.chat_id ||
+      next.chat_id.trim() === currentChatId
+    ) {
+      lastIo.value = next;
+    }
   });
 
   onScopeDispose(() => {
@@ -166,21 +227,24 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       }
       scheduleSettingsPersist();
     },
-    { deep: true, flush: 'post' },
+    { deep: true, flush: "post" },
   );
 
   watch(
-    () => settings.value.api_presets.map(preset => preset.id),
-    presetIds => {
-      if (expandedApiPresetId.value && !presetIds.includes(expandedApiPresetId.value)) {
+    () => settings.value.api_presets.map((preset) => preset.id),
+    (presetIds) => {
+      if (
+        expandedApiPresetId.value &&
+        !presetIds.includes(expandedApiPresetId.value)
+      ) {
         expandedApiPresetId.value = null;
       }
     },
   );
 
   watch(
-    () => settings.value.flows.map(flow => flow.id),
-    flowIds => {
+    () => settings.value.flows.map((flow) => flow.id),
+    (flowIds) => {
       if (expandedFlowId.value && !flowIds.includes(expandedFlowId.value)) {
         expandedFlowId.value = null;
       }
@@ -189,11 +253,11 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   watch(
     charFlows,
-    next => {
+    (next) => {
       if (suppressCharFlowDraftPersist || charFlowsLoading.value) {
         return;
       }
-      if (flowScope.value !== 'character') {
+      if (flowScope.value !== "character") {
         return;
       }
       if (!activeCharName.value.trim()) {
@@ -201,25 +265,64 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       }
       writeCharFlowDraft(activeCharName.value, next);
     },
-    { deep: true, flush: 'post' },
+    { deep: true, flush: "post" },
   );
 
   watch(
     () => [settings.value.ui_open, activeTab.value, flowScope.value] as const,
-    ([uiOpen, tab, scope], previous) => {
-      const [prevUiOpen, prevTab, prevScope] = previous ?? [undefined, undefined, undefined];
+    (nextState, previous) => {
+      const [uiOpen, tab, scope] = nextState;
+      const [prevUiOpen, prevTab, prevScope] = previous ?? [
+        undefined,
+        undefined,
+        undefined,
+      ];
       scheduleCharFlowRefreshWatch();
 
-      if (!uiOpen || tab !== 'flows' || scope !== 'character') {
+      if (uiOpen && tab === "debug" && (!prevUiOpen || prevTab !== "debug")) {
+        refreshDebugRecords({ silent: true });
+      }
+
+      if (!uiOpen || tab !== "flows" || scope !== "character") {
         return;
       }
 
-      if (!prevUiOpen || prevTab !== 'flows' || prevScope !== 'character') {
+      if (!prevUiOpen || prevTab !== "flows" || prevScope !== "character") {
         void loadCharFlows();
       }
     },
     { immediate: true },
   );
+
+  function refreshDebugRecords(options: { silent?: boolean } = {}) {
+    const currentChatId = getCurrentChatIdSafe();
+    const nextRun = currentChatId
+      ? loadLastRunForChat(currentChatId)
+      : loadLastRun();
+    const nextIo = currentChatId
+      ? loadLastIoForChat(currentChatId)
+      : loadLastIo();
+
+    lastRun.value = nextRun;
+    lastIo.value = nextIo;
+
+    if (options.silent) {
+      return;
+    }
+
+    showEwNotice({
+      title: "调试",
+      message:
+        nextRun || nextIo
+          ? currentChatId
+            ? "已刷新当前聊天的调试记录"
+            : "已刷新调试记录"
+          : currentChatId
+            ? "当前聊天暂无调试记录"
+            : "暂无可用调试记录",
+      level: "info",
+    });
+  }
 
   function addApiPreset() {
     const next = klona(settings.value);
@@ -227,17 +330,18 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     next.api_presets.push(newPreset);
     settings.value = next;
     expandedApiPresetId.value = newPreset.id;
-    activeTab.value = 'api';
+    activeTab.value = "api";
   }
 
   function duplicateApiPreset(presetId: string) {
-    const source = settings.value.api_presets.find(p => p.id === presetId);
+    const source = settings.value.api_presets.find((p) => p.id === presetId);
     if (!source) return;
     const next = klona(settings.value);
     const copy = klona(source);
     copy.id = `${copy.id}_${Date.now()}`;
     copy.name = `${copy.name} (副本)`;
-    const insertIndex = next.api_presets.findIndex(p => p.id === presetId) + 1;
+    const insertIndex =
+      next.api_presets.findIndex((p) => p.id === presetId) + 1;
     next.api_presets.splice(insertIndex, 0, copy);
     settings.value = next;
     expandedApiPresetId.value = copy.id;
@@ -245,14 +349,14 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function removeApiPreset(presetId: string) {
     const next = klona(settings.value);
-    _.remove(next.api_presets, preset => preset.id === presetId);
+    _.remove(next.api_presets, (preset) => preset.id === presetId);
 
     if (next.api_presets.length === 0) {
       next.api_presets.push(createDefaultApiPreset(1));
     }
 
     const fallbackPresetId = next.api_presets[0].id;
-    next.flows = next.flows.map(flow => {
+    next.flows = next.flows.map((flow) => {
       if (flow.api_preset_id !== presetId) {
         return flow;
       }
@@ -273,16 +377,19 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     if (next.api_presets.length === 0) {
       next.api_presets.push(createDefaultApiPreset(1));
     }
-    const newFlow = createDefaultFlow(next.flows.length + 1, next.api_presets[0].id);
+    const newFlow = createDefaultFlow(
+      next.flows.length + 1,
+      next.api_presets[0].id,
+    );
     next.flows.push(newFlow);
     settings.value = next;
     expandedFlowId.value = newFlow.id;
-    activeTab.value = 'flows';
+    activeTab.value = "flows";
   }
 
   function removeFlow(flowId: string) {
     const next = klona(settings.value);
-    _.remove(next.flows, flow => flow.id === flowId);
+    _.remove(next.flows, (flow) => flow.id === flowId);
     if (next.flows.length === 0) {
       if (next.api_presets.length === 0) {
         next.api_presets.push(createDefaultApiPreset(1));
@@ -296,13 +403,13 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function duplicateFlow(flowId: string) {
-    const source = settings.value.flows.find(f => f.id === flowId);
+    const source = settings.value.flows.find((f) => f.id === flowId);
     if (!source) return;
     const next = klona(settings.value);
     const copy = klona(source);
     copy.id = `${copy.id}_${Date.now()}`;
     copy.name = `${copy.name} (副本)`;
-    const insertIndex = next.flows.findIndex(f => f.id === flowId) + 1;
+    const insertIndex = next.flows.findIndex((f) => f.id === flowId) + 1;
     next.flows.splice(insertIndex, 0, copy);
     settings.value = next;
     expandedFlowId.value = copy.id;
@@ -310,7 +417,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function setActiveTab(tab: TabKey) {
     activeTab.value = tab;
-    if (tab === 'flows' && flowScope.value === 'character') {
+    if (tab === "flows" && flowScope.value === "character") {
       void loadCharFlows();
     }
   }
@@ -324,7 +431,8 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function toggleApiPresetExpanded(presetId: string) {
-    expandedApiPresetId.value = expandedApiPresetId.value === presetId ? null : presetId;
+    expandedApiPresetId.value =
+      expandedApiPresetId.value === presetId ? null : presetId;
   }
 
   function toggleFlowExpanded(flowId: string) {
@@ -342,17 +450,17 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   async function runManual(message: string) {
     busy.value = true;
     try {
-      const text = message.trim() || getChatMessages(-1)[0]?.message || '';
+      const text = message.trim() || getChatMessages(-1)[0]?.message || "";
       const result = await runWorkflow({
         message_id: getLastMessageId(),
         user_input: text,
-        mode: 'manual',
+        mode: "manual",
         inject_reply: false,
       });
       if (!result.ok) {
-        toastr.error(result.reason ?? '手动运行失败', 'Evolution World');
+        toastr.error(result.reason ?? "手动运行失败", "Evolution World");
       } else {
-        toastr.success('手动运行成功', 'Evolution World');
+        toastr.success("手动运行成功", "Evolution World");
       }
     } finally {
       busy.value = false;
@@ -364,14 +472,14 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     try {
       const api = window.EvolutionWorldAPI;
       if (!api) {
-        toastr.error('EvolutionWorldAPI 尚未就绪', 'Evolution World');
+        toastr.error("EvolutionWorldAPI 尚未就绪", "Evolution World");
         return;
       }
       const result = await api.rollbackController();
       if (!result.ok) {
-        toastr.error(result.reason ?? '回滚失败', 'Evolution World');
+        toastr.error(result.reason ?? "回滚失败", "Evolution World");
       } else {
-        toastr.success('控制器回滚成功', 'Evolution World');
+        toastr.success("控制器回滚成功", "Evolution World");
       }
     } finally {
       busy.value = false;
@@ -381,30 +489,35 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   function exportConfig() {
     const safeSettings = klona(settings.value);
     for (const preset of safeSettings.api_presets) {
-      preset.api_key = '';
-      preset.api_url = '';
-      preset.headers_json = '';
+      preset.api_key = "";
+      preset.api_url = "";
+      preset.headers_json = "";
     }
     for (const flow of safeSettings.flows) {
-      (flow as any).api_url = '';
-      (flow as any).api_key = '';
-      (flow as any).headers_json = '';
-      (flow as any).api_preset_id = '';
+      (flow as any).api_url = "";
+      (flow as any).api_key = "";
+      (flow as any).headers_json = "";
+      (flow as any).api_preset_id = "";
     }
     const payload = JSON.stringify(safeSettings, null, 2);
     navigator.clipboard
       .writeText(payload)
-      .then(() => toastr.success('配置已复制到剪贴板（已去除 API 密钥）', 'Evolution World'))
-      .catch(() => toastr.error('复制配置失败', 'Evolution World'));
+      .then(() =>
+        toastr.success(
+          "配置已复制到剪贴板（已去除 API 密钥）",
+          "Evolution World",
+        ),
+      )
+      .catch(() => toastr.error("复制配置失败", "Evolution World"));
   }
 
   function sanitizeImportData(data: any): any {
-    if (!data || typeof data !== 'object') return data;
+    if (!data || typeof data !== "object") return data;
     const clone = klona(data);
     if (Array.isArray(clone.api_presets)) {
       for (const preset of clone.api_presets) {
-        if (preset.mode === 'llm_connector') {
-          preset.mode = 'workflow_http';
+        if (preset.mode === "llm_connector") {
+          preset.mode = "workflow_http";
         }
         delete preset.use_main_api;
       }
@@ -415,12 +528,12 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   function importConfig() {
     if (!importText.value.trim()) {
       showEwNotice({
-        title: '导入失败',
-        message: '导入内容为空，请先粘贴 JSON 配置。',
-        level: 'warning',
+        title: "导入失败",
+        message: "导入内容为空，请先粘贴 JSON 配置。",
+        level: "warning",
         duration_ms: 3600,
       });
-      toastr.warning('导入内容为空', 'Evolution World');
+      toastr.warning("导入内容为空", "Evolution World");
       return;
     }
 
@@ -431,28 +544,30 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       replaceSettings(parsed as EwSettings);
       settings.value = getSettings();
       showEwNotice({
-        title: '导入成功',
-        message: '配置已加载并应用到当前脚本。',
-        level: 'success',
+        title: "导入成功",
+        message: "配置已加载并应用到当前脚本。",
+        level: "success",
         duration_ms: 3200,
       });
-      toastr.success('配置已导入', 'Evolution World');
+      toastr.success("配置已导入", "Evolution World");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showEwNotice({
-        title: '导入失败',
+        title: "导入失败",
         message,
-        level: 'error',
+        level: "error",
         duration_ms: 4800,
       });
-      toastr.error(`导入失败: ${message}`, 'Evolution World');
+      toastr.error(`导入失败: ${message}`, "Evolution World");
     }
   }
 
   function downloadJson(data: unknown, filename: string) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
@@ -462,7 +577,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function buildFlowExportPayload(flows: EwFlowConfig[]) {
-    const safeFlows = flows.map(flow => {
+    const safeFlows = flows.map((flow) => {
       const copy = klona(flow) as Record<string, unknown>;
       delete copy.api_url;
       delete copy.api_key;
@@ -474,10 +589,13 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   }
 
   function sanitizeFilename(name: string) {
-    return name.replace(/[<>:"/\\|?*]/g, '_').trim() || 'flow';
+    return name.replace(/[<>:"/\\|?*]/g, "_").trim() || "flow";
   }
 
-  function ensureUniqueFlowIds(flows: EwFlowConfig[], existingIds: Set<string>) {
+  function ensureUniqueFlowIds(
+    flows: EwFlowConfig[],
+    existingIds: Set<string>,
+  ) {
     for (const flow of flows) {
       if (existingIds.has(flow.id)) {
         flow.id = `${flow.id}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -491,114 +609,134 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
     let validated: EwFlowConfig[];
 
-    if (parsed && parsed.ew_flow_export === true && Array.isArray(parsed.flows)) {
+    if (
+      parsed &&
+      parsed.ew_flow_export === true &&
+      Array.isArray(parsed.flows)
+    ) {
       validated = [];
       for (const raw of parsed.flows) {
         validated.push(EwFlowConfigSchema.parse(raw));
       }
     } else if (isSillyTavernPreset(parsed)) {
-      const flowName = filename?.replace(/\.json$/i, '') || 'ST Preset';
-      const flow = EwFlowConfigSchema.parse(convertStPresetToFlow(parsed, flowName));
+      const flowName = filename?.replace(/\.json$/i, "") || "ST Preset";
+      const flow = EwFlowConfigSchema.parse(
+        convertStPresetToFlow(parsed, flowName),
+      );
       validated = [flow];
-      toastr.info('已识别为酒馆预设并转换', 'Evolution World');
+      toastr.info("已识别为酒馆预设并转换", "Evolution World");
     } else {
-      throw new Error('无效的工作流导出文件，缺少 ew_flow_export 标识且非酒馆预设');
+      throw new Error(
+        "无效的工作流导出文件，缺少 ew_flow_export 标识且非酒馆预设",
+      );
     }
 
     if (validated.length === 0) {
-      throw new Error('导出文件中没有工作流');
+      throw new Error("导出文件中没有工作流");
     }
 
     return validated;
   }
 
   function exportSingleFlow(flowId: string) {
-    const flow = settings.value.flows.find(f => f.id === flowId);
+    const flow = settings.value.flows.find((f) => f.id === flowId);
     if (!flow) {
-      toastr.error('找不到该工作流', 'Evolution World');
+      toastr.error("找不到该工作流", "Evolution World");
       return;
     }
     const payload = buildFlowExportPayload([flow]);
     downloadJson(payload, `ew_flow_${sanitizeFilename(flow.name)}.json`);
-    toastr.success(`已导出工作流「${flow.name}」`, 'Evolution World');
+    toastr.success(`已导出工作流「${flow.name}」`, "Evolution World");
   }
 
   function exportAllFlows() {
     if (settings.value.flows.length === 0) {
-      toastr.warning('没有工作流可导出', 'Evolution World');
+      toastr.warning("没有工作流可导出", "Evolution World");
       return;
     }
     const payload = buildFlowExportPayload(settings.value.flows);
     downloadJson(payload, `ew_flows_all_${settings.value.flows.length}.json`);
-    toastr.success(`已导出全部 ${settings.value.flows.length} 条工作流`, 'Evolution World');
+    toastr.success(
+      `已导出全部 ${settings.value.flows.length} 条工作流`,
+      "Evolution World",
+    );
   }
 
   function importFlowsFromText(jsonText: string, filename?: string) {
     if (!jsonText.trim()) {
-      toastr.warning('导入内容为空', 'Evolution World');
+      toastr.warning("导入内容为空", "Evolution World");
       return;
     }
 
     try {
       const validated = parseImportedFlows(jsonText, filename);
-      const existingIds = new Set(settings.value.flows.map(f => f.id));
+      const existingIds = new Set(settings.value.flows.map((f) => f.id));
       ensureUniqueFlowIds(validated, existingIds);
 
       const next = klona(settings.value);
       next.flows.push(...validated);
       settings.value = next;
-      toastr.success(`已导入 ${validated.length} 条工作流`, 'Evolution World');
+      toastr.success(`已导入 ${validated.length} 条工作流`, "Evolution World");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      toastr.error(`工作流导入失败: ${message}`, 'Evolution World');
+      toastr.error(`工作流导入失败: ${message}`, "Evolution World");
     }
   }
 
   function exportSingleCharFlow(flowId: string) {
-    const flow = charFlows.value.find(f => f.id === flowId);
+    const flow = charFlows.value.find((f) => f.id === flowId);
     if (!flow) {
-      toastr.error('找不到该角色卡工作流', 'Evolution World');
+      toastr.error("找不到该角色卡工作流", "Evolution World");
       return;
     }
     const payload = buildFlowExportPayload([flow]);
     downloadJson(payload, `ew_char_flow_${sanitizeFilename(flow.name)}.json`);
-    toastr.success(`已导出角色卡工作流「${flow.name}」`, 'Evolution World');
+    toastr.success(`已导出角色卡工作流「${flow.name}」`, "Evolution World");
   }
 
   function exportAllCharFlows() {
     if (charFlows.value.length === 0) {
-      toastr.warning('当前角色卡没有工作流可导出', 'Evolution World');
+      toastr.warning("当前角色卡没有工作流可导出", "Evolution World");
       return;
     }
-    const charName = sanitizeFilename(activeCharName.value || 'character');
+    const charName = sanitizeFilename(activeCharName.value || "character");
     const payload = buildFlowExportPayload(charFlows.value);
-    downloadJson(payload, `ew_char_flows_${charName}_${charFlows.value.length}.json`);
-    toastr.success(`已导出当前角色卡全部 ${charFlows.value.length} 条工作流`, 'Evolution World');
+    downloadJson(
+      payload,
+      `ew_char_flows_${charName}_${charFlows.value.length}.json`,
+    );
+    toastr.success(
+      `已导出当前角色卡全部 ${charFlows.value.length} 条工作流`,
+      "Evolution World",
+    );
   }
 
   function importCharFlowsFromText(jsonText: string, filename?: string) {
     if (!jsonText.trim()) {
-      toastr.warning('导入内容为空', 'Evolution World');
+      toastr.warning("导入内容为空", "Evolution World");
       return;
     }
 
     try {
       const validated = parseImportedFlows(jsonText, filename);
       const next = [...charFlows.value];
-      const existingIds = new Set(next.map(f => f.id));
+      const existingIds = new Set(next.map((f) => f.id));
       ensureUniqueFlowIds(validated, existingIds);
       next.push(...validated);
       charFlows.value = next;
 
       showEwNotice({
-        title: 'Evolution World',
+        title: "Evolution World",
         message: `已导入 ${validated.length} 条角色卡工作流。若要写回世界书，请继续点击“保存到绑定世界书”。`,
-        level: 'success',
+        level: "success",
       });
-      toastr.success(`已导入 ${validated.length} 条角色卡工作流`, 'Evolution World');
+      toastr.success(
+        `已导入 ${validated.length} 条角色卡工作流`,
+        "Evolution World",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      toastr.error(`角色卡工作流导入失败: ${message}`, 'Evolution World');
+      toastr.error(`角色卡工作流导入失败: ${message}`, "Evolution World");
     }
   }
 
@@ -606,21 +744,27 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     try {
       const result = EwSettingsSchema.safeParse(settings.value);
       if (result.success) {
-        toastr.success('配置校验通过 ✓', 'Evolution World');
-        showEwNotice({ title: '校验', message: '当前配置合法、完整。', level: 'success' });
+        toastr.success("配置校验通过 ✓", "Evolution World");
+        showEwNotice({
+          title: "校验",
+          message: "当前配置合法、完整。",
+          level: "success",
+        });
         return;
       }
-      const errors = result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`);
-      toastr.error(`配置校验失败 (${errors.length} 项)`, 'Evolution World');
+      const errors = result.error.issues.map(
+        (issue) => `${issue.path.join(".")}: ${issue.message}`,
+      );
+      toastr.error(`配置校验失败 (${errors.length} 项)`, "Evolution World");
       showEwNotice({
-        title: '校验失败',
-        message: errors.join('\n'),
-        level: 'error',
+        title: "校验失败",
+        message: errors.join("\n"),
+        level: "error",
         duration_ms: 6000,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toastr.error(`校验异常: ${msg}`, 'Evolution World');
+      toastr.error(`校验异常: ${msg}`, "Evolution World");
     }
   }
 
@@ -629,14 +773,14 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     try {
       const result = await window.EvolutionWorldAPI?.validateControllerSyntax();
       if (!result) {
-        toastr.error('EvolutionWorldAPI 尚未就绪', 'Evolution World');
+        toastr.error("EvolutionWorldAPI 尚未就绪", "Evolution World");
         return;
       }
 
       if (result.ok) {
-        toastr.success('控制器语法校验通过 ✓', 'Evolution World');
+        toastr.success("控制器语法校验通过 ✓", "Evolution World");
       } else {
-        toastr.error(result.reason ?? '控制器语法无效', 'Evolution World');
+        toastr.error(result.reason ?? "控制器语法无效", "Evolution World");
       }
     } finally {
       busy.value = false;
@@ -653,13 +797,13 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   function closePanel() {
     setOpen(false);
-    activeTab.value = 'overview';
+    activeTab.value = "overview";
   }
 
   async function loadCharFlows() {
     charFlowsLoading.value = true;
     try {
-      const name = getCurrentCharacterName?.() ?? '';
+      const name = getCurrentCharacterName?.() ?? "";
       activeCharName.value = name;
       const savedFlows = await readCharFlows(settings.value);
       const draftFlows = readCharFlowDraft(name);
@@ -670,7 +814,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         suppressCharFlowDraftPersist = false;
       });
     } catch (e) {
-      console.warn('[Evolution World] loadCharFlows failed:', e);
+      console.warn("[Evolution World] loadCharFlows failed:", e);
       charFlows.value = [];
     } finally {
       charFlowsLoading.value = false;
@@ -680,7 +824,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   async function reloadCharFlowsFromWorldbook() {
     charFlowsLoading.value = true;
     try {
-      const name = getCurrentCharacterName?.() ?? '';
+      const name = getCurrentCharacterName?.() ?? "";
       activeCharName.value = name;
       const savedFlows = await readCharFlows(settings.value);
 
@@ -692,16 +836,19 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       });
 
       showEwNotice({
-        title: 'Evolution World',
+        title: "Evolution World",
         message: `已从角色世界书重新读取 ${savedFlows.length} 条工作流，并覆盖当前角色卡草稿。`,
-        level: 'success',
+        level: "success",
       });
     } catch (e) {
-      console.error('[Evolution World] reloadCharFlowsFromWorldbook failed:', e);
+      console.error(
+        "[Evolution World] reloadCharFlowsFromWorldbook failed:",
+        e,
+      );
       showEwNotice({
-        title: 'Evolution World',
-        message: '从角色世界书读取工作流失败: ' + (e as Error).message,
-        level: 'error',
+        title: "Evolution World",
+        message: "从角色世界书读取工作流失败: " + (e as Error).message,
+        level: "error",
       });
     } finally {
       charFlowsLoading.value = false;
@@ -713,25 +860,32 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       await writeCharFlows(settings.value, charFlows.value);
       writeCharFlowDraft(activeCharName.value, charFlows.value);
       showEwNotice({
-        title: 'Evolution World',
-        message: '角色卡工作流已保存到当前绑定世界书。若要分享，请连同更新后的角色世界书一起导出。',
-        level: 'success',
+        title: "Evolution World",
+        message:
+          "角色卡工作流已保存到当前绑定世界书。若要分享，请连同更新后的角色世界书一起导出。",
+        level: "success",
       });
     } catch (e) {
-      console.error('[Evolution World] saveCharFlows failed:', e);
+      console.error("[Evolution World] saveCharFlows failed:", e);
       showEwNotice({
-        title: 'Evolution World',
-        message: '角色卡工作流保存失败: ' + (e as Error).message,
-        level: 'error',
+        title: "Evolution World",
+        message: "角色卡工作流保存失败: " + (e as Error).message,
+        level: "error",
       });
     }
   }
 
   async function mergeFlowsToCard(flowIds: string[]) {
     try {
-      const selected = settings.value.flows.filter(f => flowIds.includes(f.id));
+      const selected = settings.value.flows.filter((f) =>
+        flowIds.includes(f.id),
+      );
       if (selected.length === 0) {
-        showEwNotice({ title: 'Evolution World', message: '未选择任何工作流', level: 'warning' });
+        showEwNotice({
+          title: "Evolution World",
+          message: "未选择任何工作流",
+          level: "warning",
+        });
         return;
       }
 
@@ -747,7 +901,9 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         delete (copy as any).headers_json;
 
         const trimmedName = copy.name.trim();
-        const existingIndex = merged.findIndex(f => f.name.trim() === trimmedName);
+        const existingIndex = merged.findIndex(
+          (f) => f.name.trim() === trimmedName,
+        );
         if (existingIndex >= 0) {
           copy.id = merged[existingIndex].id;
           merged[existingIndex] = copy;
@@ -761,23 +917,23 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
       await writeCharFlows(settings.value, merged);
       charFlows.value = merged;
-      activeCharName.value = getCurrentCharacterName?.() ?? '';
+      activeCharName.value = getCurrentCharacterName?.() ?? "";
       writeCharFlowDraft(activeCharName.value, merged);
 
       const parts: string[] = [];
       if (updatedCount > 0) parts.push(`更新 ${updatedCount} 条`);
       if (appendedCount > 0) parts.push(`新增 ${appendedCount} 条`);
       showEwNotice({
-        title: 'Evolution World',
-        message: `已写入角色卡工作流：${parts.join('，')}`,
-        level: 'success',
+        title: "Evolution World",
+        message: `已写入角色卡工作流：${parts.join("，")}`,
+        level: "success",
       });
     } catch (e) {
-      console.error('[Evolution World] mergeFlowsToCard failed:', e);
+      console.error("[Evolution World] mergeFlowsToCard failed:", e);
       showEwNotice({
-        title: 'Evolution World',
-        message: '写入角色卡失败: ' + (e as Error).message,
-        level: 'error',
+        title: "Evolution World",
+        message: "写入角色卡失败: " + (e as Error).message,
+        level: "error",
       });
     }
   }
@@ -789,34 +945,37 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       next.api_presets.push(createDefaultApiPreset(1));
       settings.value = next;
     }
-    const newFlow = createDefaultFlow(charFlows.value.length + 1, settings.value.api_presets[0].id);
+    const newFlow = createDefaultFlow(
+      charFlows.value.length + 1,
+      settings.value.api_presets[0].id,
+    );
     charFlows.value = [...charFlows.value, newFlow];
     expandedFlowId.value = newFlow.id;
   }
 
   function removeCharFlow(flowId: string) {
-    charFlows.value = charFlows.value.filter(f => f.id !== flowId);
+    charFlows.value = charFlows.value.filter((f) => f.id !== flowId);
     if (expandedFlowId.value === flowId) {
       expandedFlowId.value = charFlows.value[0]?.id ?? null;
     }
   }
 
   function duplicateCharFlow(flowId: string) {
-    const source = charFlows.value.find(f => f.id === flowId);
+    const source = charFlows.value.find((f) => f.id === flowId);
     if (!source) return;
     const copy = klona(source);
     copy.id = `${copy.id}_${Date.now()}`;
     copy.name = `${copy.name} (副本)`;
-    const insertIndex = charFlows.value.findIndex(f => f.id === flowId) + 1;
+    const insertIndex = charFlows.value.findIndex((f) => f.id === flowId) + 1;
     const next = [...charFlows.value];
     next.splice(insertIndex, 0, copy);
     charFlows.value = next;
     expandedFlowId.value = copy.id;
   }
 
-  function setFlowScope(scope: 'global' | 'character') {
+  function setFlowScope(scope: "global" | "character") {
     flowScope.value = scope;
-    if (scope === 'character') {
+    if (scope === "character") {
       void loadCharFlows();
     }
   }
@@ -824,9 +983,16 @@ export const useEwStore = defineStore('evolution-world-store', () => {
   async function loadPromptPreview() {
     const flowId = previewFlowId.value;
     const allFlows = [...settings.value.flows, ...charFlows.value];
-    const flow = allFlows.find(f => f.id === flowId) ?? allFlows.find(f => f.enabled) ?? allFlows[0];
+    const flow =
+      allFlows.find((f) => f.id === flowId) ??
+      allFlows.find((f) => f.enabled) ??
+      allFlows[0];
     if (!flow) {
-      showEwNotice({ title: '调试', message: '没有可用的工作流', level: 'warning' });
+      showEwNotice({
+        title: "调试",
+        message: "没有可用的工作流",
+        level: "warning",
+      });
       return;
     }
     previewFlowId.value = flow.id;
@@ -834,13 +1000,17 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     try {
       promptPreview.value = await previewPrompt(flow);
       showEwNotice({
-        title: '调试',
+        title: "调试",
         message: `Prompt 预览已生成（${promptPreview.value.length} 条消息）`,
-        level: 'success',
+        level: "success",
       });
     } catch (e) {
-      console.error('[Evolution World] previewPrompt failed:', e);
-      showEwNotice({ title: '调试', message: 'Prompt 预览失败: ' + (e as Error).message, level: 'error' });
+      console.error("[Evolution World] previewPrompt failed:", e);
+      showEwNotice({
+        title: "调试",
+        message: "Prompt 预览失败: " + (e as Error).message,
+        level: "error",
+      });
     } finally {
       busy.value = false;
     }
@@ -853,13 +1023,17 @@ export const useEwStore = defineStore('evolution-world-store', () => {
       const dynCount = snapshotPreview.value.dyn.size;
       const controllerCount = snapshotPreview.value.controllers.length;
       showEwNotice({
-        title: '调试',
+        title: "调试",
         message: `Controller: ${controllerCount} 条 | Dyn 条目: ${dynCount}`,
-        level: 'success',
+        level: "success",
       });
     } catch (e) {
-      console.error('[Evolution World] loadSnapshotPreview failed:', e);
-      showEwNotice({ title: '调试', message: '快照读取失败: ' + (e as Error).message, level: 'error' });
+      console.error("[Evolution World] loadSnapshotPreview failed:", e);
+      showEwNotice({
+        title: "调试",
+        message: "快照读取失败: " + (e as Error).message,
+        level: "error",
+      });
     } finally {
       busy.value = false;
     }
@@ -869,10 +1043,18 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     busy.value = true;
     try {
       floorSnapshots.value = await collectAllFloorSnapshots();
-      showEwNotice({ title: '历史', message: `已加载 ${floorSnapshots.value.length} 个楼层`, level: 'success' });
+      showEwNotice({
+        title: "历史",
+        message: `已加载 ${floorSnapshots.value.length} 个楼层`,
+        level: "success",
+      });
     } catch (e) {
-      console.error('[Evolution World] loadFloorSnapshots failed:', e);
-      showEwNotice({ title: '历史', message: '楼层快照加载失败: ' + (e as Error).message, level: 'error' });
+      console.error("[Evolution World] loadFloorSnapshots failed:", e);
+      showEwNotice({
+        title: "历史",
+        message: "楼层快照加载失败: " + (e as Error).message,
+        level: "error",
+      });
     } finally {
       busy.value = false;
     }
@@ -882,10 +1064,18 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     busy.value = true;
     try {
       await rollbackToFloor(settings.value, messageId);
-      showEwNotice({ title: '历史', message: `已回滚到楼层 #${messageId}`, level: 'success' });
+      showEwNotice({
+        title: "历史",
+        message: `已回滚到楼层 #${messageId}`,
+        level: "success",
+      });
     } catch (e) {
-      console.error('[Evolution World] doRollbackToFloor failed:', e);
-      showEwNotice({ title: '历史', message: '回滚失败: ' + (e as Error).message, level: 'error' });
+      console.error("[Evolution World] doRollbackToFloor failed:", e);
+      showEwNotice({
+        title: "历史",
+        message: "回滚失败: " + (e as Error).message,
+        level: "error",
+      });
     } finally {
       busy.value = false;
     }
@@ -893,7 +1083,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
 
   async function rederiveFloorWorkflow(
     messageId: number,
-    timing: 'before_reply' | 'after_reply' | 'manual' = 'manual',
+    timing: "before_reply" | "after_reply" | "manual" = "manual",
   ): Promise<{ ok: boolean; reason?: string; result?: any }> {
     busy.value = true;
     try {
@@ -901,21 +1091,24 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         | (typeof window.EvolutionWorldAPI & {
             rederiveWorkflowAtFloor?: (input: {
               message_id: number;
-              timing: 'before_reply' | 'after_reply' | 'manual';
+              timing: "before_reply" | "after_reply" | "manual";
               target_version_key?: string;
               confirm_legacy?: boolean;
-              capsule_mode?: 'full' | 'light';
+              capsule_mode?: "full" | "light";
             }) => Promise<{ ok: boolean; reason?: string; result?: any }>;
           })
         | undefined;
       if (!api?.rederiveWorkflowAtFloor) {
-        return { ok: false, reason: 'EvolutionWorldAPI.rederiveWorkflowAtFloor 尚未就绪' };
+        return {
+          ok: false,
+          reason: "EvolutionWorldAPI.rederiveWorkflowAtFloor 尚未就绪",
+        };
       }
 
       const result = await api.rederiveWorkflowAtFloor({
         message_id: messageId,
         timing,
-        capsule_mode: 'full',
+        capsule_mode: "full",
       });
 
       if (result.ok) {
@@ -923,17 +1116,17 @@ export const useEwStore = defineStore('evolution-world-store', () => {
         const conflicts = Number(result.result?.writeback_conflicts ?? 0);
         const anchorId = Number(result.result?.anchor_message_id ?? messageId);
         showEwNotice({
-          title: '历史',
+          title: "历史",
           message: `楼层 #${messageId} 已完成重推导：锚点 #${anchorId}，写回 ${applied} 项，冲突 ${conflicts} 项。`,
-          level: 'success',
+          level: "success",
           duration_ms: 4200,
         });
         await loadFloorSnapshots();
-      } else if (result.reason && result.reason !== 'cancelled_by_user') {
+      } else if (result.reason && result.reason !== "cancelled_by_user") {
         showEwNotice({
-          title: '历史',
+          title: "历史",
           message: `楼层 #${messageId} 重推导失败：${result.reason}`,
-          level: 'error',
+          level: "error",
           duration_ms: 5200,
         });
       }
@@ -942,9 +1135,9 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       showEwNotice({
-        title: '历史',
+        title: "历史",
         message: `楼层 #${messageId} 重推导异常：${reason}`,
-        level: 'error',
+        level: "error",
         duration_ms: 5200,
       });
       return { ok: false, reason };
@@ -973,6 +1166,7 @@ export const useEwStore = defineStore('evolution-world-store', () => {
     floorSnapshots,
     selectedFloorId,
     compareFloorId,
+    refreshDebugRecords,
     addApiPreset,
     duplicateApiPreset,
     removeApiPreset,

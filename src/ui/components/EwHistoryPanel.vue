@@ -1,8 +1,42 @@
 <template>
   <EwSectionCard title="楼层快照时间线" subtitle="每个楼层的 EW 条目变更记录。">
     <div class="hist-toolbar">
-      <button type="button" class="ew-btn" :disabled="store.busy" @click="store.loadFloorSnapshots">🔄 刷新</button>
-      <span class="hist-stats"> {{ hasSnapshotCount }} / {{ store.floorSnapshots.length }} 楼层有快照 </span>
+      <button
+        type="button"
+        class="ew-btn"
+        :disabled="store.busy"
+        @click="store.loadFloorSnapshots"
+      >
+        🔄 刷新
+      </button>
+      <button
+        type="button"
+        class="ew-btn"
+        :disabled="store.busy || !selectedTimelineItem"
+        @click="onRebuildSelectedFloor"
+      >
+        重推导所选楼
+      </button>
+      <span class="hist-stats">
+        {{ hasSnapshotCount }} / {{ store.floorSnapshots.length }} 楼层有快照
+      </span>
+      <span class="hist-stats hist-stats--assistant"
+        >AI锚点 {{ assistantAnchorCount }}</span
+      >
+      <span class="hist-stats hist-stats--source"
+        >拦截源楼 {{ sourceFloorCount }}</span
+      >
+    </div>
+
+    <div v-if="store.busy" class="hist-info">正在扫描当前聊天的楼层快照…</div>
+
+    <div
+      v-else-if="store.floorSnapshots.length > 0 && hasSnapshotCount === 0"
+      class="hist-info hist-info--warning"
+    >
+      已扫描到聊天楼层，但没有发现任何可展示快照。除“楼层绑定”与“同步快照”外，也请注意：部分楼层可能被
+      <code>run_every_n_floors</code>
+      跳过，或当前可见版本与旧快照不匹配。
     </div>
 
     <div v-if="store.floorSnapshots.length > 0" class="hist-grid-wrap">
@@ -12,27 +46,112 @@
           :key="item.floor.messageId"
           class="hist-block"
           :data-has-snapshot="item.floor.snapshot ? '1' : '0'"
+          :data-semantic="item.semantic.anchor_kind"
+          :data-selected="selectedFloorId === item.floor.messageId ? '1' : '0'"
+          role="button"
+          tabindex="0"
+          :title="`查看楼层 #${item.floor.messageId} 的快照详情`"
           @click="openFloor(item.floor.messageId)"
+          @keydown.enter.prevent="openFloor(item.floor.messageId)"
+          @keydown.space.prevent="openFloor(item.floor.messageId)"
         >
-          <span class="hist-block-floor">#{{ item.floor.messageId }}</span>
+          <div class="hist-block-head">
+            <div class="hist-block-head-main">
+              <div class="hist-block-topline">
+                <span class="hist-block-floor"
+                  >#{{ item.floor.messageId }}</span
+                >
+                <span
+                  class="hist-role-chip"
+                  :class="`hist-role-chip--${item.semantic.role}`"
+                >
+                  {{ roleLabel(item.semantic.role) }}
+                </span>
+              </div>
+              <div class="hist-block-badges">
+                <span
+                  v-if="item.semantic.anchor_kind === 'assistant_anchor'"
+                  class="hist-anchor-chip hist-anchor-chip--assistant"
+                >
+                  AI锚点
+                </span>
+                <span
+                  v-else-if="item.semantic.anchor_kind === 'source_user'"
+                  class="hist-anchor-chip hist-anchor-chip--source"
+                >
+                  拦截源楼
+                </span>
+                <span
+                  v-if="item.semantic.rederive"
+                  class="hist-anchor-chip hist-anchor-chip--rederive"
+                >
+                  {{
+                    item.semantic.rederive.legacy_approx
+                      ? "重推导(approx)"
+                      : "重推导(exact)"
+                  }}
+                </span>
+              </div>
+            </div>
+            <div class="hist-block-head-side">
+              <span
+                class="hist-block-status"
+                :class="statusClass(item)"
+                :title="resolutionTitle(item)"
+              >
+                {{ resolutionLabel(item) }}
+              </span>
+              <button
+                type="button"
+                class="hist-block-preview-btn"
+                @click.stop="openFloor(item.floor.messageId)"
+              >
+                预览
+              </button>
+            </div>
+          </div>
           <div v-if="item.floor.snapshot" class="hist-block-changes">
-            <span v-if="item.diff.created.length" class="hist-tag hist-tag--created">
+            <span
+              v-if="item.diff.created.length"
+              class="hist-tag hist-tag--created"
+            >
               +{{ item.diff.created.length }}
             </span>
-            <span v-if="item.diff.modified.length" class="hist-tag hist-tag--modified">
+            <span
+              v-if="item.diff.modified.length"
+              class="hist-tag hist-tag--modified"
+            >
               ~{{ item.diff.modified.length }}
             </span>
-            <span v-if="item.diff.deleted.length" class="hist-tag hist-tag--deleted">
+            <span
+              v-if="item.diff.deleted.length"
+              class="hist-tag hist-tag--deleted"
+            >
               −{{ item.diff.deleted.length }}
             </span>
-            <span v-if="item.diff.toggled.length" class="hist-tag hist-tag--toggled">
+            <span
+              v-if="item.diff.toggled.length"
+              class="hist-tag hist-tag--toggled"
+            >
               ⇄{{ item.diff.toggled.length }}
             </span>
-            <span v-if="Object.keys(item.diff.controllersChanged).length" class="hist-tag hist-tag--modified">
+            <span
+              v-if="Object.keys(item.diff.controllersChanged).length"
+              class="hist-tag hist-tag--modified"
+            >
               ≈C{{ Object.keys(item.diff.controllersChanged).length }}
             </span>
           </div>
-          <div v-else class="hist-block-empty">—</div>
+          <div
+            v-else-if="item.semantic.anchor_kind === 'source_user'"
+            class="hist-block-empty"
+            :title="resolutionTitle(item)"
+          >
+            对应 AI 楼 #{{ item.semantic.paired_message_id ?? "?" }}
+          </div>
+          <div v-else class="hist-block-empty" :title="resolutionTitle(item)">
+            {{ resolutionLabel(item) }}
+          </div>
         </div>
       </div>
     </div>
@@ -44,47 +163,242 @@
     :floor-id="selectedFloorId"
     :snapshot="selectedSnapshot"
     :prev-snapshot="selectedPrevSnapshot"
-    @close="modalVisible = false"
+    :resolution="selectedFloor?.resolution ?? 'missing'"
+    :available-version-count="selectedFloor?.available_version_count ?? 0"
+    :snapshot-source="selectedFloor?.source ?? 'none'"
+    :matched-version-key="selectedFloor?.matched_version_key"
+    :file-name="selectedFloor?.file_name"
+    :execution="selectedFloor?.execution"
+    :anchor-kind="selectedSemantic?.anchor_kind ?? 'normal'"
+    :paired-message-id="selectedSemantic?.paired_message_id"
+    :message-role="selectedSemantic?.role ?? 'other'"
+    @close="closeFloorModal"
   />
 </template>
 
 <script setup lang="ts">
-import { diffSnapshots, type SnapshotDiff } from '../../runtime/floor-binding';
-import type { SnapshotData } from '../../runtime/snapshot-storage';
-import { useEwStore } from '../store';
-import EwFloorDetailModal from './EwFloorDetailModal.vue';
-import EwSectionCard from './EwSectionCard.vue';
+import { getChatMessages } from "../../runtime/compat/character";
+import { diffSnapshots, type SnapshotDiff } from "../../runtime/floor-binding";
+import type { SnapshotData } from "../../runtime/snapshot-storage";
+import { useEwStore } from "../store";
+import EwFloorDetailModal from "./EwFloorDetailModal.vue";
+import EwSectionCard from "./EwSectionCard.vue";
 
 const store = useEwStore();
 const modalVisible = ref(false);
 const selectedFloorId = ref(0);
+const EW_BEFORE_REPLY_BINDING_META_KEY = "ew_before_reply_binding";
+const EW_REDERIVE_META_KEY = "ew_rederive_meta";
+let openFloorFrame: number | null = null;
 
-const hasSnapshotCount = computed(() => store.floorSnapshots.filter(f => f.snapshot !== null).length);
+type FloorRole = "assistant" | "user" | "other";
+type FloorAnchorKind =
+  | "assistant_anchor"
+  | "source_user"
+  | "legacy_user_anchor"
+  | "normal";
+type TimelineSemantic = {
+  role: FloorRole;
+  anchor_kind: FloorAnchorKind;
+  paired_message_id?: number;
+  rederive?: {
+    legacy_approx: boolean;
+    conflicts: number;
+  };
+};
+type TimelineItem = {
+  floor: (typeof store.floorSnapshots)[number];
+  diff: SnapshotDiff;
+  semantic: TimelineSemantic;
+};
+
+function normalizeRole(raw: unknown): FloorRole {
+  if (raw === "assistant") {
+    return "assistant";
+  }
+  if (raw === "user") {
+    return "user";
+  }
+  return "other";
+}
+
+function normalizeBindingMeta(raw: unknown): {
+  role: "source" | "assistant_anchor" | "legacy_user_anchor";
+  paired_message_id?: number;
+} | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const meta = raw as Record<string, unknown>;
+  const role =
+    meta.role === "source" ||
+    meta.role === "assistant_anchor" ||
+    meta.role === "legacy_user_anchor"
+      ? meta.role
+      : null;
+  if (!role) {
+    return null;
+  }
+  const paired = Number(meta.paired_message_id);
+  return {
+    role,
+    paired_message_id: Number.isFinite(paired) ? paired : undefined,
+  };
+}
+
+function normalizeRederiveMeta(
+  raw: unknown,
+): { legacy_approx: boolean; conflicts: number } | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const meta = raw as Record<string, unknown>;
+  return {
+    legacy_approx: Boolean(meta.legacy_approx),
+    conflicts: Math.max(0, Math.trunc(Number(meta.conflicts ?? 0) || 0)),
+  };
+}
+
+const floorRuntimeMap = computed(() => {
+  const result = new Map<
+    number,
+    {
+      role: FloorRole;
+      binding_meta: ReturnType<typeof normalizeBindingMeta>;
+      rederive_meta: ReturnType<typeof normalizeRederiveMeta>;
+    }
+  >();
+
+  for (const floor of store.floorSnapshots) {
+    const message = getChatMessages(floor.messageId)[0];
+    const role = normalizeRole(message?.role);
+    const bindingMeta = normalizeBindingMeta(
+      message?.data?.[EW_BEFORE_REPLY_BINDING_META_KEY],
+    );
+    const rederiveMeta = normalizeRederiveMeta(
+      message?.data?.[EW_REDERIVE_META_KEY],
+    );
+    result.set(floor.messageId, {
+      role,
+      binding_meta: bindingMeta,
+      rederive_meta: rederiveMeta,
+    });
+  }
+
+  return result;
+});
+
+const hasSnapshotCount = computed(
+  () => store.floorSnapshots.filter((f) => f.snapshot !== null).length,
+);
+
+onMounted(() => {
+  void store.loadFloorSnapshots();
+});
+
+const selectedTimelineItem = computed(() =>
+  timelineItems.value.find(
+    (item) => item.floor.messageId === selectedFloorId.value,
+  ),
+);
+const selectedFloor = computed(() => selectedTimelineItem.value?.floor);
+const selectedSemantic = computed(() => selectedTimelineItem.value?.semantic);
 
 const selectedSnapshot = computed<SnapshotData | null>(() => {
-  const floor = store.floorSnapshots.find(f => f.messageId === selectedFloorId.value);
-  return floor?.snapshot ?? null;
+  return selectedFloor.value?.snapshot ?? null;
 });
 
 const selectedPrevSnapshot = computed<SnapshotData | null>(() => {
-  const idx = store.floorSnapshots.findIndex(f => f.messageId === selectedFloorId.value);
+  const idx = store.floorSnapshots.findIndex(
+    (f) => f.messageId === selectedFloorId.value,
+  );
   if (idx <= 0) return null;
-  // 查找最近的拥有快照的前一楼层
   for (let i = idx - 1; i >= 0; i--) {
-    if (store.floorSnapshots[i].snapshot) return store.floorSnapshots[i].snapshot;
+    if (store.floorSnapshots[i].snapshot)
+      return store.floorSnapshots[i].snapshot;
   }
   return null;
 });
 
-const emptyDiff: SnapshotDiff = { created: [], modified: [], deleted: [], toggled: [], controllersChanged: {} };
+const emptyDiff: SnapshotDiff = {
+  created: [],
+  modified: [],
+  deleted: [],
+  toggled: [],
+  controllersChanged: {},
+};
 const timelineItems = computed(() => {
-  const items: Array<{ floor: (typeof store.floorSnapshots)[number]; diff: SnapshotDiff }> = [];
+  const items: TimelineItem[] = [];
   let previousSnapshot: SnapshotData | null = null;
+  const floorArtifactMap = new Map<number, boolean>();
 
   for (const floor of store.floorSnapshots) {
+    const execution = floorExecutionMap.value.get(floor.messageId);
+    floorArtifactMap.set(floor.messageId, Boolean(floor.snapshot || execution));
+  }
+
+  for (let index = 0; index < store.floorSnapshots.length; index += 1) {
+    const floor = store.floorSnapshots[index];
     const currentSnapshot = floor.snapshot;
     const diff = diffSnapshots(previousSnapshot, currentSnapshot) ?? emptyDiff;
-    items.push({ floor, diff });
+    const runtimeMeta = floorRuntimeMap.value.get(floor.messageId);
+    const role = runtimeMeta?.role ?? "other";
+    const bindingMeta = runtimeMeta?.binding_meta;
+    const rederiveMeta = runtimeMeta?.rederive_meta;
+    const hasArtifacts = Boolean(floorArtifactMap.get(floor.messageId));
+
+    let semantic: TimelineSemantic = {
+      role,
+      anchor_kind: "normal",
+      rederive: rederiveMeta ?? undefined,
+    };
+
+    if (bindingMeta?.role === "assistant_anchor" && role === "assistant") {
+      semantic = {
+        role,
+        anchor_kind: "assistant_anchor",
+        paired_message_id: bindingMeta.paired_message_id,
+      };
+    } else if (bindingMeta?.role === "legacy_user_anchor" && role === "user") {
+      semantic = {
+        role,
+        anchor_kind: "legacy_user_anchor",
+      };
+    } else if (bindingMeta?.role === "source" && role === "user") {
+      semantic = {
+        role,
+        anchor_kind: "source_user",
+        paired_message_id: bindingMeta.paired_message_id,
+      };
+    } else if (role === "assistant" && hasArtifacts) {
+      semantic = {
+        role,
+        anchor_kind: "assistant_anchor",
+      };
+    } else if (role === "user" && hasArtifacts) {
+      semantic = {
+        role,
+        anchor_kind: "legacy_user_anchor",
+      };
+    } else if (role === "user") {
+      const nextFloor = store.floorSnapshots[index + 1];
+      const nextRuntimeMeta = nextFloor
+        ? floorRuntimeMap.value.get(nextFloor.messageId)
+        : null;
+      const nextRole = nextRuntimeMeta?.role ?? "other";
+      const nextHasArtifacts = nextFloor
+        ? Boolean(floorArtifactMap.get(nextFloor.messageId))
+        : false;
+      if (nextFloor && nextRole === "assistant" && nextHasArtifacts) {
+        semantic = {
+          role,
+          anchor_kind: "source_user",
+          paired_message_id: nextFloor.messageId,
+        };
+      }
+    }
+
+    items.push({ floor, diff, semantic });
     if (currentSnapshot) {
       previousSnapshot = currentSnapshot;
     }
@@ -93,9 +407,196 @@ const timelineItems = computed(() => {
   return items;
 });
 
+const assistantAnchorCount = computed(
+  () =>
+    timelineItems.value.filter(
+      (item) => item.semantic.anchor_kind === "assistant_anchor",
+    ).length,
+);
+const sourceFloorCount = computed(
+  () =>
+    timelineItems.value.filter(
+      (item) => item.semantic.anchor_kind === "source_user",
+    ).length,
+);
+
+const floorExecutionMap = computed(() => {
+  const result = new Map<
+    number,
+    {
+      execution_status?: "executed" | "skipped";
+      skip_reason?: string;
+      attempted_flow_ids?: string[];
+      failed_flow_ids?: string[];
+      workflow_failed?: boolean;
+    }
+  >();
+
+  for (const floor of store.floorSnapshots) {
+    const raw = (floor as unknown as { execution?: unknown }).execution;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      continue;
+    }
+    result.set(
+      floor.messageId,
+      raw as typeof result extends Map<any, infer V> ? V : never,
+    );
+  }
+
+  return result;
+});
+
+const resolutionMeta = {
+  exact: {
+    label: "精确",
+    title: "当前可见版本与该楼快照精确匹配。",
+    tone: "exact",
+  },
+  single_fallback: {
+    label: "单版回退",
+    title: "当前版本未命中，但该楼只有一个快照版本，因此直接展示该版本。",
+    tone: "fallback",
+  },
+  same_swipe_fallback: {
+    label: "同划回退",
+    title: "当前版本未精确命中，但命中了同一 swipe 的其他版本快照。",
+    tone: "fallback",
+  },
+  latest_fallback: {
+    label: "最新回退",
+    title: "当前版本未命中，历史面板已回退展示该楼最近可用的快照版本。",
+    tone: "fallback",
+  },
+  missing: {
+    label: "缺失",
+    title: "当前楼没有可展示快照；可能是本楼未触发、被跳过，或快照确实缺失。",
+    tone: "missing",
+  },
+  skipped: {
+    label: "已跳过",
+    title:
+      "该楼存在 after-reply 执行记录，但本轮因自动触发间隔或无匹配工作流而跳过。",
+    tone: "skipped",
+  },
+} as const;
+
+function resolutionLabel(item: TimelineItem): string {
+  if (item.semantic.anchor_kind === "source_user") {
+    return "源楼";
+  }
+  if (item.semantic.anchor_kind === "legacy_user_anchor") {
+    return "旧锚点";
+  }
+
+  const execution = floorExecutionMap.value.get(item.floor.messageId);
+  if (!item.floor.snapshot && execution?.execution_status === "skipped") {
+    return resolutionMeta.skipped.label;
+  }
+  return resolutionMeta[item.floor.resolution].label;
+}
+
+function resolutionTitle(item: TimelineItem): string {
+  if (item.semantic.anchor_kind === "source_user") {
+    const targetText = item.semantic.paired_message_id
+      ? `主快照锚点在 AI 楼 #${item.semantic.paired_message_id}。`
+      : "";
+    return `该楼是 before_reply 的拦截源楼，本身不作为主快照锚点展示。${targetText}`;
+  }
+  if (item.semantic.anchor_kind === "legacy_user_anchor") {
+    return "该楼是历史遗留的 user 快照锚点。当前语义以 assistant 楼为主锚点，建议刷新后以 AI 楼记录为准。";
+  }
+
+  const execution = floorExecutionMap.value.get(item.floor.messageId);
+  if (!item.floor.snapshot && execution?.execution_status === "skipped") {
+    const reasonText = execution.skip_reason
+      ? `跳过原因：${execution.skip_reason}。`
+      : "";
+    return `${resolutionMeta.skipped.title}${reasonText}`;
+  }
+
+  const sourceText =
+    item.floor.source === "file"
+      ? "来源：文件快照。"
+      : item.floor.source === "inline"
+        ? "来源：消息内联快照。"
+        : "";
+  const versionText =
+    item.floor.available_version_count > 0
+      ? `可用版本数：${item.floor.available_version_count}。`
+      : "";
+  const rederiveText = item.semantic.rederive
+    ? `最近一次重推导：${item.semantic.rederive.legacy_approx ? "approx" : "exact"}；冲突=${item.semantic.rederive.conflicts}。`
+    : "";
+  return `${resolutionMeta[item.floor.resolution].title}${sourceText}${versionText}${rederiveText}`;
+}
+
+function statusClass(item: TimelineItem): string {
+  if (item.semantic.anchor_kind === "source_user") {
+    return "hist-block-status--source";
+  }
+  if (item.semantic.anchor_kind === "legacy_user_anchor") {
+    return "hist-block-status--legacy";
+  }
+
+  const execution = floorExecutionMap.value.get(item.floor.messageId);
+  if (!item.floor.snapshot && execution?.execution_status === "skipped") {
+    return `hist-block-status--${resolutionMeta.skipped.tone}`;
+  }
+  return `hist-block-status--${resolutionMeta[item.floor.resolution].tone}`;
+}
+
+function roleLabel(role: FloorRole): string {
+  if (role === "assistant") {
+    return "AI";
+  }
+  if (role === "user") {
+    return "User";
+  }
+  return "Other";
+}
+
 function openFloor(messageId: number) {
   selectedFloorId.value = messageId;
-  modalVisible.value = true;
+  modalVisible.value = false;
+  if (openFloorFrame !== null) {
+    cancelAnimationFrame(openFloorFrame);
+  }
+  openFloorFrame = requestAnimationFrame(() => {
+    modalVisible.value = true;
+    openFloorFrame = null;
+  });
+}
+
+function closeFloorModal() {
+  modalVisible.value = false;
+}
+
+onBeforeUnmount(() => {
+  if (openFloorFrame !== null) {
+    cancelAnimationFrame(openFloorFrame);
+    openFloorFrame = null;
+  }
+});
+
+async function onRebuildSelectedFloor() {
+  const item = selectedTimelineItem.value;
+  if (!item) {
+    return;
+  }
+
+  const timing: "before_reply" | "after_reply" | "manual" =
+    item.semantic.role === "assistant"
+      ? "after_reply"
+      : item.semantic.role === "user"
+        ? "before_reply"
+        : "manual";
+  const result = await store.rederiveFloorWorkflow(
+    item.floor.messageId,
+    timing,
+  );
+  if (!result.ok && result.reason && result.reason !== "cancelled_by_user") {
+    console.warn("[Evolution World] rederive failed:", result.reason);
+  }
 }
 </script>
 
@@ -128,8 +629,13 @@ function openFloor(messageId: number) {
 
 .hist-block {
   border-radius: 0.65rem;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 25%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 8%, rgba(0, 0, 0, 0.12));
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 25%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 8%,
+    rgba(0, 0, 0, 0.12)
+  );
   padding: 0.5rem;
   cursor: pointer;
   transition:
@@ -145,10 +651,11 @@ function openFloor(messageId: number) {
 .hist-block:hover {
   border-color: color-mix(in srgb, var(--ew-accent, #818cf8) 50%, transparent);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--ew-accent, #818cf8) 15%, transparent);
+  box-shadow: 0 4px 12px
+    color-mix(in srgb, var(--ew-accent, #818cf8) 15%, transparent);
 }
 
-.hist-block[data-has-snapshot='0'] {
+.hist-block[data-has-snapshot="0"] {
   opacity: 0.4;
 }
 
@@ -204,8 +711,13 @@ function openFloor(messageId: number) {
 /* ── Buttons ── */
 .ew-btn {
   border-radius: 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 45%, transparent);
-  background: color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 20%, transparent);
+  border: 1px solid
+    color-mix(in srgb, var(--SmartThemeQuoteColor, #7f92ab) 45%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--SmartThemeQuoteColor, #7f92ab) 20%,
+    transparent
+  );
   color: var(--SmartThemeBodyColor, #edf2f9);
   font-size: 0.8rem;
   font-weight: 600;
