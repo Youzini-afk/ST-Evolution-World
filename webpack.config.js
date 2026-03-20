@@ -119,6 +119,8 @@ const config = {
   optimization: {
     splitChunks: false,
     runtimeChunk: false,
+    moduleIds: "deterministic",
+    chunkIds: "deterministic",
   },
 };
 
