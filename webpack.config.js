@@ -109,6 +109,11 @@ const config = {
       __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
       __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
     }),
+
+    // ST 扩展通过单个 module 入口加载，禁止残留 async chunks 以避免宿主相对路径加载失败。
+    new webpack.optimize.LimitChunkCountPlugin({
+      maxChunks: 1,
+    }),
   ],
 
   optimization: {

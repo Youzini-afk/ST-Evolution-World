@@ -3547,11 +3547,13 @@ export async function rederiveWorkflowAtFloor(
     return { ok: false, reason: "legacy_confirmation_required" };
   }
   const legacyApprox = !hasCapsule;
-  const targetVersionInfo = getMessageVersionInfo(anchorMessage);
+  const targetMessageId =
+    timing === "before_reply" ? beforeReplySourceMessageId : anchorMessageId;
+  const targetMessage = getChatMessages(targetMessageId)[0] ?? anchorMessage;
+  const targetVersionInfo = getMessageVersionInfo(targetMessage);
   const contextCursor: ContextCursor = {
     chat_id: getCurrentChatKey(),
-    target_message_id:
-      timing === "before_reply" ? beforeReplySourceMessageId : anchorMessageId,
+    target_message_id: targetMessageId,
     target_role:
       timing === "before_reply"
         ? "user"
