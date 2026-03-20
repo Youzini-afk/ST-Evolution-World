@@ -1023,6 +1023,12 @@ export async function migrateBeforeReplyArtifactsToAssistant(
   let snapshotMigrated = false;
   let executionMigrated = false;
   let blockedByTargetArtifacts = false;
+  const sourceHasArtifacts = Boolean(
+    sourceSnapshotRead.snapshot || sourceExecution,
+  );
+  const targetHasArtifacts = Boolean(
+    targetSnapshotRead.snapshot || targetExecution,
+  );
 
   if (sourceSnapshotRead.snapshot) {
     if (targetSnapshotRead.snapshot) {
@@ -1034,6 +1040,9 @@ export async function migrateBeforeReplyArtifactsToAssistant(
         targetMessageId,
       );
       snapshotMigrated = snapshotMove.migrated;
+      if (snapshotMove.reason === "already_migrated") {
+        blockedByTargetArtifacts = true;
+      }
     }
   }
 
@@ -1046,6 +1055,9 @@ export async function migrateBeforeReplyArtifactsToAssistant(
         targetMessageId,
       );
       executionMigrated = executionMove.migrated;
+      if (executionMove.reason === "already_migrated") {
+        blockedByTargetArtifacts = true;
+      }
     }
   }
 
@@ -1060,6 +1072,18 @@ export async function migrateBeforeReplyArtifactsToAssistant(
     };
   }
 
+  if (!sourceHasArtifacts && targetHasArtifacts) {
+    await writeBindingMetaPair(sourceMessageId, targetMessageId, requestId);
+    return {
+      migrated: true,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      source_message_id: sourceMessageId,
+      target_message_id: targetMessageId,
+      reason: "binding_meta_repaired",
+    };
+  }
+
   return {
     migrated: false,
     snapshot_migrated: false,
@@ -1068,7 +1092,9 @@ export async function migrateBeforeReplyArtifactsToAssistant(
     target_message_id: targetMessageId,
     reason: blockedByTargetArtifacts
       ? "target_artifacts_present"
-      : "no_source_artifacts",
+      : sourceHasArtifacts
+        ? "already_migrated"
+        : "no_source_artifacts",
   };
 }
 

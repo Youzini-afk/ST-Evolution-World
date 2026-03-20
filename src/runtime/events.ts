@@ -1965,17 +1965,13 @@ async function onAfterReplyMessage(
 ) {
   const settings = getSettings();
   pruneExpiredBeforeReplyBindingPending();
-  const decision = shouldHandleAfterReply(messageId, type, settings);
-  if (!decision.ok) {
-    return;
-  }
 
   if (!isAssistantMessage(messageId)) {
     return;
   }
 
   const messageText = getMessageText(messageId);
-  if (!messageText.trim() || wasAfterReplyHandled(messageId, messageText)) {
+  if (!messageText.trim()) {
     return;
   }
 
@@ -1990,57 +1986,125 @@ async function onAfterReplyMessage(
     runtimeState.last_send?.message_id ??
     null;
   const pendingBeforeReplyBinding = pruneExpiredBeforeReplyBindingPending();
+  const activeBeforeReplyBinding =
+    pendingBeforeReplyBinding &&
+    !pendingBeforeReplyBinding.migrated &&
+    Number.isFinite(pendingUserMessageId) &&
+    pendingBeforeReplyBinding.user_message_id === pendingUserMessageId
+      ? pendingBeforeReplyBinding
+      : null;
+  const shouldAttemptBeforeReplyBindingMigration = Boolean(
+    activeBeforeReplyBinding,
+  );
+  const hasAfterReplyFlows = hasFlowsForTiming(settings, "after_reply");
+  const decision = hasAfterReplyFlows
+    ? shouldHandleAfterReply(messageId, type, settings)
+    : { ok: false, reason: "after_reply_flows_disabled" };
+  const shouldRunAfterReplyWorkflow =
+    hasAfterReplyFlows &&
+    decision.ok &&
+    !wasAfterReplyHandled(messageId, messageText);
+
+  if (
+    !shouldRunAfterReplyWorkflow &&
+    !shouldAttemptBeforeReplyBindingMigration
+  ) {
+    return;
+  }
 
   setProcessing(true);
   try {
-    await executeWorkflowWithPolicy(settings, {
-      messageId,
-      userInput,
-      injectReply: false,
-      timingFilter: "after_reply",
-      jobType: "live_auto",
-      trigger: {
-        timing: "after_reply",
-        source,
-        generation_type: generationType,
-        user_message_id: pendingUserMessageId ?? undefined,
-        assistant_message_id: messageId,
-      },
-      reminderMessage: "正在根据最新回复更新动态世界，请稍后…",
-      successMessage: "动态世界已根据最新回复完成更新。",
-    });
-    if (
-      pendingBeforeReplyBinding &&
-      !pendingBeforeReplyBinding.migrated &&
-      Number.isFinite(pendingUserMessageId) &&
-      pendingBeforeReplyBinding.user_message_id === pendingUserMessageId
-    ) {
-      const sourceMsg = getChatMessages(
-        pendingBeforeReplyBinding.source_message_id,
-      )[0];
+    if (shouldRunAfterReplyWorkflow) {
+      await executeWorkflowWithPolicy(settings, {
+        messageId,
+        userInput,
+        injectReply: false,
+        timingFilter: "after_reply",
+        jobType: "live_auto",
+        trigger: {
+          timing: "after_reply",
+          source,
+          generation_type: generationType,
+          user_message_id: pendingUserMessageId ?? undefined,
+          assistant_message_id: messageId,
+        },
+        reminderMessage: "正在根据最新回复更新动态世界，请稍后…",
+        successMessage: "动态世界已根据最新回复完成更新。",
+      });
+    }
+    if (activeBeforeReplyBinding) {
+      const sourceMessageId = activeBeforeReplyBinding.source_message_id;
+      const requestId = activeBeforeReplyBinding.request_id;
+      const sourceMsg = getChatMessages(sourceMessageId)[0];
       const assistantMsg = getChatMessages(messageId)[0];
       if (sourceMsg && assistantMsg) {
         const artifactMigration = await migrateBeforeReplyArtifactsToAssistant(
           settings,
-          pendingBeforeReplyBinding.source_message_id,
+          sourceMessageId,
           messageId,
-          pendingBeforeReplyBinding.request_id,
+          requestId,
         );
-        if (artifactMigration.migrated) {
-          await migrateFloorWorkflowCapsuleToAssistant(
-            pendingBeforeReplyBinding.source_message_id,
-            messageId,
-          );
-          markBeforeReplyBindingMigrated(messageId);
-        }
+        const capsuleMigration = await migrateFloorWorkflowCapsuleToAssistant(
+          sourceMessageId,
+          messageId,
+        );
+        settleBeforeReplyMigration({
+          assistantMessageId: messageId,
+          artifactMigration,
+          capsuleMigration,
+          markPending: true,
+        });
       }
     }
-    markAfterReplyHandled(messageId, messageText);
+    if (shouldRunAfterReplyWorkflow) {
+      markAfterReplyHandled(messageId, messageText);
+    }
   } finally {
     clearAfterReplyPendingIfMatches(pendingUserMessageId);
     clearSendContextIfMatches(pendingUserMessageId, userInput);
     setProcessing(false);
   }
+}
+
+function isBeforeReplyMigrationSettled(reason?: string): boolean {
+  return (
+    reason === "binding_meta_repaired" ||
+    reason === "already_migrated" ||
+    reason === "target_artifacts_present"
+  );
+}
+
+function shouldWarnBeforeReplyMigration(input: {
+  artifactMigration: { migrated: boolean; reason?: string };
+  capsuleMigration: { migrated: boolean };
+}): boolean {
+  const { artifactMigration, capsuleMigration } = input;
+  if (artifactMigration.migrated || capsuleMigration.migrated) {
+    return false;
+  }
+  if (!artifactMigration.reason) {
+    return false;
+  }
+  if (artifactMigration.reason === "no_source_artifacts") {
+    return false;
+  }
+  return !isBeforeReplyMigrationSettled(artifactMigration.reason);
+}
+
+function settleBeforeReplyMigration(input: {
+  assistantMessageId: number;
+  artifactMigration: { migrated: boolean; reason?: string };
+  capsuleMigration: { migrated: boolean };
+  markPending: boolean;
+}): boolean {
+  const settled =
+    input.artifactMigration.migrated ||
+    input.capsuleMigration.migrated ||
+    isBeforeReplyMigrationSettled(input.artifactMigration.reason);
+  if (settled && input.markPending) {
+    markBeforeReplyBindingMigrated(input.assistantMessageId);
+  }
+  return settled;
 }
 
 function getCurrentChatKey(): string {
@@ -2323,10 +2387,26 @@ export async function rederiveWorkflowAtFloor(
         Number(assistantMessageId),
         rederiveRequestId,
       );
-      if (artifactMigration.migrated) {
-        await migrateFloorWorkflowCapsuleToAssistant(
-          beforeReplySourceMessageId,
-          Number(assistantMessageId),
+      const capsuleMigration = await migrateFloorWorkflowCapsuleToAssistant(
+        beforeReplySourceMessageId,
+        Number(assistantMessageId),
+      );
+      const migrationSettled = settleBeforeReplyMigration({
+        assistantMessageId: Number(assistantMessageId),
+        artifactMigration,
+        capsuleMigration,
+        markPending: false,
+      });
+      if (
+        !migrationSettled &&
+        shouldWarnBeforeReplyMigration({
+          artifactMigration,
+          capsuleMigration,
+        })
+      ) {
+        console.warn(
+          "[Evolution World] before_reply rederive migration did not complete:",
+          artifactMigration,
         );
       }
     }
