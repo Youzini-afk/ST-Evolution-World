@@ -16,10 +16,10 @@ import type {
 } from "../ui/components/graph/module-types";
 import type { EwFlowConfig } from "./types";
 
-let globalMigSeq = 0;
+let globalMigrationSeq = 0;
 
 function makeId(): string {
-  return `mig_${(globalMigSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  return `mig_${(globalMigrationSeq++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function escapeRegex(value: string): string {

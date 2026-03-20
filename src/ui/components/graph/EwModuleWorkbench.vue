@@ -1,173 +1,237 @@
 <template>
   <Teleport to="body" :disabled="!isFullscreen">
-  <div class="ew-workbench" :class="{ 'is-fullscreen': isFullscreen }">
-    <!-- Top bar: graph tabs + controls -->
-    <div class="ew-workbench__topbar">
-      <div class="ew-workbench__tabs">
-        <button
-          v-for="(g, i) in graphs"
-          :key="g.id"
-          class="ew-workbench__tab"
-          :class="{ active: activeGraphId === g.id }"
-          @click="activeGraphId = g.id"
+    <div class="ew-workbench" :class="{ 'is-fullscreen': isFullscreen }">
+      <!-- Top bar: graph tabs + controls -->
+      <div class="ew-workbench__topbar">
+        <div class="ew-workbench__tabs">
+          <button
+            v-for="(g, i) in localGraphs"
+            :key="g.id"
+            class="ew-workbench__tab"
+            :class="{ active: activeGraphId === g.id }"
+            @click="activeGraphId = g.id"
+          >
+            {{ g.name || `图 ${i + 1}` }}
+          </button>
+          <button
+            class="ew-workbench__tab ew-workbench__tab--add"
+            @click="addGraph"
+          >
+            +
+          </button>
+        </div>
+        <div class="ew-workbench__controls">
+          <button
+            class="ew-workbench__ctrl-btn"
+            @click="renameGraph"
+            title="重命名"
+          >
+            ✏️
+          </button>
+          <button
+            class="ew-workbench__ctrl-btn"
+            @click="toggleEnabled"
+            :title="activeGraph?.enabled ? '禁用' : '启用'"
+          >
+            {{ activeGraph?.enabled ? "🟢" : "⚫" }}
+          </button>
+          <button
+            class="ew-workbench__ctrl-btn"
+            @click="isFullscreen = !isFullscreen"
+            :title="isFullscreen ? '退出全屏' : '全屏'"
+          >
+            ⛶
+          </button>
+        </div>
+      </div>
+
+      <div class="ew-workbench__main">
+        <!-- Module palette -->
+        <EwModulePalette />
+
+        <!-- Canvas area -->
+        <div
+          class="ew-workbench__canvas"
+          ref="canvasRef"
+          @pointerdown="onCanvasPointerDown"
+          @wheel.prevent="onWheel"
+          @dragover.prevent
+          @drop.prevent="onDrop"
+          @dblclick="onCanvasDblClick"
         >
-          {{ g.name || `图 ${i + 1}` }}
-        </button>
-        <button class="ew-workbench__tab ew-workbench__tab--add" @click="addGraph">
-          +
-        </button>
-      </div>
-      <div class="ew-workbench__controls">
-        <button class="ew-workbench__ctrl-btn" @click="renameGraph" title="重命名">✏️</button>
-        <button class="ew-workbench__ctrl-btn" @click="toggleEnabled" :title="activeGraph?.enabled ? '禁用' : '启用'">
-          {{ activeGraph?.enabled ? '🟢' : '⚫' }}
-        </button>
-        <button class="ew-workbench__ctrl-btn" @click="isFullscreen = !isFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">
-          ⛶
-        </button>
-      </div>
-    </div>
-
-    <div class="ew-workbench__main">
-      <!-- Module palette -->
-      <EwModulePalette />
-
-      <!-- Canvas area -->
-      <div
-        class="ew-workbench__canvas"
-        ref="canvasRef"
-        @pointerdown="onCanvasPointerDown"
-        @wheel.prevent="onWheel"
-        @dragover.prevent
-        @drop.prevent="onDrop"
-        @dblclick="onCanvasDblClick"
-      >
-        <!-- Grid -->
-        <svg class="ew-workbench__grid">
-          <defs>
-            <pattern
-              id="ew-wb-dots"
-              :width="20 * viewport.zoom"
-              :height="20 * viewport.zoom"
-              patternUnits="userSpaceOnUse"
-              :x="viewport.x" :y="viewport.y"
-            >
-              <circle
-                :cx="(20 * viewport.zoom) / 2"
-                :cy="(20 * viewport.zoom) / 2"
-                :r="1 * viewport.zoom"
-                fill="rgba(255,255,255,0.1)"
-              />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#ew-wb-dots)" />
-        </svg>
-
-        <!-- Transform wrapper -->
-        <div class="ew-workbench__transform" :style="transformStyle">
-          <!-- Edges SVG -->
-          <svg class="ew-workbench__edges-svg" style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:visible">
-            <line
-              v-for="edge in activeEdges"
-              :key="edge.id"
-              :x1="getPortPos(edge.source, edge.sourcePort)?.x ?? 0"
-              :y1="getPortPos(edge.source, edge.sourcePort)?.y ?? 0"
-              :x2="getPortPos(edge.target, edge.targetPort)?.x ?? 0"
-              :y2="getPortPos(edge.target, edge.targetPort)?.y ?? 0"
-              stroke="rgba(99,102,241,0.5)"
-              stroke-width="2"
-              stroke-dasharray="6 3"
-            />
+          <!-- Grid -->
+          <svg class="ew-workbench__grid">
+            <defs>
+              <pattern
+                id="ew-wb-dots"
+                :width="20 * viewport.zoom"
+                :height="20 * viewport.zoom"
+                patternUnits="userSpaceOnUse"
+                :x="viewport.x"
+                :y="viewport.y"
+              >
+                <circle
+                  :cx="(20 * viewport.zoom) / 2"
+                  :cy="(20 * viewport.zoom) / 2"
+                  :r="1 * viewport.zoom"
+                  fill="rgba(255,255,255,0.1)"
+                />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#ew-wb-dots)" />
           </svg>
 
-          <!-- Nodes -->
-          <div
-            v-for="node in activeNodes"
-            :key="node.id"
-            class="ew-workbench__node"
-            :class="{ 'is-selected': selectedNodeId === node.id }"
-            :style="nodeStyle(node)"
-            @pointerdown.stop="onNodePointerDown($event, node)"
-            @dblclick.stop="openPropertyPanel(node)"
-          >
-            <div
-              class="ew-workbench__node-header"
-              :style="{ background: getModuleColor(node.moduleId) }"
+          <!-- Transform wrapper -->
+          <div class="ew-workbench__transform" :style="transformStyle">
+            <!-- Edges SVG -->
+            <svg
+              class="ew-workbench__edges-svg"
+              style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 1px;
+                height: 1px;
+                overflow: visible;
+              "
             >
-              <span class="ew-workbench__node-icon">{{ getModuleIcon(node.moduleId) }}</span>
-              <span class="ew-workbench__node-title">{{ getModuleLabel(node.moduleId) }}</span>
+              <line
+                v-for="edge in activeEdges"
+                :key="edge.id"
+                :x1="getPortPos(edge.source, edge.sourcePort)?.x ?? 0"
+                :y1="getPortPos(edge.source, edge.sourcePort)?.y ?? 0"
+                :x2="getPortPos(edge.target, edge.targetPort)?.x ?? 0"
+                :y2="getPortPos(edge.target, edge.targetPort)?.y ?? 0"
+                stroke="rgba(99,102,241,0.5)"
+                stroke-width="2"
+                stroke-dasharray="6 3"
+              />
+            </svg>
+
+            <!-- Nodes -->
+            <div
+              v-for="node in activeNodes"
+              :key="node.id"
+              class="ew-workbench__node"
+              :class="{ 'is-selected': selectedNodeId === node.id }"
+              :style="nodeStyle(node)"
+              @pointerdown.stop="onNodePointerDown($event, node)"
+              @dblclick.stop="openPropertyPanel(node)"
+            >
+              <div
+                class="ew-workbench__node-header"
+                :style="{ background: getModuleColor(node.moduleId) }"
+              >
+                <span class="ew-workbench__node-icon">{{
+                  getModuleIcon(node.moduleId)
+                }}</span>
+                <span class="ew-workbench__node-title">{{
+                  getModuleLabel(node.moduleId)
+                }}</span>
+              </div>
+              <div class="ew-workbench__node-ports">
+                <div
+                  v-for="port in getModulePorts(node.moduleId, 'in')"
+                  :key="port.id"
+                  class="ew-workbench__port ew-workbench__port--in"
+                  :data-node-id="node.id"
+                  :data-port-id="port.id"
+                >
+                  <span class="ew-workbench__port-dot" />
+                  <span class="ew-workbench__port-label">{{ port.label }}</span>
+                </div>
+                <div
+                  v-for="port in getModulePorts(node.moduleId, 'out')"
+                  :key="port.id"
+                  class="ew-workbench__port ew-workbench__port--out"
+                  :data-node-id="node.id"
+                  :data-port-id="port.id"
+                >
+                  <span class="ew-workbench__port-label">{{ port.label }}</span>
+                  <span class="ew-workbench__port-dot" />
+                </div>
+              </div>
             </div>
-            <div class="ew-workbench__node-ports">
-              <div
-                v-for="port in getModulePorts(node.moduleId, 'in')"
-                :key="port.id"
-                class="ew-workbench__port ew-workbench__port--in"
-                :data-node-id="node.id"
-                :data-port-id="port.id"
-              >
-                <span class="ew-workbench__port-dot" />
-                <span class="ew-workbench__port-label">{{ port.label }}</span>
-              </div>
-              <div
-                v-for="port in getModulePorts(node.moduleId, 'out')"
-                :key="port.id"
-                class="ew-workbench__port ew-workbench__port--out"
-                :data-node-id="node.id"
-                :data-port-id="port.id"
-              >
-                <span class="ew-workbench__port-label">{{ port.label }}</span>
-                <span class="ew-workbench__port-dot" />
-              </div>
+          </div>
+
+          <!-- Empty state -->
+          <div v-if="activeNodes.length === 0" class="ew-workbench__empty">
+            <div class="ew-workbench__empty-icon">🧩</div>
+            <div class="ew-workbench__empty-text">
+              从左侧拖入模块开始搭建管线
+            </div>
+            <div class="ew-workbench__empty-hint">
+              双击节点编辑参数 · 滚轮缩放 · 拖拽画布平移
             </div>
           </div>
         </div>
 
-        <!-- Empty state -->
-        <div v-if="activeNodes.length === 0" class="ew-workbench__empty">
-          <div class="ew-workbench__empty-icon">🧩</div>
-          <div class="ew-workbench__empty-text">从左侧拖入模块开始搭建管线</div>
-          <div class="ew-workbench__empty-hint">双击节点编辑参数 · 滚轮缩放 · 拖拽画布平移</div>
-        </div>
+        <!-- Property panel -->
+        <EwNodePropertyPanel
+          :node="editingNode"
+          @close="editingNode = null"
+          @update-config="onUpdateConfig"
+        />
       </div>
-
-      <!-- Property panel -->
-      <EwNodePropertyPanel
-        :node="editingNode"
-        @close="editingNode = null"
-        @update-config="onUpdateConfig"
-      />
     </div>
-  </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import EwModulePalette from './EwModulePalette.vue';
-import EwNodePropertyPanel from './EwNodePropertyPanel.vue';
-import { MODULE_REGISTRY } from './module-registry';
-import type { WorkbenchGraph, WorkbenchNode, WorkbenchEdge, ModulePortDef } from './module-types';
+import { klona } from "klona/full";
+import EwModulePalette from "./EwModulePalette.vue";
+import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
+import { MODULE_REGISTRY } from "./module-registry";
+import type {
+  ModulePortDef,
+  WorkbenchGraph,
+  WorkbenchNode,
+} from "./module-types";
 
 const props = defineProps<{
   graphs: WorkbenchGraph[];
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:graphs', graphs: WorkbenchGraph[]): void;
+  (e: "update:graphs", graphs: WorkbenchGraph[]): void;
 }>();
 
 const isFullscreen = ref(false);
 
 // ── Active graph ──
-const activeGraphId = ref(props.graphs[0]?.id ?? '');
-const activeGraph = computed(() => props.graphs.find(g => g.id === activeGraphId.value));
+const localGraphs = ref<WorkbenchGraph[]>(klona(props.graphs));
+const activeGraphId = ref(localGraphs.value[0]?.id ?? "");
+const activeGraph = computed(() =>
+  localGraphs.value.find((g) => g.id === activeGraphId.value),
+);
 const activeNodes = computed(() => activeGraph.value?.nodes ?? []);
 const activeEdges = computed(() => activeGraph.value?.edges ?? []);
 
-watch(() => props.graphs, (g) => {
-  if (g.length > 0 && !g.find(gr => gr.id === activeGraphId.value)) {
-    activeGraphId.value = g[0].id;
-  }
-});
+// ── Property panel ──
+const editingNode = ref<WorkbenchNode | null>(null);
+
+watch(
+  () => props.graphs,
+  (graphs) => {
+    localGraphs.value = klona(graphs);
+    if (localGraphs.value.length > 0) {
+      if (!localGraphs.value.find((gr) => gr.id === activeGraphId.value)) {
+        activeGraphId.value = localGraphs.value[0].id;
+      }
+      if (editingNode.value) {
+        const syncedNode = localGraphs.value
+          .flatMap((graph) => graph.nodes)
+          .find((node) => node.id === editingNode.value?.id);
+        editingNode.value = syncedNode ?? null;
+      }
+      return;
+    }
+
+    activeGraphId.value = "";
+    editingNode.value = null;
+  },
+  { deep: true, immediate: true },
+);
 
 // ── Viewport ──
 const viewport = reactive({ x: 0, y: 0, zoom: 1 });
@@ -175,7 +239,7 @@ const canvasRef = ref<HTMLElement>();
 
 const transformStyle = computed(() => ({
   transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
-  transformOrigin: '0 0',
+  transformOrigin: "0 0",
 }));
 
 // ── Pan & Zoom ──
@@ -188,8 +252,8 @@ function onCanvasPointerDown(e: PointerEvent) {
   isPanning = true;
   panStartX = e.clientX - viewport.x;
   panStartY = e.clientY - viewport.y;
-  window.addEventListener('pointermove', onCanvasPanMove);
-  window.addEventListener('pointerup', onCanvasPanEnd);
+  window.addEventListener("pointermove", onCanvasPanMove);
+  window.addEventListener("pointerup", onCanvasPanEnd);
 }
 
 function onCanvasPanMove(e: PointerEvent) {
@@ -200,8 +264,8 @@ function onCanvasPanMove(e: PointerEvent) {
 
 function onCanvasPanEnd() {
   isPanning = false;
-  window.removeEventListener('pointermove', onCanvasPanMove);
-  window.removeEventListener('pointerup', onCanvasPanEnd);
+  window.removeEventListener("pointermove", onCanvasPanMove);
+  window.removeEventListener("pointerup", onCanvasPanEnd);
 }
 
 function onWheel(e: WheelEvent) {
@@ -227,17 +291,18 @@ function onNodePointerDown(e: PointerEvent, node: WorkbenchNode) {
   selectedNodeId.value = node.id;
   draggingNodeId = node.id;
   const rect = canvasRef.value?.getBoundingClientRect();
-  const rx = rect?.left ?? 0;
-  const ry = rect?.top ?? 0;
-  dragOffsetX = (e.clientX - rx - viewport.x) / viewport.zoom - node.position.x;
-  dragOffsetY = (e.clientY - ry - viewport.y) / viewport.zoom - node.position.y;
-  window.addEventListener('pointermove', onNodeDragMove);
-  window.addEventListener('pointerup', onNodeDragEnd);
+  if (!rect) return;
+  dragOffsetX =
+    (e.clientX - rect.left - viewport.x) / viewport.zoom - node.position.x;
+  dragOffsetY =
+    (e.clientY - rect.top - viewport.y) / viewport.zoom - node.position.y;
+  window.addEventListener("pointermove", onNodeDragMove);
+  window.addEventListener("pointerup", onNodeDragEnd);
 }
 
 function onNodeDragMove(e: PointerEvent) {
   if (!draggingNodeId || !activeGraph.value) return;
-  const node = activeGraph.value.nodes.find(n => n.id === draggingNodeId);
+  const node = activeGraph.value.nodes.find((n) => n.id === draggingNodeId);
   if (!node) return;
   const rect = canvasRef.value?.getBoundingClientRect();
   const rx = rect?.left ?? 0;
@@ -248,14 +313,14 @@ function onNodeDragMove(e: PointerEvent) {
 
 function onNodeDragEnd() {
   draggingNodeId = null;
-  window.removeEventListener('pointermove', onNodeDragMove);
-  window.removeEventListener('pointerup', onNodeDragEnd);
+  window.removeEventListener("pointermove", onNodeDragMove);
+  window.removeEventListener("pointerup", onNodeDragEnd);
   emitGraphs();
 }
 
 // ── Drop from palette ──
 function onDrop(e: DragEvent) {
-  const moduleId = e.dataTransfer?.getData('application/ew-module');
+  const moduleId = e.dataTransfer?.getData("application/ew-module");
   if (!moduleId || !activeGraph.value || !canvasRef.value) return;
 
   const bp = MODULE_REGISTRY.get(moduleId);
@@ -277,9 +342,6 @@ function onDrop(e: DragEvent) {
   emitGraphs();
 }
 
-// ── Property panel ──
-const editingNode = ref<WorkbenchNode | null>(null);
-
 function openPropertyPanel(node: WorkbenchNode) {
   editingNode.value = node;
 }
@@ -290,9 +352,10 @@ function onCanvasDblClick() {
 
 function onUpdateConfig(nodeId: string, config: Record<string, any>) {
   if (!activeGraph.value) return;
-  const node = activeGraph.value.nodes.find(n => n.id === nodeId);
+  const node = activeGraph.value.nodes.find((n) => n.id === nodeId);
   if (node) {
     node.config = config;
+    editingNode.value = node;
     emitGraphs();
   }
 }
@@ -302,21 +365,22 @@ function addGraph() {
   const id = `graph_${Date.now()}`;
   const newGraph: WorkbenchGraph = {
     id,
-    name: `工作流 ${props.graphs.length + 1}`,
+    name: `工作流 ${localGraphs.value.length + 1}`,
     enabled: true,
-    timing: 'default',
+    timing: "default",
     priority: 100,
     nodes: [],
     edges: [],
     viewport: { x: 0, y: 0, zoom: 1 },
   };
-  emit('update:graphs', [...props.graphs, newGraph]);
+  localGraphs.value.push(newGraph);
   activeGraphId.value = id;
+  emitGraphs();
 }
 
 function renameGraph() {
   if (!activeGraph.value) return;
-  const name = prompt('图名称:', activeGraph.value.name);
+  const name = prompt("图名称:", activeGraph.value.name);
   if (name !== null) {
     activeGraph.value.name = name;
     emitGraphs();
@@ -330,32 +394,35 @@ function toggleEnabled() {
 }
 
 function emitGraphs() {
-  emit('update:graphs', [...props.graphs]);
+  emit("update:graphs", klona(localGraphs.value));
 }
 
 // ── Module helpers ──
 function getModuleColor(moduleId: string): string {
-  return MODULE_REGISTRY.get(moduleId)?.color ?? '#555';
+  return MODULE_REGISTRY.get(moduleId)?.color ?? "#555";
 }
 
 function getModuleIcon(moduleId: string): string {
-  return MODULE_REGISTRY.get(moduleId)?.icon ?? '?';
+  return MODULE_REGISTRY.get(moduleId)?.icon ?? "?";
 }
 
 function getModuleLabel(moduleId: string): string {
   return MODULE_REGISTRY.get(moduleId)?.label ?? moduleId;
 }
 
-function getModulePorts(moduleId: string, direction: 'in' | 'out'): ModulePortDef[] {
+function getModulePorts(
+  moduleId: string,
+  direction: "in" | "out",
+): ModulePortDef[] {
   const bp = MODULE_REGISTRY.get(moduleId);
   if (!bp) return [];
-  return bp.ports.filter(p => p.direction === direction);
+  return bp.ports.filter((p) => p.direction === direction);
 }
 
 function nodeStyle(node: WorkbenchNode) {
   return {
     transform: `translate(${node.position.x}px, ${node.position.y}px)`,
-    position: 'absolute' as const,
+    position: "absolute" as const,
     left: 0,
     top: 0,
   };
@@ -363,23 +430,26 @@ function nodeStyle(node: WorkbenchNode) {
 
 // ── Port positions (simplified) ──
 function getPortPos(nodeId: string, portId: string) {
-  const node = activeNodes.value.find(n => n.id === nodeId);
+  const node = activeNodes.value.find((n) => n.id === nodeId);
   if (!node) return null;
   const bp = MODULE_REGISTRY.get(node.moduleId);
   if (!bp) return null;
-  const port = bp.ports.find(p => p.id === portId);
+  const port = bp.ports.find((p) => p.id === portId);
   if (!port) return null;
 
-  const inPorts = bp.ports.filter(p => p.direction === 'in');
-  const outPorts = bp.ports.filter(p => p.direction === 'out');
+  const inPorts = bp.ports.filter((p) => p.direction === "in");
+  const outPorts = bp.ports.filter((p) => p.direction === "out");
 
   const nodeWidth = 220;
-  if (port.direction === 'in') {
+  if (port.direction === "in") {
     const idx = inPorts.indexOf(port);
     return { x: node.position.x, y: node.position.y + 40 + idx * 22 };
   } else {
     const idx = outPorts.indexOf(port);
-    return { x: node.position.x + nodeWidth, y: node.position.y + 40 + idx * 22 };
+    return {
+      x: node.position.x + nodeWidth,
+      y: node.position.y + 40 + idx * 22,
+    };
   }
 }
 </script>
@@ -530,7 +600,9 @@ function getPortPos(nodeId: string, portId: string) {
 
 .ew-workbench__node.is-selected {
   border-color: rgba(99, 102, 241, 0.5);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25), 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 0 0 2px rgba(99, 102, 241, 0.25),
+    0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 .ew-workbench__node:hover {
