@@ -107,6 +107,9 @@
                   : "已执行"
               }}</span>
             </div>
+            <div v-if="safeExecution?.workflow_failed" class="hist-meta-row">
+              <strong>工作流总结果：</strong><span>存在失败</span>
+            </div>
             <div v-if="safeExecution?.skip_reason" class="hist-meta-row">
               <strong>跳过原因：</strong
               ><span>{{ safeExecution.skip_reason }}</span>
@@ -115,9 +118,48 @@
               <strong>尝试工作流：</strong
               ><span>{{ safeExecution.attempted_flow_ids.length }}</span>
             </div>
+            <div
+              v-if="safeExecution && safeExecution.attempted_flow_ids.length"
+              class="hist-meta-row"
+            >
+              <strong>尝试列表：</strong
+              ><span>{{ safeExecution.attempted_flow_ids.join(", ") }}</span>
+            </div>
             <div v-if="safeExecution" class="hist-meta-row">
               <strong>失败工作流：</strong
               ><span>{{ safeExecution.failed_flow_ids.length }}</span>
+            </div>
+            <div
+              v-if="safeExecution && safeExecution.failed_flow_ids.length"
+              class="hist-meta-row"
+            >
+              <strong>失败列表：</strong
+              ><span>{{ safeExecution.failed_flow_ids.join(", ") }}</span>
+            </div>
+            <div v-if="safeRederiveMeta" class="hist-meta-row">
+              <strong>重推导模式：</strong>
+              <span>{{
+                safeRederiveMeta.legacy_approx ? "approx" : "exact"
+              }}</span>
+            </div>
+            <div v-if="safeRederiveMeta" class="hist-meta-row">
+              <strong>写回结果：</strong>
+              <span>
+                applied={{ safeRederiveMeta.writeback_applied }} / conflicts={{
+                  safeRederiveMeta.conflicts
+                }}
+              </span>
+            </div>
+            <div
+              v-if="safeRederiveMeta && safeRederiveMeta.conflict_names.length"
+              class="hist-meta-row"
+            >
+              <strong>冲突条目：</strong
+              ><span>{{ safeRederiveMeta.conflict_names.join(", ") }}</span>
+            </div>
+            <div v-if="replayCapsuleSummary" class="hist-meta-row">
+              <strong>Replay Capsule：</strong
+              ><span>{{ replayCapsuleSummary }}</span>
             </div>
             <div v-if="matchedVersionKey" class="hist-meta-row">
               <strong>展示版本键：</strong><code>{{ matchedVersionKey }}</code>
@@ -268,6 +310,7 @@
 </template>
 
 <script setup lang="ts">
+import { getChatMessages } from "../../runtime/compat/character";
 import {
   diffSnapshots,
   type FloorSnapshotReadResolution,
@@ -312,6 +355,8 @@ defineEmits<{
 const store = useEwStore();
 const isComparing = ref(false);
 const compareTargetId = ref<number | null>(null);
+const EW_REDERIVE_META_KEY = "ew_rederive_meta";
+const EW_WORKFLOW_REPLAY_CAPSULE_KEY = "ew_workflow_replay_capsule";
 
 const safeExecution = computed(() => {
   if (!props.execution) {
@@ -332,6 +377,52 @@ const safeExecution = computed(() => {
       : [],
     workflow_failed: Boolean(props.execution.workflow_failed),
   };
+});
+
+const safeRederiveMeta = computed(() => {
+  const message = getChatMessages(props.floorId)[0];
+  const raw = message?.data?.[EW_REDERIVE_META_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  const meta = raw as Record<string, unknown>;
+  return {
+    legacy_approx: Boolean(meta.legacy_approx),
+    conflicts: Math.max(0, Math.trunc(Number(meta.conflicts ?? 0) || 0)),
+    conflict_names: Array.isArray(meta.conflict_names)
+      ? meta.conflict_names.map((value) => String(value ?? "")).filter(Boolean)
+      : [],
+    writeback_applied: Math.max(
+      0,
+      Math.trunc(Number(meta.writeback_applied ?? 0) || 0),
+    ),
+  };
+});
+
+const replayCapsuleSummary = computed(() => {
+  const message = getChatMessages(props.floorId)[0];
+  const raw = message?.data?.[EW_WORKFLOW_REPLAY_CAPSULE_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return "";
+  }
+  const entries = Object.entries(raw as Record<string, unknown>).filter(
+    ([, value]) => value && typeof value === "object" && !Array.isArray(value),
+  );
+  if (!entries.length) {
+    return "";
+  }
+  const current = entries[0]?.[1] as Record<string, unknown>;
+  const flowIds = Array.isArray(current?.flow_ids)
+    ? current.flow_ids.map((value) => String(value ?? "")).filter(Boolean)
+    : [];
+  const capsuleMode = current?.capsule_mode === "light" ? "light" : "full";
+  const timing =
+    current?.timing === "before_reply" ||
+    current?.timing === "after_reply" ||
+    current?.timing === "manual"
+      ? current.timing
+      : "manual";
+  return `${entries.length} 个版本 · ${timing} · ${capsuleMode} · flow=${flowIds.length}`;
 });
 
 const safeSnapshot = computed<SnapshotData | null>(() => {

@@ -15,11 +15,14 @@ import {
 import { stopGeneration } from "./compat/generation";
 import { clearReplyInstruction } from "./compat/injection";
 import {
+  applySnapshotDiffToCurrentWorldbook,
   disposeFloorBindingEvents,
   initFloorBindingEvents,
+  migrateBeforeReplyArtifactsToAssistant,
+  readFloorSnapshotByMessageId,
   rollbackBeforeFloor,
 } from "./floor-binding";
-import { getMessageVersionInfo } from "./helpers";
+import { getMessageVersionInfo, simpleHash } from "./helpers";
 import { runIncrementalHideCheck } from "./hide-engine";
 import { resetInterceptGuard, wasRecentlyIntercepted } from "./intercept-guard";
 import { runWorkflow } from "./pipeline";
@@ -60,6 +63,8 @@ type StopFn = () => void;
 
 const EW_FLOOR_WORKFLOW_EXECUTION_KEY = "ew_workflow_execution";
 const EW_BEFORE_REPLY_BINDING_KEY = "ew_before_reply_binding";
+const EW_REDERIVE_META_KEY = "ew_rederive_meta";
+const EW_WORKFLOW_REPLAY_CAPSULE_KEY = "ew_workflow_replay_capsule";
 
 type FloorWorkflowStoredResult = {
   flow_id: string;
@@ -82,6 +87,24 @@ type FloorWorkflowExecutionState = {
   workflow_failed: boolean;
   execution_status: "executed" | "skipped";
   skip_reason?: string;
+};
+
+type WorkflowReplayCapsule = {
+  at: number;
+  request_id: string;
+  job_type: WorkflowJobType;
+  timing: "before_reply" | "after_reply" | "manual";
+  source: string;
+  generation_type: string;
+  target_message_id: number;
+  target_version_key: string;
+  target_role: "user" | "assistant" | "other";
+  flow_ids: string[];
+  flow_ids_hash: string;
+  capsule_mode: WorkflowCapsuleMode;
+  legacy_approx: boolean;
+  assembled_messages?: Array<{ role: string; content: string; name?: string }>;
+  request_preview?: Array<Record<string, unknown>>;
 };
 
 const listenerStops: StopFn[] = [];
@@ -600,6 +623,175 @@ async function pinFloorWorkflowExecutionToCurrentVersion(
   return true;
 }
 
+function normalizeWorkflowReplayCapsuleMap(
+  raw: unknown,
+): Record<string, WorkflowReplayCapsule> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const map: Record<string, WorkflowReplayCapsule> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const obj = value as Record<string, unknown>;
+    map[key] = {
+      at: Number(obj.at ?? 0),
+      request_id: String(obj.request_id ?? "").trim(),
+      job_type:
+        obj.job_type === "live_auto" ||
+        obj.job_type === "live_reroll" ||
+        obj.job_type === "historical_rederive"
+          ? obj.job_type
+          : "live_auto",
+      timing:
+        obj.timing === "before_reply" ||
+        obj.timing === "after_reply" ||
+        obj.timing === "manual"
+          ? obj.timing
+          : "manual",
+      source: String(obj.source ?? ""),
+      generation_type: String(obj.generation_type ?? ""),
+      target_message_id: Number(obj.target_message_id ?? -1),
+      target_version_key: String(obj.target_version_key ?? ""),
+      target_role:
+        obj.target_role === "user" || obj.target_role === "assistant"
+          ? obj.target_role
+          : "other",
+      flow_ids: Array.isArray(obj.flow_ids)
+        ? obj.flow_ids
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+        : [],
+      flow_ids_hash: String(obj.flow_ids_hash ?? ""),
+      capsule_mode: obj.capsule_mode === "light" ? "light" : "full",
+      legacy_approx: Boolean(obj.legacy_approx),
+      assembled_messages: Array.isArray(obj.assembled_messages)
+        ? obj.assembled_messages
+            .filter(
+              (item) =>
+                item && typeof item === "object" && !Array.isArray(item),
+            )
+            .map((item) => ({
+              role: String((item as Record<string, unknown>).role ?? ""),
+              content: String((item as Record<string, unknown>).content ?? ""),
+              name:
+                typeof (item as Record<string, unknown>).name === "string"
+                  ? String((item as Record<string, unknown>).name)
+                  : undefined,
+            }))
+        : undefined,
+      request_preview: Array.isArray(obj.request_preview)
+        ? obj.request_preview
+            .filter(
+              (item) =>
+                item && typeof item === "object" && !Array.isArray(item),
+            )
+            .map((item) => ({ ...(item as Record<string, unknown>) }))
+        : undefined,
+    };
+  }
+  return map;
+}
+
+function readWorkflowReplayCapsuleMap(
+  messageId: number,
+): Record<string, WorkflowReplayCapsule> {
+  const message = getChatMessages(messageId)[0];
+  return normalizeWorkflowReplayCapsuleMap(
+    message?.data?.[EW_WORKFLOW_REPLAY_CAPSULE_KEY],
+  );
+}
+
+function hasWorkflowReplayCapsule(messageId: number): boolean {
+  const map = readWorkflowReplayCapsuleMap(messageId);
+  return Object.keys(map).length > 0;
+}
+
+async function writeWorkflowReplayCapsule(
+  messageId: number,
+  capsule: WorkflowReplayCapsule,
+  versionInfo?: { version_key: string },
+): Promise<void> {
+  const message = getChatMessages(messageId)[0];
+  if (!message) {
+    return;
+  }
+  const effectiveVersion = versionInfo?.version_key
+    ? versionInfo
+    : getMessageVersionInfo(message);
+  const key = String(effectiveVersion.version_key ?? "").trim();
+  if (!key) {
+    return;
+  }
+
+  const map = readWorkflowReplayCapsuleMap(messageId);
+  map[key] = capsule;
+  const nextData: Record<string, unknown> = {
+    ...(message.data ?? {}),
+    [EW_WORKFLOW_REPLAY_CAPSULE_KEY]: map,
+  };
+  await setChatMessages([{ message_id: messageId, data: nextData }], {
+    refresh: "none",
+  });
+}
+
+async function migrateFloorWorkflowCapsuleToAssistant(
+  sourceMessageId: number,
+  assistantMessageId: number,
+): Promise<{ migrated: boolean; reason?: string }> {
+  if (sourceMessageId === assistantMessageId) {
+    return { migrated: false, reason: "same_message" };
+  }
+
+  const sourceMsg = getChatMessages(sourceMessageId)[0];
+  const assistantMsg = getChatMessages(assistantMessageId)[0];
+  if (!sourceMsg || !assistantMsg) {
+    return { migrated: false, reason: "message_not_found" };
+  }
+
+  const sourceMap = readWorkflowReplayCapsuleMap(sourceMessageId);
+  const sourceVersionInfo = getMessageVersionInfo(sourceMsg);
+  const sourceCapsule = sourceMap[sourceVersionInfo.version_key];
+  if (!sourceCapsule) {
+    return { migrated: false, reason: "source_capsule_missing" };
+  }
+
+  const assistantMap = readWorkflowReplayCapsuleMap(assistantMessageId);
+  const assistantVersionInfo = getMessageVersionInfo(assistantMsg);
+  assistantMap[assistantVersionInfo.version_key] = {
+    ...sourceCapsule,
+    target_message_id: assistantMessageId,
+    target_version_key: assistantVersionInfo.version_key,
+    target_role: "assistant",
+  };
+  delete sourceMap[sourceVersionInfo.version_key];
+
+  const sourceNextData: Record<string, unknown> = {
+    ...(sourceMsg.data ?? {}),
+  };
+  if (Object.keys(sourceMap).length > 0) {
+    sourceNextData[EW_WORKFLOW_REPLAY_CAPSULE_KEY] = sourceMap;
+  } else {
+    delete sourceNextData[EW_WORKFLOW_REPLAY_CAPSULE_KEY];
+  }
+
+  const assistantNextData: Record<string, unknown> = {
+    ...(assistantMsg.data ?? {}),
+    [EW_WORKFLOW_REPLAY_CAPSULE_KEY]: assistantMap,
+  };
+
+  await setChatMessages(
+    [
+      { message_id: sourceMessageId, data: sourceNextData },
+      { message_id: assistantMessageId, data: assistantNextData },
+    ],
+    { refresh: "none" },
+  );
+
+  return { migrated: true };
+}
+
 function buildFloorWorkflowExecutionState(
   requestId: string,
   attempts: Array<{
@@ -725,6 +917,27 @@ type WorkflowExecutionOutcome = {
   shouldAbortGeneration: boolean;
   workflowSucceeded: boolean;
   abortedByUser: boolean;
+};
+
+type RederiveWorkflowInput = {
+  message_id: number;
+  timing: "before_reply" | "after_reply" | "manual";
+  target_version_key?: string;
+  confirm_legacy?: boolean;
+  capsule_mode?: WorkflowCapsuleMode;
+};
+
+type RederiveWorkflowResult = {
+  ok: boolean;
+  reason?: string;
+  result?: {
+    message_id: number;
+    anchor_message_id: number;
+    legacy_approx: boolean;
+    writeback_applied: number;
+    writeback_conflicts: number;
+    writeback_conflict_names: string[];
+  };
 };
 
 type ExecuteWorkflowOptions = {
@@ -1378,6 +1591,82 @@ async function executeWorkflowWithPolicy(
     }
   }
 
+  {
+    const capsuleMessageId =
+      options.trigger.timing === "after_reply"
+        ? Number(options.trigger.assistant_message_id ?? options.messageId)
+        : Number(options.messageId);
+    const capsuleMessage = getChatMessages(capsuleMessageId)[0];
+    if (capsuleMessage) {
+      const versionInfo = getMessageVersionInfo(capsuleMessage);
+      const flowIds = _.uniq(
+        result.attempts
+          .map((attempt) => String(attempt.flow.id ?? "").trim())
+          .filter(Boolean),
+      );
+      const capsuleMode: WorkflowCapsuleMode =
+        options.rederiveOptions?.capsule_mode === "light" ? "light" : "full";
+      const replayCapsule: WorkflowReplayCapsule = {
+        at: Date.now(),
+        request_id: result.request_id,
+        job_type: options.jobType ?? "live_auto",
+        timing: options.trigger.timing,
+        source: options.trigger.source,
+        generation_type: options.trigger.generation_type,
+        target_message_id: capsuleMessageId,
+        target_version_key: versionInfo.version_key,
+        target_role:
+          capsuleMessage.role === "assistant"
+            ? "assistant"
+            : capsuleMessage.role === "user"
+              ? "user"
+              : "other",
+        flow_ids: flowIds,
+        flow_ids_hash: simpleHash(flowIds.join("|")),
+        capsule_mode: capsuleMode,
+        legacy_approx: Boolean(options.rederiveOptions?.legacy_approx),
+      };
+      if (capsuleMode === "full") {
+        replayCapsule.assembled_messages = result.attempts.flatMap(
+          (attempt) => {
+            const assembled = attempt.request_debug?.assembled_messages;
+            if (!Array.isArray(assembled)) {
+              return [];
+            }
+            return assembled
+              .filter(
+                (item) =>
+                  item && typeof item === "object" && !Array.isArray(item),
+              )
+              .map((item) => ({
+                role: String((item as Record<string, unknown>).role ?? ""),
+                content: String(
+                  (item as Record<string, unknown>).content ?? "",
+                ),
+                name:
+                  typeof (item as Record<string, unknown>).name === "string"
+                    ? String((item as Record<string, unknown>).name)
+                    : undefined,
+              }));
+          },
+        );
+        replayCapsule.request_preview = result.attempts
+          .map((attempt) => ({
+            flow_id: attempt.flow.id,
+            request_id: attempt.request?.request_id ?? "",
+            flow_name: attempt.flow.name,
+            flow_order: attempt.flow_order,
+          }))
+          .slice(0, 20);
+      }
+      await writeWorkflowReplayCapsule(
+        capsuleMessageId,
+        replayCapsule,
+        versionInfo,
+      );
+    }
+  }
+
   if (options.trigger.timing === "before_reply") {
     const sourceMessageId = Number(
       options.trigger.user_message_id ?? options.messageId,
@@ -1731,48 +2020,16 @@ async function onAfterReplyMessage(
       )[0];
       const assistantMsg = getChatMessages(messageId)[0];
       if (sourceMsg && assistantMsg) {
-        const sourceMap = readFloorWorkflowExecutionMap(
+        const artifactMigration = await migrateBeforeReplyArtifactsToAssistant(
+          settings,
           pendingBeforeReplyBinding.source_message_id,
+          messageId,
+          pendingBeforeReplyBinding.request_id,
         );
-        const sourceVersion = getMessageVersionInfo(sourceMsg).version_key;
-        const sourceState =
-          sourceMap[sourceVersion] ?? Object.values(sourceMap)[0] ?? null;
-        if (sourceState) {
-          await writeFloorWorkflowExecution(messageId, {
-            ...sourceState,
-            swipe_id: getMessageVersionInfo(assistantMsg).swipe_id,
-            content_hash: getMessageVersionInfo(assistantMsg).content_hash,
-          });
-          const sourceData = { ...(sourceMsg.data ?? {}) } as Record<
-            string,
-            unknown
-          >;
-          delete sourceData[EW_FLOOR_WORKFLOW_EXECUTION_KEY];
-          sourceData[EW_BEFORE_REPLY_BINDING_KEY] = {
-            role: "source",
-            paired_message_id: messageId,
-            request_id: pendingBeforeReplyBinding.request_id,
-            migrated_at: Date.now(),
-          };
-          const assistantData = { ...(assistantMsg.data ?? {}) } as Record<
-            string,
-            unknown
-          >;
-          assistantData[EW_BEFORE_REPLY_BINDING_KEY] = {
-            role: "assistant_anchor",
-            paired_message_id: pendingBeforeReplyBinding.source_message_id,
-            request_id: pendingBeforeReplyBinding.request_id,
-            migrated_at: Date.now(),
-          };
-          await setChatMessages(
-            [
-              {
-                message_id: pendingBeforeReplyBinding.source_message_id,
-                data: sourceData,
-              },
-              { message_id: messageId, data: assistantData },
-            ],
-            { refresh: "none" },
+        if (artifactMigration.migrated) {
+          await migrateFloorWorkflowCapsuleToAssistant(
+            pendingBeforeReplyBinding.source_message_id,
+            messageId,
           );
           markBeforeReplyBindingMigrated(messageId);
         }
@@ -1782,6 +2039,335 @@ async function onAfterReplyMessage(
   } finally {
     clearAfterReplyPendingIfMatches(pendingUserMessageId);
     clearSendContextIfMatches(pendingUserMessageId, userInput);
+    setProcessing(false);
+  }
+}
+
+function getCurrentChatKey(): string {
+  return String(getSTContext()?.chatId ?? "").trim();
+}
+
+function appendTriggerMessageIds(
+  trigger: {
+    timing: "before_reply" | "after_reply" | "manual";
+    source: string;
+    generation_type: string;
+    user_message_id?: number;
+    assistant_message_id?: number;
+  },
+  ids: { userMessageId?: number | null; assistantMessageId?: number | null },
+) {
+  const userMessageId = ids.userMessageId;
+  if (typeof userMessageId === "number" && Number.isFinite(userMessageId)) {
+    trigger.user_message_id = userMessageId;
+  }
+
+  const assistantMessageId = ids.assistantMessageId;
+  if (
+    typeof assistantMessageId === "number" &&
+    Number.isFinite(assistantMessageId)
+  ) {
+    trigger.assistant_message_id = assistantMessageId;
+  }
+
+  return trigger;
+}
+
+function resolveBeforeReplyPair(messageId: number): {
+  source_message_id: number;
+  assistant_message_id?: number;
+} {
+  const message = getChatMessages(messageId)[0];
+  if (!message) {
+    return { source_message_id: messageId };
+  }
+
+  const bindingMeta = message.data?.[EW_BEFORE_REPLY_BINDING_KEY] as
+    | { role?: unknown; paired_message_id?: unknown }
+    | undefined;
+  const role =
+    typeof bindingMeta?.role === "string" ? String(bindingMeta.role) : "";
+  const paired = Number(bindingMeta?.paired_message_id);
+  const pairedMessageId = Number.isFinite(paired) ? paired : undefined;
+
+  if (message.role === "assistant") {
+    if (role === "assistant_anchor" && Number.isFinite(pairedMessageId)) {
+      return {
+        source_message_id: Number(pairedMessageId),
+        assistant_message_id: messageId,
+      };
+    }
+    return { source_message_id: messageId, assistant_message_id: messageId };
+  }
+
+  if (message.role === "user") {
+    if (role === "source" && Number.isFinite(pairedMessageId)) {
+      return {
+        source_message_id: messageId,
+        assistant_message_id: Number(pairedMessageId),
+      };
+    }
+    const nextMessage = getChatMessages(messageId + 1)[0];
+    if (nextMessage?.role === "assistant") {
+      return {
+        source_message_id: messageId,
+        assistant_message_id: Number(nextMessage.message_id),
+      };
+    }
+  }
+
+  return { source_message_id: messageId };
+}
+
+function resolveAssistantSourceUserMessageId(messageId: number): number | null {
+  const pair = resolveBeforeReplyPair(messageId);
+  if (
+    Number.isFinite(pair.assistant_message_id) &&
+    Number(pair.assistant_message_id) === messageId
+  ) {
+    return Number.isFinite(pair.source_message_id)
+      ? Number(pair.source_message_id)
+      : null;
+  }
+
+  const previousMessage = getChatMessages(messageId - 1)[0];
+  if (previousMessage?.role === "user") {
+    return Number(previousMessage.message_id);
+  }
+
+  return null;
+}
+
+async function writeRederiveMeta(
+  messageId: number,
+  meta: {
+    source_job: WorkflowJobType;
+    legacy_approx: boolean;
+    timing: "before_reply" | "after_reply" | "manual";
+    conflicts: number;
+    conflict_names: string[];
+    writeback_applied: number;
+    writeback_ok: boolean;
+  },
+): Promise<void> {
+  const message = getChatMessages(messageId)[0];
+  if (!message) {
+    return;
+  }
+
+  const nextData: Record<string, unknown> = {
+    ...(message.data ?? {}),
+    [EW_REDERIVE_META_KEY]: {
+      ...meta,
+      updated_at: Date.now(),
+    },
+  };
+  await setChatMessages([{ message_id: messageId, data: nextData }], {
+    refresh: "none",
+  });
+}
+
+export async function rederiveWorkflowAtFloor(
+  input: RederiveWorkflowInput,
+): Promise<RederiveWorkflowResult> {
+  const settings = getSettings();
+  if (!settings.enabled) {
+    return { ok: false, reason: "workflow disabled" };
+  }
+
+  const sourceMessageId = Number(input.message_id);
+  if (!Number.isFinite(sourceMessageId) || sourceMessageId < 0) {
+    return { ok: false, reason: "invalid target floor" };
+  }
+  const sourceMessage = getChatMessages(sourceMessageId)[0];
+  if (!sourceMessage) {
+    return { ok: false, reason: "target floor not found" };
+  }
+
+  const timing = input.timing;
+  const pair =
+    timing === "before_reply"
+      ? resolveBeforeReplyPair(sourceMessageId)
+      : { source_message_id: sourceMessageId };
+  const assistantMessageId = pair.assistant_message_id;
+  const beforeReplySourceMessageId = pair.source_message_id;
+  const anchorMessageId =
+    timing === "before_reply" && Number.isFinite(assistantMessageId)
+      ? Number(assistantMessageId)
+      : sourceMessageId;
+
+  const anchorMessage = getChatMessages(anchorMessageId)[0];
+  if (!anchorMessage) {
+    return { ok: false, reason: "anchor floor not found" };
+  }
+
+  const hasCapsule =
+    hasWorkflowReplayCapsule(anchorMessageId) ||
+    (Number.isFinite(beforeReplySourceMessageId) &&
+      hasWorkflowReplayCapsule(beforeReplySourceMessageId));
+  if (!hasCapsule && !input.confirm_legacy) {
+    return { ok: false, reason: "legacy_confirmation_required" };
+  }
+  const legacyApprox = !hasCapsule;
+  const targetVersionInfo = getMessageVersionInfo(anchorMessage);
+  const contextCursor: ContextCursor = {
+    chat_id: getCurrentChatKey(),
+    target_message_id:
+      timing === "before_reply" ? beforeReplySourceMessageId : anchorMessageId,
+    target_role:
+      timing === "before_reply"
+        ? "user"
+        : anchorMessage.role === "assistant"
+          ? "assistant"
+          : anchorMessage.role === "user"
+            ? "user"
+            : "other",
+    target_version_key: String(
+      input.target_version_key ?? targetVersionInfo.version_key,
+    ),
+    timing,
+    source_user_message_id:
+      timing === "before_reply" ? beforeReplySourceMessageId : undefined,
+    assistant_message_id:
+      timing === "before_reply" ? assistantMessageId : anchorMessageId,
+    capsule_mode: input.capsule_mode === "light" ? "light" : "full",
+  };
+
+  const oldSnapshotRead = await readFloorSnapshotByMessageId(
+    anchorMessageId,
+    "history",
+  );
+  const oldSnapshot = oldSnapshotRead?.snapshot ?? null;
+
+  const sourceUserText = String(
+    getChatMessages(beforeReplySourceMessageId)[0]?.message ?? "",
+  );
+  const afterReplySourceUserMessageId =
+    timing === "after_reply"
+      ? resolveAssistantSourceUserMessageId(anchorMessageId)
+      : null;
+  const afterReplySourceUserText = String(
+    Number.isFinite(afterReplySourceUserMessageId)
+      ? (getChatMessages(Number(afterReplySourceUserMessageId))[0]?.message ??
+          "")
+      : "",
+  );
+  const userInput =
+    timing === "before_reply"
+      ? sourceUserText
+      : timing === "after_reply"
+        ? afterReplySourceUserText || getMessageText(anchorMessageId)
+        : sourceUserText || getMessageText(sourceMessageId);
+
+  try {
+    setProcessing(true);
+    const executionOutcome = await executeWorkflowWithPolicy(settings, {
+      messageId:
+        timing === "before_reply"
+          ? beforeReplySourceMessageId
+          : anchorMessageId,
+      userInput,
+      injectReply: false,
+      timingFilter: timing === "manual" ? undefined : timing,
+      jobType: "historical_rederive",
+      contextCursor,
+      writebackPolicy: "dual_diff_merge",
+      rederiveOptions: {
+        legacy_approx: legacyApprox,
+        capsule_mode: contextCursor.capsule_mode,
+      },
+      trigger: appendTriggerMessageIds(
+        {
+          timing,
+          source: "history_rederive",
+          generation_type: getRuntimeState().last_generation?.type || "manual",
+        },
+        {
+          userMessageId:
+            timing === "before_reply"
+              ? beforeReplySourceMessageId
+              : timing === "after_reply"
+                ? afterReplySourceUserMessageId
+                : undefined,
+          assistantMessageId:
+            timing === "before_reply"
+              ? assistantMessageId
+              : anchorMessage.role === "assistant"
+                ? anchorMessageId
+                : undefined,
+        },
+      ),
+      reminderMessage: "正在重推导历史楼层工作流并重建快照，请稍后…",
+      successMessage: "历史楼层重推导与快照重建已完成。",
+    });
+
+    if (!executionOutcome.workflowSucceeded) {
+      return {
+        ok: false,
+        reason: executionOutcome.abortedByUser
+          ? "workflow cancelled by user"
+          : "workflow failed",
+      };
+    }
+
+    if (
+      timing === "before_reply" &&
+      Number.isFinite(assistantMessageId) &&
+      Number.isFinite(beforeReplySourceMessageId) &&
+      beforeReplySourceMessageId !== assistantMessageId
+    ) {
+      const rederiveRequestId = `rederive:${Date.now().toString(36)}`;
+      const artifactMigration = await migrateBeforeReplyArtifactsToAssistant(
+        settings,
+        beforeReplySourceMessageId,
+        Number(assistantMessageId),
+        rederiveRequestId,
+      );
+      if (artifactMigration.migrated) {
+        await migrateFloorWorkflowCapsuleToAssistant(
+          beforeReplySourceMessageId,
+          Number(assistantMessageId),
+        );
+      }
+    }
+
+    const newSnapshotRead = await readFloorSnapshotByMessageId(
+      anchorMessageId,
+      "history",
+    );
+    const newSnapshot = newSnapshotRead?.snapshot ?? null;
+    const writebackResult = await applySnapshotDiffToCurrentWorldbook(
+      settings,
+      oldSnapshot,
+      newSnapshot,
+    );
+    await writeRederiveMeta(anchorMessageId, {
+      source_job: "historical_rederive",
+      legacy_approx: legacyApprox,
+      timing,
+      conflicts: writebackResult.conflicts,
+      conflict_names: writebackResult.conflict_names,
+      writeback_applied: writebackResult.applied,
+      writeback_ok: true,
+    });
+
+    return {
+      ok: true,
+      result: {
+        message_id: sourceMessageId,
+        anchor_message_id: anchorMessageId,
+        legacy_approx: legacyApprox,
+        writeback_applied: writebackResult.applied,
+        writeback_conflicts: writebackResult.conflicts,
+        writeback_conflict_names: writebackResult.conflict_names,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
     setProcessing(false);
   }
 }

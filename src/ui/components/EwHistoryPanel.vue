@@ -91,6 +91,21 @@
                       : "重推导(exact)"
                   }}
                 </span>
+                <span
+                  v-if="item.semantic.has_replay_capsule"
+                  class="hist-anchor-chip hist-anchor-chip--assistant"
+                >
+                  Replay
+                </span>
+                <span
+                  v-if="
+                    item.semantic.rederive &&
+                    item.semantic.rederive.conflicts > 0
+                  "
+                  class="hist-anchor-chip hist-anchor-chip--source"
+                >
+                  冲突 {{ item.semantic.rederive.conflicts }}
+                </span>
               </div>
             </div>
             <div class="hist-block-head-side">
@@ -204,7 +219,9 @@ type TimelineSemantic = {
   rederive?: {
     legacy_approx: boolean;
     conflicts: number;
+    writeback_applied?: number;
   };
+  has_replay_capsule?: boolean;
 };
 type TimelineItem = {
   floor: (typeof store.floorSnapshots)[number];
@@ -246,9 +263,11 @@ function normalizeBindingMeta(raw: unknown): {
   };
 }
 
-function normalizeRederiveMeta(
-  raw: unknown,
-): { legacy_approx: boolean; conflicts: number } | null {
+function normalizeRederiveMeta(raw: unknown): {
+  legacy_approx: boolean;
+  conflicts: number;
+  writeback_applied: number;
+} | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
@@ -256,7 +275,15 @@ function normalizeRederiveMeta(
   return {
     legacy_approx: Boolean(meta.legacy_approx),
     conflicts: Math.max(0, Math.trunc(Number(meta.conflicts ?? 0) || 0)),
+    writeback_applied: Math.max(
+      0,
+      Math.trunc(Number(meta.writeback_applied ?? 0) || 0),
+    ),
   };
+}
+
+function hasReplayCapsule(raw: unknown): boolean {
+  return Boolean(raw && typeof raw === "object" && !Array.isArray(raw));
 }
 
 const floorRuntimeMap = computed(() => {
@@ -266,6 +293,7 @@ const floorRuntimeMap = computed(() => {
       role: FloorRole;
       binding_meta: ReturnType<typeof normalizeBindingMeta>;
       rederive_meta: ReturnType<typeof normalizeRederiveMeta>;
+      has_replay_capsule: boolean;
     }
   >();
 
@@ -278,10 +306,14 @@ const floorRuntimeMap = computed(() => {
     const rederiveMeta = normalizeRederiveMeta(
       message?.data?.[EW_REDERIVE_META_KEY],
     );
+    const replayCapsule = hasReplayCapsule(
+      message?.data?.["ew_workflow_replay_capsule"],
+    );
     result.set(floor.messageId, {
       role,
       binding_meta: bindingMeta,
       rederive_meta: rederiveMeta,
+      has_replay_capsule: replayCapsule,
     });
   }
 
@@ -345,12 +377,14 @@ const timelineItems = computed(() => {
     const role = runtimeMeta?.role ?? "other";
     const bindingMeta = runtimeMeta?.binding_meta;
     const rederiveMeta = runtimeMeta?.rederive_meta;
+    const hasReplayCapsule = Boolean(runtimeMeta?.has_replay_capsule);
     const hasArtifacts = Boolean(floorArtifactMap.get(floor.messageId));
 
     let semantic: TimelineSemantic = {
       role,
       anchor_kind: "normal",
       rederive: rederiveMeta ?? undefined,
+      has_replay_capsule: hasReplayCapsule,
     };
 
     if (bindingMeta?.role === "assistant_anchor" && role === "assistant") {
@@ -525,9 +559,12 @@ function resolutionTitle(item: TimelineItem): string {
       ? `可用版本数：${item.floor.available_version_count}。`
       : "";
   const rederiveText = item.semantic.rederive
-    ? `最近一次重推导：${item.semantic.rederive.legacy_approx ? "approx" : "exact"}；冲突=${item.semantic.rederive.conflicts}。`
+    ? `最近一次重推导：${item.semantic.rederive.legacy_approx ? "approx" : "exact"}；冲突=${item.semantic.rederive.conflicts}；applied=${item.semantic.rederive.writeback_applied ?? 0}。`
     : "";
-  return `${resolutionMeta[item.floor.resolution].title}${sourceText}${versionText}${rederiveText}`;
+  const replayText = item.semantic.has_replay_capsule
+    ? "存在 replay capsule。"
+    : "";
+  return `${resolutionMeta[item.floor.resolution].title}${sourceText}${versionText}${rederiveText}${replayText}`;
 }
 
 function statusClass(item: TimelineItem): string {

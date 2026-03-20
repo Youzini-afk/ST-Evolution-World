@@ -4,15 +4,19 @@ import {
   getCurrentCharacterName,
   getLastMessageId,
   setChatMessages,
-} from './compat/character';
+} from "./compat/character";
 import {
   EVENT_CHAT_CHANGED,
   EVENT_MESSAGE_DELETED,
   onEvent,
   type StopFn,
-} from './compat/events';
-import { replaceWorldbook } from './compat/worldbook';
-import { buildMessageVersionKey, getMessageVersionInfo, resolveControllerSnapshotEntryName } from './helpers';
+} from "./compat/events";
+import { replaceWorldbook } from "./compat/worldbook";
+import {
+  buildMessageVersionKey,
+  getMessageVersionInfo,
+  resolveControllerSnapshotEntryName,
+} from "./helpers";
 import {
   buildChatFingerprint,
   buildFileName,
@@ -28,39 +32,39 @@ import {
   type SnapshotData,
   type SnapshotStoreOwner,
   type SnapshotVersionStore,
-} from './snapshot-storage';
+} from "./snapshot-storage";
 import {
   ControllerEntrySnapshot,
   ControllerTemplateSlot,
   EwSettings,
-} from './types';
+} from "./types";
 import {
   ensureDefaultEntry,
   resolveTargetWorldbook,
-} from './worldbook-runtime';
+} from "./worldbook-runtime";
 
-const EW_FLOOR_DATA_KEY = 'ew_entries';
-const EW_CONTROLLER_DATA_KEY = 'ew_controller';
-const EW_CONTROLLERS_DATA_KEY = 'ew_controllers';
-const EW_DYN_SNAPSHOTS_KEY = 'ew_dyn_snapshots';
-const EW_SNAPSHOT_FILE_KEY = 'ew_snapshot_file';
-const EW_SWIPE_ID_KEY = 'ew_snapshot_swipe_id';
-const EW_CONTENT_HASH_KEY = 'ew_snapshot_content_hash';
-const EW_INLINE_SNAPSHOT_VERSIONS_KEY = 'ew_snapshot_versions';
-const EW_FLOOR_WORKFLOW_EXECUTION_KEY = 'ew_workflow_execution';
-const EW_BEFORE_REPLY_BINDING_KEY = 'ew_before_reply_binding';
+const EW_FLOOR_DATA_KEY = "ew_entries";
+const EW_CONTROLLER_DATA_KEY = "ew_controller";
+const EW_CONTROLLERS_DATA_KEY = "ew_controllers";
+const EW_DYN_SNAPSHOTS_KEY = "ew_dyn_snapshots";
+const EW_SNAPSHOT_FILE_KEY = "ew_snapshot_file";
+const EW_SWIPE_ID_KEY = "ew_snapshot_swipe_id";
+const EW_CONTENT_HASH_KEY = "ew_snapshot_content_hash";
+const EW_INLINE_SNAPSHOT_VERSIONS_KEY = "ew_snapshot_versions";
+const EW_FLOOR_WORKFLOW_EXECUTION_KEY = "ew_workflow_execution";
+const EW_BEFORE_REPLY_BINDING_KEY = "ew_before_reply_binding";
 
 export type FloorSnapshotReadResolution =
-  | 'exact'
-  | 'single_fallback'
-  | 'same_swipe_fallback'
-  | 'latest_fallback'
-  | 'missing';
+  | "exact"
+  | "single_fallback"
+  | "same_swipe_fallback"
+  | "latest_fallback"
+  | "missing";
 
-type SnapshotReadMode = 'strict' | 'history';
+type SnapshotReadMode = "strict" | "history";
 
 type SnapshotVersionSource = {
-  source: 'file' | 'inline';
+  source: "file" | "inline";
   versions: Record<string, SnapshotData>;
   fileName?: string;
 };
@@ -69,7 +73,7 @@ type SnapshotReadResult = {
   snapshot: SnapshotData | null;
   resolution: FloorSnapshotReadResolution;
   available_version_count: number;
-  source: 'file' | 'inline' | 'none';
+  source: "file" | "inline" | "none";
   matched_version_key?: string;
   file_name?: string;
 };
@@ -78,8 +82,8 @@ export type DynSnapshot = { name: string; content: string; enabled: boolean };
 
 function normalizeDynSnapshot(snapshot: DynSnapshot): DynSnapshot {
   return {
-    name: String(snapshot?.name ?? '').trim(),
-    content: String(snapshot?.content ?? ''),
+    name: String(snapshot?.name ?? "").trim(),
+    content: String(snapshot?.content ?? ""),
     enabled: Boolean(snapshot?.enabled),
   };
 }
@@ -88,8 +92,8 @@ function normalizeControllerSnapshot(
   snapshot: ControllerEntrySnapshot,
 ): ControllerEntrySnapshot {
   return {
-    entry_name: String(snapshot.entry_name ?? '').trim(),
-    content: String(snapshot.content ?? ''),
+    entry_name: String(snapshot.entry_name ?? "").trim(),
+    content: String(snapshot.content ?? ""),
     flow_id: snapshot.flow_id ? String(snapshot.flow_id) : undefined,
     flow_name: snapshot.flow_name ? String(snapshot.flow_name) : undefined,
     legacy: Boolean(snapshot.legacy),
@@ -98,7 +102,7 @@ function normalizeControllerSnapshot(
 
 function controllerSnapshotKey(snapshot: ControllerEntrySnapshot): string {
   return String(
-    snapshot.flow_id ?? snapshot.entry_name ?? snapshot.flow_name ?? 'legacy',
+    snapshot.flow_id ?? snapshot.entry_name ?? snapshot.flow_name ?? "legacy",
   );
 }
 
@@ -147,7 +151,7 @@ function clearFloorSnapshotFields(data: Record<string, unknown>) {
 }
 
 function getCharName(): string {
-  return getCurrentCharacterName() ?? 'unknown';
+  return getCurrentCharacterName() ?? "unknown";
 }
 
 function refreshObservedMessageVersions(): void {
@@ -170,30 +174,38 @@ function hasSnapshotMetadataHints(msg: any): boolean {
   const data = (msg?.data ?? {}) as Record<string, unknown>;
   return Boolean(
     data[EW_SNAPSHOT_FILE_KEY] ||
-      data[EW_INLINE_SNAPSHOT_VERSIONS_KEY] ||
-      data[EW_CONTROLLER_DATA_KEY] ||
-      data[EW_CONTROLLERS_DATA_KEY] ||
-      data[EW_DYN_SNAPSHOTS_KEY] ||
-      data[EW_SWIPE_ID_KEY] !== undefined ||
-      data[EW_CONTENT_HASH_KEY],
+    data[EW_INLINE_SNAPSHOT_VERSIONS_KEY] ||
+    data[EW_CONTROLLER_DATA_KEY] ||
+    data[EW_CONTROLLERS_DATA_KEY] ||
+    data[EW_DYN_SNAPSHOTS_KEY] ||
+    data[EW_SWIPE_ID_KEY] !== undefined ||
+    data[EW_CONTENT_HASH_KEY],
   );
 }
 
 function getMessageSnapshotFileCandidates(msg: any): string[] {
   const candidates: string[] = [];
   const explicit = _.get(msg.data, EW_SNAPSHOT_FILE_KEY);
-  if (typeof explicit === 'string' && explicit.trim()) {
+  if (typeof explicit === "string" && explicit.trim()) {
     candidates.push(explicit.trim());
   }
 
   const messageId = Number(msg?.message_id);
-  if (hasSnapshotMetadataHints(msg) && Number.isFinite(messageId) && messageId >= 0) {
+  if (
+    hasSnapshotMetadataHints(msg) &&
+    Number.isFinite(messageId) &&
+    messageId >= 0
+  ) {
     const inferred = buildFileName(getCharName(), getChatId(), messageId);
     if (inferred && !candidates.includes(inferred)) {
       candidates.push(inferred);
     }
 
-    const inferredLegacy = buildLegacyFileName(getCharName(), getChatId(), messageId);
+    const inferredLegacy = buildLegacyFileName(
+      getCharName(),
+      getChatId(),
+      messageId,
+    );
     if (inferredLegacy && !candidates.includes(inferredLegacy)) {
       candidates.push(inferredLegacy);
     }
@@ -203,13 +215,15 @@ function getMessageSnapshotFileCandidates(msg: any): string[] {
 }
 
 function isSnapshotFileNamedForCurrentChat(fileName: string): boolean {
-  const normalized = String(fileName ?? '').trim();
+  const normalized = String(fileName ?? "").trim();
   if (!normalized) {
     return false;
   }
   const expectedPrefix = buildFilePrefix(getCharName(), getChatId());
   const legacyPrefix = buildLegacyFilePrefix(getCharName(), getChatId());
-  return normalized.startsWith(expectedPrefix) || normalized.startsWith(legacyPrefix);
+  return (
+    normalized.startsWith(expectedPrefix) || normalized.startsWith(legacyPrefix)
+  );
 }
 
 function isSnapshotOwnerMatchingCurrentChat(
@@ -249,12 +263,14 @@ function buildSnapshotReadResult(
   snapshot: SnapshotData | null,
   matchedVersionKey?: string,
 ): SnapshotReadResult {
-  const availableVersionCount = source ? Object.keys(source.versions).length : 0;
+  const availableVersionCount = source
+    ? Object.keys(source.versions).length
+    : 0;
   return {
     snapshot,
     resolution,
     available_version_count: availableVersionCount,
-    source: source?.source ?? 'none',
+    source: source?.source ?? "none",
     matched_version_key: matchedVersionKey,
     file_name: source?.fileName,
   };
@@ -274,7 +290,12 @@ function selectSnapshotFromSources(
   for (const source of sources) {
     const exact = source.versions[versionInfo.version_key];
     if (exact) {
-      return buildSnapshotReadResult(source, 'exact', exact, versionInfo.version_key);
+      return buildSnapshotReadResult(
+        source,
+        "exact",
+        exact,
+        versionInfo.version_key,
+      );
     }
   }
 
@@ -284,15 +305,15 @@ function selectSnapshotFromSources(
       const [matchedVersionKey, snapshot] = entries[0];
       return buildSnapshotReadResult(
         source,
-        'single_fallback',
+        "single_fallback",
         snapshot,
         matchedVersionKey,
       );
     }
   }
 
-  if (mode === 'strict') {
-    return buildSnapshotReadResult(null, 'missing', null);
+  if (mode === "strict") {
+    return buildSnapshotReadResult(null, "missing", null);
   }
 
   for (const source of sources) {
@@ -302,7 +323,7 @@ function selectSnapshotFromSources(
       if (Number(snapshot?.swipe_id ?? -1) === versionInfo.swipe_id) {
         return buildSnapshotReadResult(
           source,
-          'same_swipe_fallback',
+          "same_swipe_fallback",
           snapshot,
           matchedVersionKey,
         );
@@ -316,38 +337,42 @@ function selectSnapshotFromSources(
       const [matchedVersionKey, snapshot] = entries[entries.length - 1];
       return buildSnapshotReadResult(
         source,
-        'latest_fallback',
+        "latest_fallback",
         snapshot,
         matchedVersionKey,
       );
     }
   }
 
-  return buildSnapshotReadResult(null, 'missing', null);
+  return buildSnapshotReadResult(null, "missing", null);
 }
 
 function readLegacyInlineSnapshot(
   data: Record<string, unknown>,
 ): SnapshotData | null {
-  const snapshots = _.get(data, EW_DYN_SNAPSHOTS_KEY) as DynSnapshot[] | undefined;
+  const snapshots = _.get(data, EW_DYN_SNAPSHOTS_KEY) as
+    | DynSnapshot[]
+    | undefined;
 
   const controllersArray = _.get(data, EW_CONTROLLERS_DATA_KEY) as
     | ControllerEntrySnapshot[]
     | undefined;
   const inlineSwipeId =
-    typeof data[EW_SWIPE_ID_KEY] === 'number'
+    typeof data[EW_SWIPE_ID_KEY] === "number"
       ? (data[EW_SWIPE_ID_KEY] as number)
       : undefined;
   const inlineContentHash =
-    typeof data[EW_CONTENT_HASH_KEY] === 'string'
+    typeof data[EW_CONTENT_HASH_KEY] === "string"
       ? (data[EW_CONTENT_HASH_KEY] as string)
       : undefined;
   if (Array.isArray(controllersArray)) {
     return {
       controllers: controllersArray
         .map(normalizeControllerSnapshot)
-        .filter(entry => entry.content),
-      dyn_entries: Array.isArray(snapshots) ? snapshots.map(normalizeDynSnapshot) : [],
+        .filter((entry) => entry.content),
+      dyn_entries: Array.isArray(snapshots)
+        ? snapshots.map(normalizeDynSnapshot)
+        : [],
       swipe_id: inlineSwipeId,
       content_hash: inlineContentHash,
     };
@@ -358,19 +383,21 @@ function readLegacyInlineSnapshot(
     | undefined;
   if (
     controllersRaw &&
-    typeof controllersRaw === 'object' &&
+    typeof controllersRaw === "object" &&
     !Array.isArray(controllersRaw)
   ) {
     return {
       controllers: Object.entries(controllersRaw).map(([key, value]) =>
         normalizeControllerSnapshot({
-          entry_name: key.startsWith('EW/Controller/') ? key : '',
-          flow_name: key.startsWith('EW/Controller/') ? undefined : key,
-          content: String(value ?? ''),
-          legacy: key === 'legacy',
+          entry_name: key.startsWith("EW/Controller/") ? key : "",
+          flow_name: key.startsWith("EW/Controller/") ? undefined : key,
+          content: String(value ?? ""),
+          legacy: key === "legacy",
         }),
       ),
-      dyn_entries: Array.isArray(snapshots) ? snapshots.map(normalizeDynSnapshot) : [],
+      dyn_entries: Array.isArray(snapshots)
+        ? snapshots.map(normalizeDynSnapshot)
+        : [],
       swipe_id: inlineSwipeId,
       content_hash: inlineContentHash,
     };
@@ -379,20 +406,22 @@ function readLegacyInlineSnapshot(
   const ctrlSnap = _.get(data, EW_CONTROLLER_DATA_KEY) as string | undefined;
   if (
     (Array.isArray(snapshots) && snapshots.length > 0) ||
-    (typeof ctrlSnap === 'string' && ctrlSnap.length > 0)
+    (typeof ctrlSnap === "string" && ctrlSnap.length > 0)
   ) {
     return {
       controllers: ctrlSnap
         ? [
             normalizeControllerSnapshot({
-              entry_name: '',
-              flow_name: 'Legacy Controller',
+              entry_name: "",
+              flow_name: "Legacy Controller",
               content: ctrlSnap,
               legacy: true,
             }),
           ]
         : [],
-      dyn_entries: Array.isArray(snapshots) ? snapshots.map(normalizeDynSnapshot) : [],
+      dyn_entries: Array.isArray(snapshots)
+        ? snapshots.map(normalizeDynSnapshot)
+        : [],
       swipe_id: inlineSwipeId,
       content_hash: inlineContentHash,
     };
@@ -404,13 +433,13 @@ function readLegacyInlineSnapshot(
 function normalizeInlineSnapshotVersions(
   raw: unknown,
 ): Record<string, SnapshotData> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return {};
   }
 
   const versions: Record<string, SnapshotData> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
       continue;
     }
     const upgraded = value as SnapshotData;
@@ -418,15 +447,17 @@ function normalizeInlineSnapshotVersions(
       controllers: Array.isArray(upgraded.controllers)
         ? upgraded.controllers
             .map(normalizeControllerSnapshot)
-            .filter(entry => entry.content)
+            .filter((entry) => entry.content)
         : [],
       dyn_entries: Array.isArray(upgraded.dyn_entries)
-        ? upgraded.dyn_entries.map(entry => normalizeDynSnapshot(entry as DynSnapshot))
+        ? upgraded.dyn_entries.map((entry) =>
+            normalizeDynSnapshot(entry as DynSnapshot),
+          )
         : [],
       swipe_id:
-        typeof upgraded.swipe_id === 'number' ? upgraded.swipe_id : undefined,
+        typeof upgraded.swipe_id === "number" ? upgraded.swipe_id : undefined,
       content_hash:
-        typeof upgraded.content_hash === 'string'
+        typeof upgraded.content_hash === "string"
           ? upgraded.content_hash
           : undefined,
     };
@@ -451,7 +482,7 @@ function readInlineSnapshotVersions(
   return {
     [buildMessageVersionKey(
       Number(legacy.swipe_id ?? 0),
-      String(legacy.content_hash ?? '').trim(),
+      String(legacy.content_hash ?? "").trim(),
     )]: legacy,
   };
 }
@@ -480,7 +511,7 @@ function buildSnapshotStoreFromVersions(
   versions: Record<string, SnapshotData>,
 ): SnapshotVersionStore {
   return {
-    version: 'ew-snapshot/v2',
+    version: "ew-snapshot/v2",
     updated_at: Date.now(),
     versions: { ...versions },
     owner: buildSnapshotStoreOwner(getCharName(), getChatId()),
@@ -499,7 +530,7 @@ async function loadSnapshotVersionSources(
     }
 
     sources.push({
-      source: 'file',
+      source: "file",
       versions: store.versions,
       fileName,
     });
@@ -508,7 +539,7 @@ async function loadSnapshotVersionSources(
   const inlineVersions = readInlineSnapshotVersions(msg.data ?? {});
   if (Object.keys(inlineVersions).length > 0) {
     sources.push({
-      source: 'inline',
+      source: "inline",
       versions: inlineVersions,
     });
   }
@@ -522,7 +553,7 @@ async function readSnapshotForMessageDetailed(
 ): Promise<SnapshotReadResult> {
   const sources = await loadSnapshotVersionSources(msg);
   if (sources.length === 0) {
-    return buildSnapshotReadResult(null, 'missing', null);
+    return buildSnapshotReadResult(null, "missing", null);
   }
 
   const versionInfo = getMessageVersionInfo(msg);
@@ -530,7 +561,7 @@ async function readSnapshotForMessageDetailed(
 }
 
 async function readSnapshotForMessage(msg: any): Promise<SnapshotData | null> {
-  const readResult = await readSnapshotForMessageDetailed(msg, 'history');
+  const readResult = await readSnapshotForMessageDetailed(msg, "history");
   return readResult.snapshot;
 }
 
@@ -544,8 +575,8 @@ export async function pinMessageSnapshotToCurrentVersion(
 
   const versionInfo = getMessageVersionInfo(msg);
   const currentVersionKey = versionInfo.version_key;
-  const readResult = await readSnapshotForMessageDetailed(msg, 'history');
-  if (!readResult.snapshot || readResult.source === 'none') {
+  const readResult = await readSnapshotForMessageDetailed(msg, "history");
+  if (!readResult.snapshot || readResult.source === "none") {
     return false;
   }
 
@@ -561,10 +592,10 @@ export async function pinMessageSnapshotToCurrentVersion(
     }
 
     const currentHash =
-      typeof nextData[EW_CONTENT_HASH_KEY] === 'string'
+      typeof nextData[EW_CONTENT_HASH_KEY] === "string"
         ? String(nextData[EW_CONTENT_HASH_KEY])
-        : '';
-    const targetHash = String(versionInfo.content_hash ?? '').trim();
+        : "";
+    const targetHash = String(versionInfo.content_hash ?? "").trim();
     if (currentHash !== targetHash) {
       if (targetHash) {
         nextData[EW_CONTENT_HASH_KEY] = targetHash;
@@ -575,11 +606,11 @@ export async function pinMessageSnapshotToCurrentVersion(
     }
   };
 
-  if (readResult.source === 'file' && readResult.file_name) {
+  if (readResult.source === "file" && readResult.file_name) {
     const currentFileRef =
-      typeof nextData[EW_SNAPSHOT_FILE_KEY] === 'string'
+      typeof nextData[EW_SNAPSHOT_FILE_KEY] === "string"
         ? String(nextData[EW_SNAPSHOT_FILE_KEY]).trim()
-        : '';
+        : "";
     const sourceFileName = String(readResult.file_name).trim();
     const sourceStore = await readSnapshotStore(sourceFileName);
     if (!sourceStore) {
@@ -594,12 +625,12 @@ export async function pinMessageSnapshotToCurrentVersion(
       ? sourceFileName
       : buildFileName(getCharName(), getChatId(), messageId);
     const writableStore: SnapshotVersionStore = {
-      version: 'ew-snapshot/v2',
+      version: "ew-snapshot/v2",
       updated_at: Date.now(),
       versions: { ...sourceStore.versions },
       owner: buildSnapshotStoreOwner(getCharName(), getChatId()),
     };
-    if (readResult.resolution !== 'exact') {
+    if (readResult.resolution !== "exact") {
       writableStore.versions[currentVersionKey] = {
         ...readResult.snapshot,
         swipe_id: versionInfo.swipe_id,
@@ -608,7 +639,7 @@ export async function pinMessageSnapshotToCurrentVersion(
       mutated = true;
     }
 
-    if (!isOwnedByCurrentChat || readResult.resolution !== 'exact') {
+    if (!isOwnedByCurrentChat || readResult.resolution !== "exact") {
       await writeSnapshotStore(writableFileName, writableStore);
       mutated = true;
     }
@@ -619,7 +650,7 @@ export async function pinMessageSnapshotToCurrentVersion(
     }
 
     syncVisibleVersionMetadata();
-  } else if (readResult.source === 'inline') {
+  } else if (readResult.source === "inline") {
     const inlineVersions = readInlineSnapshotVersions(msg.data ?? {});
     if (!inlineVersions[currentVersionKey]) {
       inlineVersions[currentVersionKey] = {
@@ -640,7 +671,7 @@ export async function pinMessageSnapshotToCurrentVersion(
 
   observedMessageVersionKeys.set(messageId, currentVersionKey);
   await setChatMessages([{ message_id: messageId, data: nextData }], {
-    refresh: 'none',
+    refresh: "none",
   });
   return true;
 }
@@ -664,7 +695,7 @@ export async function rebindFloorSnapshotToMessage(
       migrated: false,
       source_message_id: sourceMessageId,
       target_message_id: targetMessageId,
-      reason: 'same_message',
+      reason: "same_message",
     };
   }
 
@@ -675,13 +706,16 @@ export async function rebindFloorSnapshotToMessage(
       migrated: false,
       source_message_id: sourceMessageId,
       target_message_id: targetMessageId,
-      reason: 'message_not_found',
+      reason: "message_not_found",
     };
   }
 
   const sourceVersionInfo = getMessageVersionInfo(sourceMsg);
   const targetVersionInfo = getMessageVersionInfo(targetMsg);
-  const sourceReadResult = await readSnapshotForMessageDetailed(sourceMsg, 'strict');
+  const sourceReadResult = await readSnapshotForMessageDetailed(
+    sourceMsg,
+    "strict",
+  );
   if (!sourceReadResult.snapshot) {
     return {
       migrated: false,
@@ -689,22 +723,22 @@ export async function rebindFloorSnapshotToMessage(
       target_message_id: targetMessageId,
       source_version_key: sourceVersionInfo.version_key,
       target_version_key: targetVersionInfo.version_key,
-      reason: 'source_snapshot_missing',
+      reason: "source_snapshot_missing",
     };
   }
 
   const sourceSnapshot = sourceReadResult.snapshot;
   const dynSnapshots = sourceSnapshot.dyn_entries
-    .filter(snapshot => snapshot.name && typeof snapshot.content === 'string')
-    .map(entry => normalizeDynSnapshot(entry as DynSnapshot));
+    .filter((snapshot) => snapshot.name && typeof snapshot.content === "string")
+    .map((entry) => normalizeDynSnapshot(entry as DynSnapshot));
   const controllerSnapshots = sourceSnapshot.controllers
     .map(normalizeControllerSnapshot)
-    .filter(entry => entry.content);
+    .filter((entry) => entry.content);
 
   await markFloorEntries(
     settings,
     targetMessageId,
-    dynSnapshots.map(entry => entry.name),
+    dynSnapshots.map((entry) => entry.name),
     controllerSnapshots,
     dynSnapshots,
     targetVersionInfo.swipe_id,
@@ -712,13 +746,13 @@ export async function rebindFloorSnapshotToMessage(
   );
 
   const cleanupSwipeId =
-    typeof sourceSnapshot.swipe_id === 'number'
+    typeof sourceSnapshot.swipe_id === "number"
       ? sourceSnapshot.swipe_id
       : Number(sourceVersionInfo.swipe_id ?? 0);
   const cleanupContentHash =
-    typeof sourceSnapshot.content_hash === 'string'
+    typeof sourceSnapshot.content_hash === "string"
       ? sourceSnapshot.content_hash
-      : String(sourceVersionInfo.content_hash ?? '');
+      : String(sourceVersionInfo.content_hash ?? "");
 
   await markFloorEntries(
     settings,
@@ -749,21 +783,24 @@ export type SnapshotLocalizationResult = {
   warnings: string[];
 };
 
-type FloorWorkflowExecutionVersionedMap = Record<string, Record<string, unknown>>;
+type FloorWorkflowExecutionVersionedMap = Record<
+  string,
+  Record<string, unknown>
+>;
 
 function buildFloorExecutionVersionKey(state: {
   swipe_id?: number;
   content_hash?: string;
 }): string {
   return `sw:${Math.max(0, Math.trunc(Number(state.swipe_id ?? 0) || 0))}|${String(
-    state.content_hash ?? '',
+    state.content_hash ?? "",
   ).trim()}`;
 }
 
 function normalizeFloorWorkflowExecutionMap(
   raw: unknown,
 ): FloorWorkflowExecutionVersionedMap {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return {};
   }
 
@@ -772,11 +809,11 @@ function normalizeFloorWorkflowExecutionMap(
     Array.isArray(obj.attempted_flow_ids) ||
     Array.isArray(obj.failed_flow_ids) ||
     Array.isArray(obj.successful_results) ||
-    typeof obj.request_id === 'string'
+    typeof obj.request_id === "string"
   ) {
     const versionKey = buildFloorExecutionVersionKey({
       swipe_id: Number(obj.swipe_id ?? 0),
-      content_hash: String(obj.content_hash ?? '').trim(),
+      content_hash: String(obj.content_hash ?? "").trim(),
     });
     return {
       [versionKey]: { ...obj },
@@ -785,7 +822,7 @@ function normalizeFloorWorkflowExecutionMap(
 
   const map: FloorWorkflowExecutionVersionedMap = {};
   for (const [key, value] of Object.entries(obj)) {
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
       map[key] = { ...(value as Record<string, unknown>) };
     }
   }
@@ -824,23 +861,23 @@ function resolveExecutionEntryForMessage(msg: any): {
   return null;
 }
 
-async function migrateExecutionBetweenMessages(
+export async function migrateExecutionBetweenMessages(
   sourceMessageId: number,
   targetMessageId: number,
 ): Promise<{ migrated: boolean; reason?: string }> {
   if (sourceMessageId === targetMessageId) {
-    return { migrated: false, reason: 'same_message' };
+    return { migrated: false, reason: "same_message" };
   }
 
   const sourceMsg = getChatMessages(sourceMessageId)[0];
   const targetMsg = getChatMessages(targetMessageId)[0];
   if (!sourceMsg || !targetMsg) {
-    return { migrated: false, reason: 'message_not_found' };
+    return { migrated: false, reason: "message_not_found" };
   }
 
   const sourceResolved = resolveExecutionEntryForMessage(sourceMsg);
   if (!sourceResolved) {
-    return { migrated: false, reason: 'source_execution_missing' };
+    return { migrated: false, reason: "source_execution_missing" };
   }
 
   const sourceMap = { ...sourceResolved.map };
@@ -866,7 +903,7 @@ async function migrateExecutionBetweenMessages(
   }
 
   if (!mutated) {
-    return { migrated: false, reason: 'already_migrated' };
+    return { migrated: false, reason: "already_migrated" };
   }
 
   const sourceNextData: Record<string, unknown> = {
@@ -888,12 +925,12 @@ async function migrateExecutionBetweenMessages(
       { message_id: sourceMessageId, data: sourceNextData },
       { message_id: targetMessageId, data: targetNextData },
     ],
-    { refresh: 'none' },
+    { refresh: "none" },
   );
   return { migrated: true };
 }
 
-async function writeBindingMetaPair(
+export async function writeBindingMetaPair(
   sourceMessageId: number,
   targetMessageId: number,
   requestId: string,
@@ -908,7 +945,7 @@ async function writeBindingMetaPair(
   const sourceNextData: Record<string, unknown> = {
     ...(sourceMsg.data ?? {}),
     [EW_BEFORE_REPLY_BINDING_KEY]: {
-      role: 'source',
+      role: "source",
       paired_message_id: targetMessageId,
       request_id: requestId,
       migrated_at: migratedAt,
@@ -917,7 +954,7 @@ async function writeBindingMetaPair(
   const targetNextData: Record<string, unknown> = {
     ...(targetMsg.data ?? {}),
     [EW_BEFORE_REPLY_BINDING_KEY]: {
-      role: 'assistant_anchor',
+      role: "assistant_anchor",
       paired_message_id: sourceMessageId,
       request_id: requestId,
       migrated_at: migratedAt,
@@ -929,8 +966,110 @@ async function writeBindingMetaPair(
       { message_id: sourceMessageId, data: sourceNextData },
       { message_id: targetMessageId, data: targetNextData },
     ],
-    { refresh: 'none' },
+    { refresh: "none" },
   );
+}
+
+export type BeforeReplyArtifactMigrationResult = {
+  migrated: boolean;
+  snapshot_migrated: boolean;
+  execution_migrated: boolean;
+  source_message_id: number;
+  target_message_id: number;
+  reason?: string;
+};
+
+export async function migrateBeforeReplyArtifactsToAssistant(
+  settings: EwSettings,
+  sourceMessageId: number,
+  targetMessageId: number,
+  requestId: string,
+): Promise<BeforeReplyArtifactMigrationResult> {
+  if (sourceMessageId === targetMessageId) {
+    return {
+      migrated: false,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      source_message_id: sourceMessageId,
+      target_message_id: targetMessageId,
+      reason: "same_message",
+    };
+  }
+
+  const sourceMsg = getChatMessages(sourceMessageId)[0];
+  const targetMsg = getChatMessages(targetMessageId)[0];
+  if (!sourceMsg || !targetMsg) {
+    return {
+      migrated: false,
+      snapshot_migrated: false,
+      execution_migrated: false,
+      source_message_id: sourceMessageId,
+      target_message_id: targetMessageId,
+      reason: "message_not_found",
+    };
+  }
+
+  const sourceSnapshotRead = await readSnapshotForMessageDetailed(
+    sourceMsg,
+    "strict",
+  );
+  const targetSnapshotRead = await readSnapshotForMessageDetailed(
+    targetMsg,
+    "strict",
+  );
+  const sourceExecution = resolveExecutionEntryForMessage(sourceMsg);
+  const targetExecution = resolveExecutionEntryForMessage(targetMsg);
+
+  let snapshotMigrated = false;
+  let executionMigrated = false;
+  let blockedByTargetArtifacts = false;
+
+  if (sourceSnapshotRead.snapshot) {
+    if (targetSnapshotRead.snapshot) {
+      blockedByTargetArtifacts = true;
+    } else {
+      const snapshotMove = await rebindFloorSnapshotToMessage(
+        settings,
+        sourceMessageId,
+        targetMessageId,
+      );
+      snapshotMigrated = snapshotMove.migrated;
+    }
+  }
+
+  if (sourceExecution) {
+    if (targetExecution) {
+      blockedByTargetArtifacts = true;
+    } else {
+      const executionMove = await migrateExecutionBetweenMessages(
+        sourceMessageId,
+        targetMessageId,
+      );
+      executionMigrated = executionMove.migrated;
+    }
+  }
+
+  if (snapshotMigrated || executionMigrated) {
+    await writeBindingMetaPair(sourceMessageId, targetMessageId, requestId);
+    return {
+      migrated: true,
+      snapshot_migrated: snapshotMigrated,
+      execution_migrated: executionMigrated,
+      source_message_id: sourceMessageId,
+      target_message_id: targetMessageId,
+    };
+  }
+
+  return {
+    migrated: false,
+    snapshot_migrated: false,
+    execution_migrated: false,
+    source_message_id: sourceMessageId,
+    target_message_id: targetMessageId,
+    reason: blockedByTargetArtifacts
+      ? "target_artifacts_present"
+      : "no_source_artifacts",
+  };
 }
 
 async function markLegacyUserAnchor(
@@ -945,30 +1084,30 @@ async function markLegacyUserAnchor(
   const nextData: Record<string, unknown> = {
     ...(msg.data ?? {}),
     [EW_BEFORE_REPLY_BINDING_KEY]: {
-      role: 'legacy_user_anchor',
+      role: "legacy_user_anchor",
       reason,
       marked_at: Date.now(),
     },
   };
   await setChatMessages([{ message_id: messageId, data: nextData }], {
-    refresh: 'none',
+    refresh: "none",
   });
 }
 
 function buildLocalizationSignature(messages: any[]): string {
   return messages
-    .map(msg => {
+    .map((msg) => {
       const fileRef =
-        typeof msg?.data?.[EW_SNAPSHOT_FILE_KEY] === 'string'
+        typeof msg?.data?.[EW_SNAPSHOT_FILE_KEY] === "string"
           ? String(msg.data[EW_SNAPSHOT_FILE_KEY])
-          : '';
+          : "";
       const bindingRole =
-        typeof msg?.data?.[EW_BEFORE_REPLY_BINDING_KEY]?.role === 'string'
+        typeof msg?.data?.[EW_BEFORE_REPLY_BINDING_KEY]?.role === "string"
           ? String(msg.data[EW_BEFORE_REPLY_BINDING_KEY].role)
-          : '';
-      return `${msg.message_id}:${msg.role ?? ''}:${fileRef}:${bindingRole}`;
+          : "";
+      return `${msg.message_id}:${msg.role ?? ""}:${fileRef}:${bindingRole}`;
     })
-    .join('|');
+    .join("|");
 }
 
 export async function localizeSnapshotsForCurrentChat(
@@ -994,7 +1133,7 @@ export async function localizeSnapshotsForCurrentChat(
 
     const lastId = getLastMessageId();
     if (lastId < 0) {
-      localizationSignatureByChatKey.set(ownershipKey, '');
+      localizationSignatureByChatKey.set(ownershipKey, "");
       return result;
     }
 
@@ -1002,7 +1141,7 @@ export async function localizeSnapshotsForCurrentChat(
     const readStoreCached = async (
       fileName: string,
     ): Promise<SnapshotVersionStore | null> => {
-      const key = String(fileName ?? '').trim();
+      const key = String(fileName ?? "").trim();
       if (!key) {
         return null;
       }
@@ -1024,9 +1163,9 @@ export async function localizeSnapshotsForCurrentChat(
     }> = [];
     for (const msg of allMessages) {
       const snapshotFile =
-        typeof msg?.data?.[EW_SNAPSHOT_FILE_KEY] === 'string'
+        typeof msg?.data?.[EW_SNAPSHOT_FILE_KEY] === "string"
           ? String(msg.data[EW_SNAPSHOT_FILE_KEY])
-          : '';
+          : "";
       const normalizedFile = snapshotFile.trim();
       if (!normalizedFile) {
         result.skipped += 1;
@@ -1047,9 +1186,13 @@ export async function localizeSnapshotsForCurrentChat(
         continue;
       }
 
-      const localizedFileName = buildFileName(charName, chatId, Number(msg.message_id));
+      const localizedFileName = buildFileName(
+        charName,
+        chatId,
+        Number(msg.message_id),
+      );
       const localizedStore: SnapshotVersionStore = {
-        version: 'ew-snapshot/v2',
+        version: "ew-snapshot/v2",
         updated_at: Date.now(),
         versions: { ...store.versions },
         owner: buildSnapshotStoreOwner(charName, chatId),
@@ -1066,7 +1209,7 @@ export async function localizeSnapshotsForCurrentChat(
     }
 
     if (localizedUpdates.length > 0) {
-      await setChatMessages(localizedUpdates, { refresh: 'none' });
+      await setChatMessages(localizedUpdates, { refresh: "none" });
       result.mutated_messages += localizedUpdates.length;
       allMessages = getChatMessages(`0-${lastId}`);
     }
@@ -1080,18 +1223,22 @@ export async function localizeSnapshotsForCurrentChat(
       }
       const message = getChatMessages(messageId)[0];
       if (!message) {
-        const missing = buildSnapshotReadResult(null, 'missing', null);
+        const missing = buildSnapshotReadResult(null, "missing", null);
         snapshotReadCache.set(messageId, missing);
         return missing;
       }
-      const readResult = await readSnapshotForMessageDetailed(message, 'strict');
+      const readResult = await readSnapshotForMessageDetailed(
+        message,
+        "strict",
+      );
       snapshotReadCache.set(messageId, readResult);
       return readResult;
     };
 
     for (let i = 0; i < allMessages.length; i++) {
-      const source = getChatMessages(allMessages[i].message_id)[0] ?? allMessages[i];
-      if (source?.role !== 'user') {
+      const source =
+        getChatMessages(allMessages[i].message_id)[0] ?? allMessages[i];
+      if (source?.role !== "user") {
         continue;
       }
 
@@ -1105,10 +1252,10 @@ export async function localizeSnapshotsForCurrentChat(
       }
 
       const next = allMessages[i + 1];
-      if (!next || next.role !== 'assistant') {
+      if (!next || next.role !== "assistant") {
         await markLegacyUserAnchor(
           source.message_id,
-          'missing_adjacent_assistant',
+          "missing_adjacent_assistant",
         );
         result.skipped += 1;
         continue;
@@ -1124,31 +1271,14 @@ export async function localizeSnapshotsForCurrentChat(
         continue;
       }
 
-      let snapshotMigrated = false;
-      if (sourceSnapshotRead.snapshot) {
-        const snapshotMove = await rebindFloorSnapshotToMessage(
-          settings,
-          source.message_id,
-          target.message_id,
-        );
-        snapshotMigrated = snapshotMove.migrated;
-      }
+      const migrated = await migrateBeforeReplyArtifactsToAssistant(
+        settings,
+        source.message_id,
+        target.message_id,
+        "auto-localize",
+      );
 
-      let executionMigrated = false;
-      if (sourceExecution) {
-        const executionMove = await migrateExecutionBetweenMessages(
-          source.message_id,
-          target.message_id,
-        );
-        executionMigrated = executionMove.migrated;
-      }
-
-      if (snapshotMigrated || executionMigrated) {
-        await writeBindingMetaPair(
-          source.message_id,
-          target.message_id,
-          'auto-localize',
-        );
+      if (migrated.migrated) {
         snapshotReadCache.delete(source.message_id);
         snapshotReadCache.delete(target.message_id);
         result.uplifted += 1;
@@ -1156,7 +1286,7 @@ export async function localizeSnapshotsForCurrentChat(
       } else {
         await markLegacyUserAnchor(
           source.message_id,
-          'adjacent_assistant_uplift_failed',
+          "adjacent_assistant_uplift_failed",
         );
         result.skipped += 1;
       }
@@ -1213,7 +1343,7 @@ export async function markFloorEntries(
   const msg = messages[0];
   const previousSnapshotFile = _.get(msg.data, EW_SNAPSHOT_FILE_KEY);
   const previousSnapshotFileName =
-    typeof previousSnapshotFile === 'string' ? previousSnapshotFile.trim() : '';
+    typeof previousSnapshotFile === "string" ? previousSnapshotFile.trim() : "";
   const previousSnapshotStore = previousSnapshotFileName
     ? await readSnapshotStore(previousSnapshotFileName)
     : null;
@@ -1225,16 +1355,16 @@ export async function markFloorEntries(
     : false;
   const versionKey = buildMessageVersionKey(
     Number(swipeId ?? 0),
-    String(contentHash ?? '').trim(),
+    String(contentHash ?? "").trim(),
   );
   const normalizedEntryNames = _.uniq(
-    entryNames.filter(name => typeof name === 'string' && name.trim()),
+    entryNames.filter((name) => typeof name === "string" && name.trim()),
   );
   const normalizedDynSnapshots = (dynSnapshots ?? [])
-    .filter(snap => snap.name && typeof snap.content === 'string')
+    .filter((snap) => snap.name && typeof snap.content === "string")
     .map(normalizeDynSnapshot);
   const normalizedControllerSnapshots = (controllerSnapshots ?? [])
-    .map(snapshot =>
+    .map((snapshot) =>
       normalizeControllerSnapshot({
         entry_name: snapshot.entry_name,
         content: snapshot.content,
@@ -1242,11 +1372,11 @@ export async function markFloorEntries(
         flow_name: snapshot.flow_name,
       }),
     )
-    .filter(snapshot => snapshot.content);
+    .filter((snapshot) => snapshot.content);
   const hasSnapshotPayload = Boolean(
     normalizedControllerSnapshots.length > 0 ||
-      normalizedDynSnapshots.length > 0 ||
-      normalizedEntryNames.length > 0,
+    normalizedDynSnapshots.length > 0 ||
+    normalizedEntryNames.length > 0,
   );
 
   const nextData: Record<string, unknown> = {
@@ -1286,7 +1416,7 @@ export async function markFloorEntries(
 
     observedMessageVersionKeys.set(messageId, versionKey);
     await setChatMessages([{ message_id: messageId, data: nextData }], {
-      refresh: 'none',
+      refresh: "none",
     });
     return;
   }
@@ -1295,7 +1425,7 @@ export async function markFloorEntries(
     nextData[EW_FLOOR_DATA_KEY] = normalizedEntryNames;
   }
 
-  if (settings.snapshot_storage === 'file') {
+  if (settings.snapshot_storage === "file") {
     const snapshotData: SnapshotData = {
       controllers: normalizedControllerSnapshots,
       dyn_entries: normalizedDynSnapshots,
@@ -1316,7 +1446,7 @@ export async function markFloorEntries(
       }
     } catch (e) {
       console.warn(
-        '[Evolution World] File snapshot write failed, falling back to message data:',
+        "[Evolution World] File snapshot write failed, falling back to message data:",
         e,
       );
       const inlineVersions = readInlineSnapshotVersions(msg.data ?? {});
@@ -1352,19 +1482,19 @@ export async function markFloorEntries(
 
   observedMessageVersionKeys.set(messageId, versionKey);
   await setChatMessages([{ message_id: messageId, data: nextData }], {
-    refresh: 'none',
+    refresh: "none",
   });
 }
 
 function hasAnySnapshotReferences(messages: any[]): boolean {
-  return messages.some(msg => {
+  return messages.some((msg) => {
     const data = (msg?.data ?? {}) as Record<string, unknown>;
     return Boolean(
       data[EW_SNAPSHOT_FILE_KEY] ||
-        data[EW_INLINE_SNAPSHOT_VERSIONS_KEY] ||
-        data[EW_CONTROLLER_DATA_KEY] ||
-        data[EW_CONTROLLERS_DATA_KEY] ||
-        data[EW_DYN_SNAPSHOTS_KEY],
+      data[EW_INLINE_SNAPSHOT_VERSIONS_KEY] ||
+      data[EW_CONTROLLER_DATA_KEY] ||
+      data[EW_CONTROLLERS_DATA_KEY] ||
+      data[EW_DYN_SNAPSHOTS_KEY],
     );
   });
 }
@@ -1375,7 +1505,9 @@ export function getFloorEntryNames(messageId: number): string[] {
     return [];
   }
   const names = _.get(messages[0].data, EW_FLOOR_DATA_KEY);
-  return Array.isArray(names) ? names.filter((name): name is string => typeof name === 'string') : [];
+  return Array.isArray(names)
+    ? names.filter((name): name is string => typeof name === "string")
+    : [];
 }
 
 export async function collectLatestSnapshots(): Promise<{
@@ -1398,14 +1530,17 @@ export async function collectLatestSnapshots(): Promise<{
 
     const dynMap = new Map<string, DynSnapshot>();
     for (const snap of snapshot.dyn_entries) {
-      if ((snap as any).name && typeof (snap as any).content === 'string') {
-        dynMap.set(String((snap as any).name), normalizeDynSnapshot(snap as DynSnapshot));
+      if ((snap as any).name && typeof (snap as any).content === "string") {
+        dynMap.set(
+          String((snap as any).name),
+          normalizeDynSnapshot(snap as DynSnapshot),
+        );
       }
     }
     return {
       controllers: snapshot.controllers
         .map(normalizeControllerSnapshot)
-        .filter(e => e.content),
+        .filter((e) => e.content),
       dyn: dynMap,
     };
   }
@@ -1418,7 +1553,9 @@ export async function purgeAndRestoreForChat(
 ): Promise<void> {
   const target = await resolveTargetWorldbook(settings);
   if (!target) {
-    console.info('[Evolution World] purgeAndRestore: no worldbook available, skipping');
+    console.info(
+      "[Evolution World] purgeAndRestore: no worldbook available, skipping",
+    );
     return;
   }
 
@@ -1434,27 +1571,27 @@ export async function purgeAndRestoreForChat(
     hasSnapshotRefs
   ) {
     console.info(
-      '[Evolution World] purgeAndRestore: no valid snapshots found for current visible versions, keeping current worldbook state',
+      "[Evolution World] purgeAndRestore: no valid snapshots found for current visible versions, keeping current worldbook state",
     );
     refreshObservedMessageVersions();
     return;
   }
 
   const nextEntries = klona(target.entries).filter(
-    entry => !entry.name.startsWith(settings.dynamic_entry_prefix),
+    (entry) => !entry.name.startsWith(settings.dynamic_entry_prefix),
   );
 
-  const ctrlEntries = nextEntries.filter(e =>
+  const ctrlEntries = nextEntries.filter((e) =>
     e.name.startsWith(settings.controller_entry_prefix),
   );
   for (const entry of ctrlEntries) {
-    entry.content = '';
+    entry.content = "";
     entry.enabled = false;
   }
 
   for (const snap of dynSnapshots.values()) {
     const normalizedSnap = normalizeDynSnapshot(snap);
-    const existing = nextEntries.find(e => e.name === snap.name);
+    const existing = nextEntries.find((e) => e.name === snap.name);
     if (existing) {
       existing.content = normalizedSnap.content;
       existing.enabled = normalizedSnap.enabled;
@@ -1475,7 +1612,7 @@ export async function purgeAndRestoreForChat(
       settings.controller_entry_prefix,
       controllerSnapshot,
     );
-    const existing = nextEntries.find(e => e.name === entryName);
+    const existing = nextEntries.find((e) => e.name === entryName);
     if (existing) {
       existing.content = controllerSnapshot.content;
       existing.enabled = true;
@@ -1493,10 +1630,10 @@ export async function purgeAndRestoreForChat(
   }
 
   await replaceWorldbook(target.worldbook_name, nextEntries, {
-    render: 'debounced',
+    render: "debounced",
   });
 
-  if (settings.snapshot_storage === 'file') {
+  if (settings.snapshot_storage === "file") {
     try {
       if (lastId >= 0) {
         const keepFiles = new Set<string>();
@@ -1505,7 +1642,7 @@ export async function purgeAndRestoreForChat(
           allMsgIds.push(msg.message_id);
           const sources = await loadSnapshotVersionSources(msg);
           for (const source of sources) {
-            if (source.source === 'file' && source.fileName) {
+            if (source.source === "file" && source.fileName) {
               keepFiles.add(source.fileName);
             }
           }
@@ -1523,7 +1660,7 @@ export async function purgeAndRestoreForChat(
         }
       }
     } catch (e) {
-      console.warn('[Evolution World] Snapshot file cleanup failed:', e);
+      console.warn("[Evolution World] Snapshot file cleanup failed:", e);
     }
   }
 
@@ -1536,7 +1673,7 @@ export async function purgeAndRestoreForChat(
 }
 
 export async function migrateSnapshots(
-  direction: 'to_file' | 'to_message_data',
+  direction: "to_file" | "to_message_data",
 ): Promise<{ migrated: number }> {
   const lastId = getLastMessageId();
   if (lastId < 0) {
@@ -1548,7 +1685,7 @@ export async function migrateSnapshots(
   const allMessages = getChatMessages(`0-${lastId}`);
   let migrated = 0;
 
-  if (direction === 'to_file') {
+  if (direction === "to_file") {
     for (const msg of allMessages) {
       const inlineVersions = readInlineSnapshotVersions(msg.data ?? {});
       if (Object.keys(inlineVersions).length === 0) {
@@ -1575,14 +1712,15 @@ export async function migrateSnapshots(
       delete nextData[EW_DYN_SNAPSHOTS_KEY];
 
       await setChatMessages([{ message_id: msg.message_id, data: nextData }], {
-        refresh: 'none',
+        refresh: "none",
       });
       migrated++;
     }
   } else {
     for (const msg of allMessages) {
       const rawSnapshotFile = _.get(msg.data, EW_SNAPSHOT_FILE_KEY);
-      const snapshotFile = typeof rawSnapshotFile === 'string' ? rawSnapshotFile : undefined;
+      const snapshotFile =
+        typeof rawSnapshotFile === "string" ? rawSnapshotFile : undefined;
       if (!snapshotFile) {
         continue;
       }
@@ -1600,7 +1738,7 @@ export async function migrateSnapshots(
       }
 
       await setChatMessages([{ message_id: msg.message_id, data: nextData }], {
-        refresh: 'none',
+        refresh: "none",
       });
       if (isSnapshotStoreOwnedByCurrentChat(snapshotFile, store)) {
         await deleteSnapshot(snapshotFile);
@@ -1620,11 +1758,11 @@ export type FloorSnapshot = {
   snapshot: SnapshotData | null;
   resolution: FloorSnapshotReadResolution;
   available_version_count: number;
-  source: 'file' | 'inline' | 'none';
+  source: "file" | "inline" | "none";
   matched_version_key?: string;
   file_name?: string;
   execution?: {
-    execution_status: 'executed' | 'skipped';
+    execution_status: "executed" | "skipped";
     skip_reason?: string;
     attempted_flow_ids: string[];
     failed_flow_ids: string[];
@@ -1637,7 +1775,7 @@ export type SnapshotDiff = {
   modified: string[];
   deleted: string[];
   toggled: string[];
-  controllersChanged: Record<string, 'created' | 'modified' | 'deleted'>;
+  controllersChanged: Record<string, "created" | "modified" | "deleted">;
 };
 
 export async function collectAllFloorSnapshots(): Promise<FloorSnapshot[]> {
@@ -1650,7 +1788,7 @@ export async function collectAllFloorSnapshots(): Promise<FloorSnapshot[]> {
   const result: FloorSnapshot[] = [];
 
   for (const msg of allMessages) {
-    const readResult = await readSnapshotForMessageDetailed(msg, 'history');
+    const readResult = await readSnapshotForMessageDetailed(msg, "history");
     const executionState = resolveExecutionEntryForMessage(msg)?.state;
     result.push({
       messageId: msg.message_id,
@@ -1663,16 +1801,18 @@ export async function collectAllFloorSnapshots(): Promise<FloorSnapshot[]> {
       execution: executionState
         ? {
             execution_status:
-              executionState.execution_status === 'skipped' ? 'skipped' : 'executed',
+              executionState.execution_status === "skipped"
+                ? "skipped"
+                : "executed",
             skip_reason:
-              typeof executionState.skip_reason === 'string'
+              typeof executionState.skip_reason === "string"
                 ? executionState.skip_reason
                 : undefined,
             attempted_flow_ids: Array.isArray(executionState.attempted_flow_ids)
-              ? executionState.attempted_flow_ids.map(value => String(value))
+              ? executionState.attempted_flow_ids.map((value) => String(value))
               : [],
             failed_flow_ids: Array.isArray(executionState.failed_flow_ids)
-              ? executionState.failed_flow_ids.map(value => String(value))
+              ? executionState.failed_flow_ids.map((value) => String(value))
               : [],
             workflow_failed: Boolean(executionState.workflow_failed),
           }
@@ -1681,6 +1821,236 @@ export async function collectAllFloorSnapshots(): Promise<FloorSnapshot[]> {
   }
 
   return result;
+}
+
+export async function readFloorSnapshotByMessageId(
+  messageId: number,
+  mode: "strict" | "history" = "history",
+): Promise<FloorSnapshot | null> {
+  const message = getChatMessages(messageId)[0];
+  if (!message) {
+    return null;
+  }
+
+  const readResult = await readSnapshotForMessageDetailed(message, mode);
+  const executionState = resolveExecutionEntryForMessage(message)?.state;
+  return {
+    messageId,
+    snapshot: readResult.snapshot,
+    resolution: readResult.resolution,
+    available_version_count: readResult.available_version_count,
+    source: readResult.source,
+    matched_version_key: readResult.matched_version_key,
+    file_name: readResult.file_name,
+    execution: executionState
+      ? {
+          execution_status:
+            executionState.execution_status === "skipped"
+              ? "skipped"
+              : "executed",
+          skip_reason:
+            typeof executionState.skip_reason === "string"
+              ? executionState.skip_reason
+              : undefined,
+          attempted_flow_ids: Array.isArray(executionState.attempted_flow_ids)
+            ? executionState.attempted_flow_ids.map((value) => String(value))
+            : [],
+          failed_flow_ids: Array.isArray(executionState.failed_flow_ids)
+            ? executionState.failed_flow_ids.map((value) => String(value))
+            : [],
+          workflow_failed: Boolean(executionState.workflow_failed),
+        }
+      : undefined,
+  };
+}
+
+export type SnapshotDiffApplyResult = {
+  applied: number;
+  conflicts: number;
+  conflict_names: string[];
+};
+
+function buildDynSnapshotFromEntry(entry: {
+  name: string;
+  content: string;
+  enabled: boolean;
+}): DynSnapshot {
+  return {
+    name: String(entry.name ?? "").trim(),
+    content: String(entry.content ?? ""),
+    enabled: Boolean(entry.enabled),
+  };
+}
+
+export async function applySnapshotDiffToCurrentWorldbook(
+  settings: EwSettings,
+  previousSnapshot: SnapshotData | null,
+  nextSnapshot: SnapshotData | null,
+): Promise<SnapshotDiffApplyResult> {
+  if (!previousSnapshot && !nextSnapshot) {
+    return { applied: 0, conflicts: 0, conflict_names: [] };
+  }
+
+  const target = await resolveTargetWorldbook(settings);
+  if (!target) {
+    return { applied: 0, conflicts: 0, conflict_names: [] };
+  }
+
+  const nextEntries = klona(target.entries);
+  const diff = diffSnapshots(previousSnapshot, nextSnapshot);
+  let applied = 0;
+  let conflicts = 0;
+  const conflictNames = new Set<string>();
+
+  const previousDynByName = new Map(
+    (previousSnapshot?.dyn_entries ?? []).map((entry) => [entry.name, entry]),
+  );
+  const nextDynByName = new Map(
+    (nextSnapshot?.dyn_entries ?? []).map((entry) => [entry.name, entry]),
+  );
+
+  const previousCtrlByKey = new Map(
+    (previousSnapshot?.controllers ?? []).map((snapshot) => [
+      controllerSnapshotKey(snapshot),
+      normalizeControllerSnapshot(snapshot),
+    ]),
+  );
+  const nextCtrlByKey = new Map(
+    (nextSnapshot?.controllers ?? []).map((snapshot) => [
+      controllerSnapshotKey(snapshot),
+      normalizeControllerSnapshot(snapshot),
+    ]),
+  );
+
+  const dynamicUpserts = _.uniq([
+    ...diff.created,
+    ...diff.modified,
+    ...diff.toggled,
+  ]).filter((name) =>
+    String(name ?? "").startsWith(settings.dynamic_entry_prefix),
+  );
+
+  for (const entryName of dynamicUpserts) {
+    const desired = nextDynByName.get(entryName);
+    if (!desired) {
+      continue;
+    }
+
+    const existing = nextEntries.find((entry) => entry.name === entryName);
+    const previous = previousDynByName.get(entryName);
+    const normalizedDesired = normalizeDynSnapshot(desired);
+    if (existing) {
+      const hasConflict = Boolean(
+        previous &&
+        JSON.stringify(normalizeDynSnapshot(previous)) !==
+          JSON.stringify(normalizedDesired) &&
+        JSON.stringify(buildDynSnapshotFromEntry(existing)) !==
+          JSON.stringify(normalizedDesired),
+      );
+      if (hasConflict) {
+        conflicts += 1;
+        conflictNames.add(entryName);
+        continue;
+      }
+      existing.content = normalizedDesired.content;
+      existing.enabled = normalizedDesired.enabled;
+      applied += 1;
+      continue;
+    }
+
+    nextEntries.push(
+      ensureDefaultEntry(
+        normalizedDesired.name,
+        normalizedDesired.content,
+        normalizedDesired.enabled,
+        nextEntries,
+      ),
+    );
+    applied += 1;
+  }
+
+  const dynamicDeletes = diff.deleted.filter((name) =>
+    String(name ?? "").startsWith(settings.dynamic_entry_prefix),
+  );
+  for (const entryName of dynamicDeletes) {
+    const existing = nextEntries.find((entry) => entry.name === entryName);
+    if (!existing) {
+      continue;
+    }
+
+    const previous = previousDynByName.get(entryName);
+    if (
+      previous &&
+      JSON.stringify(buildDynSnapshotFromEntry(existing)) !==
+        JSON.stringify(normalizeDynSnapshot(previous))
+    ) {
+      conflicts += 1;
+      conflictNames.add(entryName);
+      continue;
+    }
+
+    _.remove(nextEntries, (entry) => entry.name === entryName);
+    applied += 1;
+  }
+
+  for (const [key, change] of Object.entries(diff.controllersChanged)) {
+    const desired = nextCtrlByKey.get(key);
+    const previous = previousCtrlByKey.get(key);
+    const entryName = desired?.entry_name || previous?.entry_name || key;
+    if (!entryName) {
+      continue;
+    }
+
+    const existing = nextEntries.find((entry) => entry.name === entryName);
+    if (change === "deleted") {
+      if (!existing) {
+        continue;
+      }
+      if (previous && existing.content !== previous.content) {
+        conflicts += 1;
+        conflictNames.add(entryName);
+        continue;
+      }
+      _.remove(nextEntries, (entry) => entry.name === entryName);
+      applied += 1;
+      continue;
+    }
+
+    if (!desired) {
+      continue;
+    }
+
+    if (existing) {
+      const hasConflict = Boolean(
+        previous &&
+        previous.content !== desired.content &&
+        existing.content !== desired.content,
+      );
+      if (hasConflict) {
+        conflicts += 1;
+        conflictNames.add(entryName);
+        continue;
+      }
+      existing.content = desired.content;
+      existing.enabled = true;
+      applied += 1;
+      continue;
+    }
+
+    nextEntries.push(
+      ensureDefaultEntry(entryName, desired.content, true, nextEntries),
+    );
+    applied += 1;
+  }
+
+  await replaceWorldbook(target.worldbook_name, nextEntries, {
+    render: "debounced",
+  });
+  return {
+    applied,
+    conflicts,
+    conflict_names: [...conflictNames],
+  };
 }
 
 export function diffSnapshots(
@@ -1701,8 +2071,8 @@ export function diffSnapshots(
   const prevMap = new Map<string, { content: string; enabled: boolean }>();
   if (prev) {
     for (const e of prev.dyn_entries) {
-      prevMap.set(String((e as any).name ?? ''), {
-        content: String((e as any).content ?? ''),
+      prevMap.set(String((e as any).name ?? ""), {
+        content: String((e as any).content ?? ""),
         enabled: Boolean((e as any).enabled),
       });
     }
@@ -1710,8 +2080,8 @@ export function diffSnapshots(
 
   const currMap = new Map<string, { content: string; enabled: boolean }>();
   for (const e of curr.dyn_entries) {
-    currMap.set(String((e as any).name ?? ''), {
-      content: String((e as any).content ?? ''),
+    currMap.set(String((e as any).name ?? ""), {
+      content: String((e as any).content ?? ""),
       enabled: Boolean((e as any).enabled),
     });
   }
@@ -1734,13 +2104,16 @@ export function diffSnapshots(
   }
 
   const prevControllers = new Map(
-    (prev?.controllers ?? []).map(snapshot => [
+    (prev?.controllers ?? []).map((snapshot) => [
       controllerSnapshotKey(snapshot),
       snapshot,
     ]),
   );
   const currControllers = new Map(
-    curr.controllers.map(snapshot => [controllerSnapshotKey(snapshot), snapshot]),
+    curr.controllers.map((snapshot) => [
+      controllerSnapshotKey(snapshot),
+      snapshot,
+    ]),
   );
   const allCtrlKeys = new Set([
     ...prevControllers.keys(),
@@ -1750,14 +2123,14 @@ export function diffSnapshots(
     const prevVal = prevControllers.get(key);
     const currVal = currControllers.get(key);
     if (!prevVal && currVal) {
-      diff.controllersChanged[key] = 'created';
+      diff.controllersChanged[key] = "created";
     } else if (prevVal && !currVal) {
-      diff.controllersChanged[key] = 'deleted';
+      diff.controllersChanged[key] = "deleted";
     } else if (
       prevVal?.content !== currVal?.content ||
       prevVal?.entry_name !== currVal?.entry_name
     ) {
-      diff.controllersChanged[key] = 'modified';
+      diff.controllersChanged[key] = "modified";
     }
   }
 
@@ -1770,7 +2143,7 @@ export async function rollbackToFloor(
 ): Promise<void> {
   await restoreWorldbookFromSnapshots(
     settings,
-    floor => floor.messageId <= targetMessageId,
+    (floor) => floor.messageId <= targetMessageId,
   );
   console.info(`[Evolution World] Rolled back to floor #${targetMessageId}`);
 }
@@ -1779,7 +2152,10 @@ export async function rollbackBeforeFloor(
   settings: EwSettings,
   messageId: number,
 ): Promise<void> {
-  await restoreWorldbookFromSnapshots(settings, floor => floor.messageId < messageId);
+  await restoreWorldbookFromSnapshots(
+    settings,
+    (floor) => floor.messageId < messageId,
+  );
   console.info(
     `[Evolution World] Rolled back to state before floor #${messageId}`,
   );
@@ -1801,12 +2177,17 @@ async function restoreWorldbookFromSnapshots(
       continue;
     }
 
-    for (const snapshot of floor.snapshot.controllers.map(normalizeControllerSnapshot)) {
+    for (const snapshot of floor.snapshot.controllers.map(
+      normalizeControllerSnapshot,
+    )) {
       controllers.set(controllerSnapshotKey(snapshot), snapshot);
     }
     for (const snap of floor.snapshot.dyn_entries) {
-      if ((snap as any).name && typeof (snap as any).content === 'string') {
-        dynMerged.set(String((snap as any).name), normalizeDynSnapshot(snap as DynSnapshot));
+      if ((snap as any).name && typeof (snap as any).content === "string") {
+        dynMerged.set(
+          String((snap as any).name),
+          normalizeDynSnapshot(snap as DynSnapshot),
+        );
       }
     }
   }
@@ -1816,20 +2197,20 @@ async function restoreWorldbookFromSnapshots(
     return;
   }
   const nextEntries = klona(target.entries).filter(
-    entry => !entry.name.startsWith(settings.dynamic_entry_prefix),
+    (entry) => !entry.name.startsWith(settings.dynamic_entry_prefix),
   );
 
-  const ctrlEntries = nextEntries.filter(e =>
+  const ctrlEntries = nextEntries.filter((e) =>
     e.name.startsWith(settings.controller_entry_prefix),
   );
   for (const entry of ctrlEntries) {
-    entry.content = '';
+    entry.content = "";
     entry.enabled = false;
   }
 
   for (const snap of dynMerged.values()) {
     const normalizedSnap = normalizeDynSnapshot(snap);
-    const existing = nextEntries.find(e => e.name === snap.name);
+    const existing = nextEntries.find((e) => e.name === snap.name);
     if (existing) {
       existing.content = normalizedSnap.content;
       existing.enabled = normalizedSnap.enabled;
@@ -1850,7 +2231,7 @@ async function restoreWorldbookFromSnapshots(
       settings.controller_entry_prefix,
       controllerSnapshot,
     );
-    const existing = nextEntries.find(e => e.name === entryName);
+    const existing = nextEntries.find((e) => e.name === entryName);
     if (existing) {
       existing.content = controllerSnapshot.content;
       existing.enabled = true;
@@ -1868,7 +2249,7 @@ async function restoreWorldbookFromSnapshots(
   }
 
   await replaceWorldbook(target.worldbook_name, nextEntries, {
-    render: 'debounced',
+    render: "debounced",
   });
 }
 
@@ -1876,7 +2257,7 @@ async function onChatChanged(settings: EwSettings): Promise<void> {
   try {
     await purgeAndRestoreForChat(settings);
   } catch (error) {
-    console.warn('[Evolution World] chat change handling failed:', error);
+    console.warn("[Evolution World] chat change handling failed:", error);
   }
 }
 

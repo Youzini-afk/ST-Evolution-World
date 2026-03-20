@@ -60,6 +60,11 @@ export type RunWorkflowOutput = {
   results: DispatchFlowResult[];
   failure: WorkflowFailureDiagnostic | null;
   skipped?: boolean;
+  writeback?: {
+    applied: number;
+    conflicts: number;
+    conflict_names: string[];
+  };
 };
 
 function extractHttpStatus(reason: string): number | null {
@@ -539,6 +544,30 @@ async function waitWithCancellation(
   throwIfWorkflowCancelled(input);
 }
 
+function extractStructuredWriteback(
+  diagnostics: Record<string, any> | undefined,
+): RunWorkflowOutput["writeback"] {
+  const rawApplied = Number(diagnostics?.writeback_applied ?? 0);
+  const rawConflicts = Number(diagnostics?.writeback_conflicts ?? 0);
+  const rawConflictNames = diagnostics?.writeback_conflict_names;
+
+  const applied = Number.isFinite(rawApplied) ? rawApplied : 0;
+  const conflicts = Number.isFinite(rawConflicts) ? rawConflicts : 0;
+  const conflict_names = Array.isArray(rawConflictNames)
+    ? rawConflictNames.map((value) => String(value ?? "")).filter(Boolean)
+    : [];
+
+  if (applied <= 0 && conflicts <= 0 && conflict_names.length === 0) {
+    return undefined;
+  }
+
+  return {
+    applied,
+    conflicts,
+    conflict_names,
+  };
+}
+
 // ── Graph Execution Path (Module Workbench) ──
 
 async function runGraphWorkflow(
@@ -834,6 +863,7 @@ export async function runWorkflow(
       attempts,
       results,
       failure: null,
+      writeback: extractStructuredWriteback(mergedPlan.diagnostics),
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);

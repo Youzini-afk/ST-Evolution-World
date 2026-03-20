@@ -5,13 +5,12 @@ import {
 } from "./compat/character";
 import { getWorldbook, replaceWorldbook } from "./compat/worldbook";
 import { validateEjsTemplate } from "./controller-renderer";
-import { rerollCurrentAfterReplyWorkflow } from "./events";
-import { localizeSnapshotsForCurrentChat } from "./floor-binding";
 import {
-  getMessageVersionInfo,
-  resolveControllerSnapshotEntryName,
-} from "./helpers";
-import { runWorkflow } from "./pipeline";
+  rederiveWorkflowAtFloor as rederiveWorkflowAtFloorRuntime,
+  rerollCurrentAfterReplyWorkflow,
+} from "./events";
+import { localizeSnapshotsForCurrentChat } from "./floor-binding";
+import { resolveControllerSnapshotEntryName } from "./helpers";
 import {
   getLastIo,
   getLastRun,
@@ -19,7 +18,7 @@ import {
   patchSettings,
   readControllerBackup,
 } from "./settings";
-import { ContextCursor, EwSettingsSchema } from "./types";
+import { EwSettingsSchema } from "./types";
 import { resolveTargetWorldbook } from "./worldbook-runtime";
 
 declare global {
@@ -217,122 +216,7 @@ async function rederiveWorkflowAtFloor(input: {
     writeback_conflict_names: string[];
   };
 }> {
-  try {
-    const messageId = Math.max(0, Math.trunc(Number(input.message_id) || 0));
-    const message = getChatMessages(messageId)[0];
-    if (!message) {
-      return { ok: false, reason: `message #${messageId} not found` };
-    }
-
-    const role =
-      message?.role === "assistant"
-        ? "assistant"
-        : message?.role === "user"
-          ? "user"
-          : "other";
-    const versionInfo = getMessageVersionInfo(message);
-    const targetVersionKey =
-      String(input.target_version_key ?? versionInfo.version_key).trim() ||
-      versionInfo.version_key;
-    const contextCursor: ContextCursor = {
-      chat_id: String(getChatId() ?? "").trim(),
-      target_message_id: messageId,
-      target_role: role,
-      target_version_key: targetVersionKey,
-      timing: input.timing,
-      capsule_mode: input.capsule_mode ?? "full",
-      source_user_message_id:
-        input.timing === "before_reply" && role === "user"
-          ? messageId
-          : undefined,
-      assistant_message_id:
-        input.timing === "after_reply" && role === "assistant"
-          ? messageId
-          : undefined,
-    };
-
-    const result = await runWorkflow({
-      message_id: messageId,
-      user_input: String(message?.message ?? ""),
-      trigger: {
-        timing: input.timing,
-        source: "api_rederive",
-        generation_type: "rederive",
-        user_message_id:
-          input.timing === "before_reply" && role === "user"
-            ? messageId
-            : undefined,
-        assistant_message_id:
-          input.timing === "after_reply" && role === "assistant"
-            ? messageId
-            : undefined,
-      },
-      mode: "manual",
-      inject_reply: false,
-      timing_filter: input.timing === "manual" ? undefined : input.timing,
-      job_type: "historical_rederive",
-      context_cursor: contextCursor,
-      writeback_policy: "dual_diff_merge",
-      rederive_options: {
-        legacy_approx: Boolean(input.confirm_legacy),
-        capsule_mode: input.capsule_mode ?? "full",
-      },
-    });
-
-    if (!result.ok) {
-      return {
-        ok: false,
-        reason: result.reason ?? "historical rederive failed",
-      };
-    }
-
-    const writebackApplied = Math.max(
-      0,
-      Math.trunc(
-        Number(
-          (result.diagnostics as Record<string, unknown> | undefined)
-            ?.writeback_applied ?? 0,
-        ) || 0,
-      ),
-    );
-    const writebackConflicts = Math.max(
-      0,
-      Math.trunc(
-        Number(
-          (result.diagnostics as Record<string, unknown> | undefined)
-            ?.writeback_conflicts ?? 0,
-        ) || 0,
-      ),
-    );
-    const writebackConflictNames = Array.isArray(
-      (result.diagnostics as Record<string, unknown> | undefined)
-        ?.writeback_conflict_names,
-    )
-      ? (
-          (result.diagnostics as Record<string, unknown>)
-            .writeback_conflict_names as unknown[]
-        )
-          .map((value) => String(value ?? "").trim())
-          .filter(Boolean)
-      : [];
-
-    return {
-      ok: true,
-      result: {
-        message_id: messageId,
-        anchor_message_id: messageId,
-        legacy_approx: Boolean(input.confirm_legacy),
-        writeback_applied: writebackApplied,
-        writeback_conflicts: writebackConflicts,
-        writeback_conflict_names: writebackConflictNames,
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return await rederiveWorkflowAtFloorRuntime(input);
 }
 
 export function initGlobalApi() {
@@ -357,11 +241,11 @@ export function initGlobalApi() {
     runNow: async (message) => {
       const text = message ?? "";
       const input = text.trim() || (getChatMessages(-1)[0]?.message ?? "");
-      const result = await runWorkflow({
+      const result = await rederiveWorkflowAtFloorRuntime({
         message_id: getLastMessageId(),
-        user_input: input,
-        mode: "manual",
-        inject_reply: false,
+        timing: "manual",
+        capsule_mode: "full",
+        confirm_legacy: true,
       });
       return { ok: result.ok, reason: result.reason };
     },
