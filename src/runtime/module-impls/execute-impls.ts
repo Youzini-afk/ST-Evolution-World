@@ -4,8 +4,6 @@
  * These handle API calls, response processing, and data extraction.
  */
 
-import type { ModuleOutput } from '../../ui/components/graph/module-types';
-
 // ── LLM Call ──
 
 /**
@@ -21,10 +19,15 @@ export async function executeLlmCall(
   behaviorOptions?: Record<string, any>,
   signal?: AbortSignal,
 ): Promise<string> {
-  const mode = apiConfig.mode ?? 'workflow_http';
+  const mode = apiConfig.mode ?? "workflow_http";
 
-  if (mode === 'llm_connector' || apiConfig.use_main_api) {
-    return executeLlmViaConnector(messages, genOptions, behaviorOptions, signal);
+  if (mode === "llm_connector" || apiConfig.use_main_api) {
+    return executeLlmViaConnector(
+      messages,
+      genOptions,
+      behaviorOptions,
+      signal,
+    );
   }
 
   return executeLlmViaHttp(messages, apiConfig, genOptions, signal);
@@ -37,10 +40,10 @@ async function executeLlmViaConnector(
   signal?: AbortSignal,
 ): Promise<string> {
   try {
-    const endpoint = '/api/backends/chat-completions/generate';
+    const endpoint = "/api/backends/chat-completions/generate";
     const body: any = {
       messages,
-      model: genOptions?.model ?? '',
+      model: genOptions?.model ?? "",
       temperature: genOptions?.temperature ?? 1.0,
       max_tokens: genOptions?.max_reply_tokens ?? 4096,
       top_p: genOptions?.top_p ?? 1.0,
@@ -50,20 +53,22 @@ async function executeLlmViaConnector(
     };
 
     const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal,
     });
 
     if (!response.ok) {
-      throw new Error(`LLM API returned ${response.status}: ${await response.text()}`);
+      throw new Error(
+        `LLM API returned ${response.status}: ${await response.text()}`,
+      );
     }
 
     const data = await response.json();
-    return data?.choices?.[0]?.message?.content ?? '';
+    return data?.choices?.[0]?.message?.content ?? "";
   } catch (e) {
-    console.error('[ExecuteImpl:llm_call] Connector error:', e);
+    console.error("[ExecuteImpl:llm_call] Connector error:", e);
     throw e;
   }
 }
@@ -75,14 +80,14 @@ async function executeLlmViaHttp(
   signal?: AbortSignal,
 ): Promise<string> {
   const apiUrl = apiConfig.api_url;
-  if (!apiUrl) throw new Error('API URL 未配置');
+  if (!apiUrl) throw new Error("API URL 未配置");
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   if (apiConfig.api_key) {
-    headers['Authorization'] = `Bearer ${apiConfig.api_key}`;
+    headers["Authorization"] = `Bearer ${apiConfig.api_key}`;
   }
 
   // Parse custom headers
@@ -90,11 +95,13 @@ async function executeLlmViaHttp(
     try {
       const custom = JSON.parse(apiConfig.headers_json);
       Object.assign(headers, custom);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   const body: any = {
-    model: apiConfig.model ?? genOptions?.model ?? '',
+    model: apiConfig.model ?? genOptions?.model ?? "",
     messages,
     temperature: genOptions?.temperature ?? 1.0,
     max_tokens: genOptions?.max_reply_tokens ?? 4096,
@@ -105,19 +112,19 @@ async function executeLlmViaHttp(
   };
 
   const response = await fetch(apiUrl, {
-    method: 'POST',
+    method: "POST",
     headers,
     body: JSON.stringify(body),
     signal,
   });
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => '');
+    const errText = await response.text().catch(() => "");
     throw new Error(`API ${response.status}: ${errText.slice(0, 200)}`);
   }
 
   const data = await response.json();
-  return data?.choices?.[0]?.message?.content ?? data?.content ?? '';
+  return data?.choices?.[0]?.message?.content ?? data?.content ?? "";
 }
 
 // ── Response Extract ──
@@ -125,20 +132,17 @@ async function executeLlmViaHttp(
 /**
  * Extract content from text using a regex pattern (first capture group).
  */
-export function executeResponseExtract(
-  text: string,
-  pattern: string,
-): string {
+export function executeResponseExtract(text: string, pattern: string): string {
   if (!pattern || !text) return text;
 
   try {
-    const rx = new RegExp(pattern, 's');
+    const rx = new RegExp(pattern, "s");
     const match = rx.exec(text);
     if (match) {
       return match[1] ?? match[0];
     }
   } catch (e) {
-    console.debug('[ExecuteImpl:response_extract] Regex error:', e);
+    console.debug("[ExecuteImpl:response_extract] Regex error:", e);
   }
 
   return text;
@@ -149,17 +153,14 @@ export function executeResponseExtract(
 /**
  * Remove content matching a regex from text.
  */
-export function executeResponseRemove(
-  text: string,
-  pattern: string,
-): string {
+export function executeResponseRemove(text: string, pattern: string): string {
   if (!pattern || !text) return text;
 
   try {
-    const rx = new RegExp(pattern, 'gs');
-    return text.replace(rx, '').trim();
+    const rx = new RegExp(pattern, "gs");
+    return text.replace(rx, "").trim();
   } catch (e) {
-    console.debug('[ExecuteImpl:response_remove] Regex error:', e);
+    console.debug("[ExecuteImpl:response_remove] Regex error:", e);
   }
 
   return text;
@@ -176,8 +177,8 @@ export function executeResponseNormalize(
 ): Record<string, any> {
   return {
     version: 1,
-    flow_id: raw.flow_id ?? '',
-    status: raw.status ?? 'ok',
+    flow_id: raw.flow_id ?? "",
+    status: raw.status ?? "ok",
     timestamp: raw.timestamp ?? Date.now(),
     ...raw,
   };
@@ -187,34 +188,70 @@ export function executeResponseNormalize(
 
 /**
  * Read SSE (Server-Sent Events) stream and accumulate full text.
- * Stub implementation — actual streaming is handled at the API layer.
  */
-export async function executeStreamSse(
-  response: any,
-): Promise<string> {
-  if (typeof response === 'string') return response;
-  if (!response?.body) return response?.text ?? response?.content ?? '';
+export async function executeStreamSse(response: any): Promise<string> {
+  if (typeof response === "string") return response;
+  if (!response?.body) return response?.text ?? response?.content ?? "";
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let accumulated = '';
+  let accumulated = "";
+  let pending = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    const chunk = decoder.decode(value, { stream: true });
-    // Parse SSE format: data: ... lines
-    for (const line of chunk.split('\n')) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6);
-        if (data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content ?? '';
+
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split(/\r?\n/);
+    pending = lines.pop() ?? "";
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line.startsWith("data:")) continue;
+
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (typeof delta === "string") {
           accumulated += delta;
-        } catch { accumulated += data; }
+          continue;
+        }
+
+        const content = parsed.content ?? parsed.text;
+        if (typeof content === "string") {
+          accumulated += content;
+        }
+      } catch {
+        accumulated += data;
       }
     }
   }
+
+  pending += decoder.decode();
+  const finalLine = pending.trim();
+  if (finalLine.startsWith("data:")) {
+    const data = finalLine.slice(5).trim();
+    if (data && data !== "[DONE]") {
+      try {
+        const parsed = JSON.parse(data);
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (typeof delta === "string") {
+          accumulated += delta;
+        } else {
+          const content = parsed.content ?? parsed.text;
+          if (typeof content === "string") {
+            accumulated += content;
+          }
+        }
+      } catch {
+        accumulated += data;
+      }
+    }
+  }
+
   return accumulated;
 }
