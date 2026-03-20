@@ -114,6 +114,11 @@ const EW_GENERATE_INTERCEPTOR_KEY = "ew_generation_interceptor";
 let sendIntentRetryTimer: ReturnType<typeof setTimeout> | null = null;
 const NON_SEND_GENERATION_TYPES = new Set(["continue", "regenerate", "swipe"]);
 const WORKFLOW_NOTICE_COLLAPSE_MS = 5000;
+const queuedAfterReplyJobKeys = new Set<string>();
+const queuedAfterReplyDedupKeys = new Set<string>();
+const processedAfterReplyIdentityKeys = new Set<string>();
+const lastAfterReplyTriggerByIdentityKey = new Map<string, number>();
+const MIN_AFTER_REPLY_INTERVAL_MS = 3000;
 
 // ST 扩展直接运行在主页面，无需 getHostWindow/getChatDocument
 function getChatDocument(): Document {
@@ -1949,6 +1954,33 @@ function getMessageText(messageId: number): string {
   }
 }
 
+function buildAfterReplyDedupKey(
+  messageText: string,
+  pendingUserMessageId: number | null,
+): string {
+  const normalizedText = String(messageText ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const contentHash = simpleHash(normalizedText);
+  const userMessagePart = Number.isFinite(pendingUserMessageId)
+    ? `user:${pendingUserMessageId}`
+    : "user:unknown";
+  return `${getCurrentChatKey()}:${userMessagePart}:${contentHash}`;
+}
+
+function buildAfterReplyIdentityKey(input: {
+  chatKey: string;
+  messageId: number;
+  generationSeq: number;
+  pendingUserMessageId: number | null;
+  generationType: string;
+}): string {
+  const userMessagePart = Number.isFinite(input.pendingUserMessageId)
+    ? `user:${input.pendingUserMessageId}`
+    : "user:unknown";
+  return `${input.chatKey}:assistant:${input.messageId}:gen:${Math.max(0, Math.trunc(input.generationSeq || 0))}:${userMessagePart}:${String(input.generationType || "normal").trim() || "normal"}`;
+}
+
 function isAssistantMessage(messageId: number): boolean {
   try {
     const message = getChatMessages(messageId)[0];
@@ -2012,6 +2044,50 @@ async function onAfterReplyMessage(
     return;
   }
 
+  const chatKey = getCurrentChatKey();
+  const generationSeq =
+    getRuntimeState().after_reply.pending_generation_seq ||
+    getRuntimeState().last_generation?.seq ||
+    0;
+  const queueKey = `${chatKey}:${messageId}`;
+  const dedupKey = buildAfterReplyDedupKey(messageText, pendingUserMessageId);
+  const identityKey = buildAfterReplyIdentityKey({
+    chatKey,
+    messageId,
+    generationSeq,
+    pendingUserMessageId,
+    generationType: type,
+  });
+
+  if (
+    queuedAfterReplyJobKeys.has(queueKey) ||
+    queuedAfterReplyDedupKeys.has(dedupKey)
+  ) {
+    console.debug(
+      `[Evolution World] after_reply skipped as duplicate (${source}): ${dedupKey}`,
+    );
+    return;
+  }
+
+  if (processedAfterReplyIdentityKeys.has(identityKey)) {
+    console.debug(
+      `[Evolution World] after_reply skipped: identity already processed (${source}, key=${identityKey})`,
+    );
+    return;
+  }
+
+  const lastTriggerAt =
+    lastAfterReplyTriggerByIdentityKey.get(identityKey) ?? 0;
+  if (Date.now() - lastTriggerAt < MIN_AFTER_REPLY_INTERVAL_MS) {
+    console.debug(
+      `[Evolution World] after_reply skipped: identity-windowed dedup (${source}, ${Date.now() - lastTriggerAt}ms since last, key=${identityKey})`,
+    );
+    return;
+  }
+
+  lastAfterReplyTriggerByIdentityKey.set(identityKey, Date.now());
+  queuedAfterReplyJobKeys.add(queueKey);
+  queuedAfterReplyDedupKeys.add(dedupKey);
   setProcessing(true);
   try {
     if (shouldRunAfterReplyWorkflow) {
@@ -2060,8 +2136,11 @@ async function onAfterReplyMessage(
       markAfterReplyHandled(messageId, messageText);
     }
   } finally {
+    processedAfterReplyIdentityKeys.add(identityKey);
     clearAfterReplyPendingIfMatches(pendingUserMessageId);
     clearSendContextIfMatches(pendingUserMessageId, userInput);
+    queuedAfterReplyJobKeys.delete(queueKey);
+    queuedAfterReplyDedupKeys.delete(dedupKey);
     setProcessing(false);
   }
 }
