@@ -3251,31 +3251,59 @@ function isBeforeReplyMigrationSettled(reason?: string): boolean {
 
 function shouldWarnBeforeReplyMigration(input: {
   artifactMigration: { migrated: boolean; reason?: string };
-  capsuleMigration: { migrated: boolean };
+  executionMigration: { migrated: boolean; reason?: string };
+  capsuleMigration: { migrated: boolean; reason?: string };
 }): boolean {
-  const { artifactMigration, capsuleMigration } = input;
-  if (artifactMigration.migrated || capsuleMigration.migrated) {
+  const { artifactMigration, executionMigration, capsuleMigration } = input;
+  if (
+    artifactMigration.migrated ||
+    executionMigration.migrated ||
+    capsuleMigration.migrated
+  ) {
     return false;
   }
-  if (!artifactMigration.reason) {
+
+  const reasons = [
+    artifactMigration.reason,
+    executionMigration.reason,
+    capsuleMigration.reason,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  if (reasons.length === 0) {
     return false;
   }
-  if (artifactMigration.reason === "no_source_artifacts") {
+
+  if (
+    reasons.every(
+      (reason) =>
+        reason === "no_source_artifacts" ||
+        isBeforeReplyMigrationSettled(reason),
+    )
+  ) {
     return false;
   }
-  return !isBeforeReplyMigrationSettled(artifactMigration.reason);
+
+  return true;
 }
 
 function settleBeforeReplyMigration(input: {
   assistantMessageId: number;
   artifactMigration: { migrated: boolean; reason?: string };
-  capsuleMigration: { migrated: boolean };
+  executionMigration: { migrated: boolean; reason?: string };
+  capsuleMigration: { migrated: boolean; reason?: string };
   markPending: boolean;
 }): boolean {
+  const settledReasons = [
+    input.artifactMigration.reason,
+    input.executionMigration.reason,
+    input.capsuleMigration.reason,
+  ].filter((reason): reason is string => Boolean(reason));
   const settled =
     input.artifactMigration.migrated ||
+    input.executionMigration.migrated ||
     input.capsuleMigration.migrated ||
-    isBeforeReplyMigrationSettled(input.artifactMigration.reason);
+    (settledReasons.length > 0 &&
+      settledReasons.every((reason) => isBeforeReplyMigrationSettled(reason)));
   if (settled && input.markPending) {
     markBeforeReplyBindingMigrated(input.assistantMessageId);
   }
@@ -3631,6 +3659,10 @@ export async function rederiveWorkflowAtFloor(
         Number(assistantMessageId),
         rederiveRequestId,
       );
+      const executionMigration = await migrateFloorWorkflowExecutionToAssistant(
+        beforeReplySourceMessageId,
+        Number(assistantMessageId),
+      );
       const capsuleMigration = await migrateFloorWorkflowCapsuleToAssistant(
         beforeReplySourceMessageId,
         Number(assistantMessageId),
@@ -3638,6 +3670,7 @@ export async function rederiveWorkflowAtFloor(
       const migrationSettled = settleBeforeReplyMigration({
         assistantMessageId: Number(assistantMessageId),
         artifactMigration,
+        executionMigration,
         capsuleMigration,
         markPending: false,
       });
@@ -3645,12 +3678,17 @@ export async function rederiveWorkflowAtFloor(
         !migrationSettled &&
         shouldWarnBeforeReplyMigration({
           artifactMigration,
+          executionMigration,
           capsuleMigration,
         })
       ) {
         console.warn(
           "[Evolution World] before_reply rederive migration did not complete:",
-          artifactMigration,
+          {
+            artifactMigration,
+            executionMigration,
+            capsuleMigration,
+          },
         );
       }
     }
