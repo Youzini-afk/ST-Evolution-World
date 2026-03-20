@@ -741,16 +741,28 @@
 
             <template v-else-if="store.activeTab === 'graph'">
               <EwGraphEditor
-                :graphs="workbenchGraphs"
+                :graph="activeEditorGraph"
                 :saved-slots="store.settings.graph_canvas_slots"
                 @save-slots="
                   (slots: any[]) => {
                     store.settings.graph_canvas_slots = slots;
                   }
                 "
-                @update:graphs="
-                  (g: any[]) => {
-                    (store.settings as any).workbench_graphs = g;
+                @update:graph="
+                  (graph: any) => {
+                    const existing =
+                      (store.settings as any).workbench_graphs ?? [];
+                    if (!graph) {
+                      return;
+                    }
+                    if (existing.length === 0) {
+                      (store.settings as any).workbench_graphs = [graph];
+                      return;
+                    }
+                    (store.settings as any).workbench_graphs = [
+                      graph,
+                      ...existing.slice(1),
+                    ];
                   }
                 "
               />
@@ -910,6 +922,7 @@ const crossfadeRef = ref<HTMLDivElement | null>(null);
 const workbenchGraphs = computed(
   () => (store.settings as any).workbench_graphs ?? [],
 );
+const activeEditorGraph = computed(() => workbenchGraphs.value[0] ?? null);
 
 let crossfadePrevHeight = 0;
 let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;

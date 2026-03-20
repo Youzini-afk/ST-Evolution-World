@@ -4,38 +4,38 @@
 
 /** Category of a module */
 export type ModuleCategory =
-  | 'source'    // 数据源
-  | 'filter'    // 过滤 / 处理
-  | 'transform' // 渲染 / 转换
-  | 'compose'   // 编排
-  | 'execute'   // 执行
-  | 'output'    // 输出
-  | 'config';   // 配置
+  | "source" // 数据源
+  | "filter" // 过滤 / 处理
+  | "transform" // 渲染 / 转换
+  | "compose" // 编排
+  | "execute" // 执行
+  | "output" // 输出
+  | "config"; // 配置
 
 /** Data type that flows through ports */
 export type PortDataType =
-  | 'any'
-  | 'text'
-  | 'messages'      // Array<{ role, content }>
-  | 'entries'        // WI entries array
-  | 'json'           // arbitrary JSON object
-  | 'api_config'     // API preset config
-  | 'gen_options'    // generation parameters
-  | 'behavior_options'
-  | 'flow_context'   // { chat_id, message_id, trigger }
-  | 'results'        // DispatchFlowResult[]
-  | 'operations'     // worldbook operations
-  | 'snapshot'       // floor binding snapshot
-  | 'http_response'  // raw HTTP response
-  | 'timing'         // before_reply | after_reply
-  | 'boolean'
-  | 'number';
+  | "any"
+  | "text"
+  | "messages" // Array<{ role, content }>
+  | "entries" // WI entries array
+  | "json" // arbitrary JSON object
+  | "api_config" // API preset config
+  | "gen_options" // generation parameters
+  | "behavior_options"
+  | "flow_context" // { chat_id, message_id, trigger }
+  | "results" // DispatchFlowResult[]
+  | "operations" // worldbook operations
+  | "snapshot" // floor binding snapshot
+  | "http_response" // raw HTTP response
+  | "timing" // before_reply | after_reply
+  | "boolean"
+  | "number";
 
 /** Definition of a port on a module blueprint */
 export interface ModulePortDef {
   id: string;
   label: string;
-  direction: 'in' | 'out';
+  direction: "in" | "out";
   dataType: PortDataType;
   /** If true, this port can accept multiple connections */
   multiple?: boolean;
@@ -47,11 +47,20 @@ export interface ModulePortDef {
 export interface ConfigFieldSchema {
   key: string;
   label: string;
-  type: 'text' | 'number' | 'boolean' | 'select' | 'textarea' | 'json' | 'slider';
-  options?: string[];        // for select
-  min?: number; max?: number; step?: number; // for slider/number
-  description?: string;      // tooltip / help text
-  placeholder?: string;      // input placeholder
+  type:
+    | "text"
+    | "number"
+    | "boolean"
+    | "select"
+    | "textarea"
+    | "json"
+    | "slider";
+  options?: string[]; // for select
+  min?: number;
+  max?: number;
+  step?: number; // for slider/number
+  description?: string; // tooltip / help text
+  placeholder?: string; // input placeholder
 }
 
 /** Blueprint definition for a module type (registered in the registry) */
@@ -99,10 +108,10 @@ export interface WorkbenchNode {
 /** An edge in the workbench graph */
 export interface WorkbenchEdge {
   id: string;
-  source: string;       // source node ID
-  sourcePort: string;   // source port ID
-  target: string;       // target node ID
-  targetPort: string;   // target port ID
+  source: string; // source node ID
+  sourcePort: string; // source port ID
+  target: string; // target node ID
+  targetPort: string; // target port ID
 }
 
 /** Viewport state */
@@ -117,7 +126,7 @@ export interface WorkbenchGraph {
   id: string;
   name: string;
   enabled: boolean;
-  timing: 'default' | 'before_reply' | 'after_reply';
+  timing: "default" | "before_reply" | "after_reply";
   priority: number;
   nodes: WorkbenchNode[];
   edges: WorkbenchEdge[];
@@ -172,13 +181,19 @@ export interface CategoryInfo {
 }
 
 export const MODULE_CATEGORIES: CategoryInfo[] = [
-  { id: 'source',    label: '数据源',   icon: '🔌', color: '#f59e0b', order: 0 },
-  { id: 'filter',    label: '过滤处理', icon: '🔍', color: '#3b82f6', order: 1 },
-  { id: 'transform', label: '渲染转换', icon: '🔮', color: '#8b5cf6', order: 2 },
-  { id: 'compose',   label: '编排组装', icon: '📝', color: '#10b981', order: 3 },
-  { id: 'execute',   label: '执行调用', icon: '🚀', color: '#ef4444', order: 4 },
-  { id: 'output',    label: '输出写入', icon: '📤', color: '#14b8a6', order: 5 },
-  { id: 'config',    label: '配置参数', icon: '⚙',  color: '#6366f1', order: 6 },
+  { id: "source", label: "数据源", icon: "🔌", color: "#f59e0b", order: 0 },
+  { id: "filter", label: "过滤处理", icon: "🔍", color: "#3b82f6", order: 1 },
+  {
+    id: "transform",
+    label: "渲染转换",
+    icon: "🔮",
+    color: "#8b5cf6",
+    order: 2,
+  },
+  { id: "compose", label: "编排组装", icon: "📝", color: "#10b981", order: 3 },
+  { id: "execute", label: "执行调用", icon: "🚀", color: "#ef4444", order: 4 },
+  { id: "output", label: "输出写入", icon: "📤", color: "#14b8a6", order: 5 },
+  { id: "config", label: "配置参数", icon: "⚙", color: "#6366f1", order: 6 },
 ];
 
 // ── Graph Utilities ──
@@ -192,19 +207,25 @@ export function wouldCreateCycle(
   source: string,
   target: string,
 ): boolean {
-  // If target can reach source through existing edges, adding source→target creates cycle
+  if (source === target) return true;
+
+  // If target can already reach source through existing edges,
+  // then adding source → target would close a cycle.
   const visited = new Set<string>();
-  const queue = [source];
+  const queue = [target];
+
   while (queue.length > 0) {
     const current = queue.shift()!;
-    if (current === target) return true;
+    if (current === source) return true;
     if (visited.has(current)) continue;
     visited.add(current);
+
     for (const edge of edges) {
-      if (edge.source === current) {
+      if (edge.source === current && !visited.has(edge.target)) {
         queue.push(edge.target);
       }
     }
   }
+
   return false;
 }

@@ -1,223 +1,258 @@
 <template>
   <Teleport to="body" :disabled="!isFullscreen">
-  <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
-    <!-- Left palette -->
-    <EwModulePalette />
+    <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
+      <!-- Left palette -->
+      <EwModulePalette />
 
-    <!-- Main canvas area -->
-    <div
-      class="ew-graph-editor"
-      ref="canvasContainer"
-      @pointerdown="onCanvasPointerDown"
-      @wheel.prevent="onWheel"
-      @dblclick="onDblClick"
-      @contextmenu.prevent="onCanvasContextMenu"
-      @touchstart.passive="onTouchStart"
-      @touchmove.prevent="onTouchMove"
-      @touchend="onTouchEnd"
-      @dragover.prevent="onDragOver"
-      @drop.prevent="onDrop"
-    >
-      <!-- Grid background -->
-      <svg class="ew-graph-editor__grid" :style="gridStyle">
-        <defs>
-          <pattern
-            id="ew-grid-dots"
-            :width="20 * graph.state.viewport.zoom"
-            :height="20 * graph.state.viewport.zoom"
-            patternUnits="userSpaceOnUse"
-            :x="graph.state.viewport.x"
-            :y="graph.state.viewport.y"
-          >
-            <circle
-              :cx="(20 * graph.state.viewport.zoom) / 2"
-              :cy="(20 * graph.state.viewport.zoom) / 2"
-              :r="1 * graph.state.viewport.zoom"
-              fill="rgba(255, 255, 255, 0.12)"
-            />
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#ew-grid-dots)" />
-      </svg>
-
-      <!-- Canvas transform wrapper -->
-      <div class="ew-graph-editor__canvas" :style="canvasStyle">
-        <!-- SVG layer for edges -->
-        <svg
-          class="ew-graph-editor__edges"
-          style="
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 1px;
-            height: 1px;
-            overflow: visible;
-          "
-        >
-          <EwGraphEdge
-            v-for="edge in graph.state.edges"
-            :key="edge.id"
-            :edge="edge"
-            :source-x="getEdgeSourceX(edge)"
-            :source-y="getEdgeSourceY(edge)"
-            :target-x="getEdgeTargetX(edge)"
-            :target-y="getEdgeTargetY(edge)"
-            :source-color="getNodeColor(edge.source)"
-            :selected="selectedEdge === edge.id"
-            @select="selectedEdge = $event"
-            @context-menu="onEdgeContextMenu"
-          />
-          <!-- In-progress drag edge -->
-          <path
-            v-if="dragEdge"
-            class="ew-graph-editor__drag-edge"
-            :d="dragEdgePath"
-            fill="none"
-            stroke="rgba(255, 255, 255, 0.5)"
-            stroke-width="2"
-            stroke-dasharray="6 4"
-          />
+      <!-- Main canvas area -->
+      <div
+        class="ew-graph-editor"
+        ref="canvasContainer"
+        @pointerdown="onCanvasPointerDown"
+        @wheel.prevent="onWheel"
+        @dblclick="onDblClick"
+        @contextmenu.prevent="onCanvasContextMenu"
+        @touchstart.passive="onTouchStart"
+        @touchmove.prevent="onTouchMove"
+        @touchend="onTouchEnd"
+        @dragover.prevent="onDragOver"
+        @drop.prevent="onDrop"
+      >
+        <!-- Grid background -->
+        <svg class="ew-graph-editor__grid" :style="gridStyle">
+          <defs>
+            <pattern
+              id="ew-grid-dots"
+              :width="20 * graph.state.viewport.zoom"
+              :height="20 * graph.state.viewport.zoom"
+              patternUnits="userSpaceOnUse"
+              :x="graph.state.viewport.x"
+              :y="graph.state.viewport.y"
+            >
+              <circle
+                :cx="(20 * graph.state.viewport.zoom) / 2"
+                :cy="(20 * graph.state.viewport.zoom) / 2"
+                :r="1 * graph.state.viewport.zoom"
+                fill="rgba(255, 255, 255, 0.12)"
+              />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#ew-grid-dots)" />
         </svg>
 
-        <!-- Marquee selection rect -->
+        <!-- Canvas transform wrapper -->
+        <div class="ew-graph-editor__canvas" :style="canvasStyle">
+          <!-- SVG layer for edges -->
+          <svg
+            class="ew-graph-editor__edges"
+            style="
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 1px;
+              height: 1px;
+              overflow: visible;
+            "
+          >
+            <EwGraphEdge
+              v-for="edge in graph.state.edges"
+              :key="edge.id"
+              :edge="edge"
+              :source-x="getEdgeSourceX(edge)"
+              :source-y="getEdgeSourceY(edge)"
+              :target-x="getEdgeTargetX(edge)"
+              :target-y="getEdgeTargetY(edge)"
+              :source-color="getNodeColor(edge.source)"
+              :selected="selectedEdge === edge.id"
+              @select="selectedEdge = $event"
+              @context-menu="onEdgeContextMenu"
+            />
+            <!-- In-progress drag edge -->
+            <path
+              v-if="dragEdge"
+              class="ew-graph-editor__drag-edge"
+              :d="dragEdgePath"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.5)"
+              stroke-width="2"
+              stroke-dasharray="6 4"
+            />
+          </svg>
+
+          <!-- Marquee selection rect -->
+          <div
+            v-if="marquee"
+            class="ew-graph-editor__marquee"
+            :style="marqueeStyle"
+          />
+
+          <!-- Nodes -->
+          <EwGraphNode
+            v-for="node in graph.state.nodes"
+            :key="node.id"
+            :ref="(el: any) => registerNodeRef(node.id, el)"
+            :node="node"
+            :edges="graph.state.edges"
+            :zoom="graph.state.viewport.zoom"
+            :selected="selectedNodes.has(node.id)"
+            :selected-nodes="selectedNodes"
+            :z-index="nodeZIndex.get(node.id) || 1"
+            @move="onNodeMove"
+            @group-move="onGroupMove"
+            @toggle-collapse="graph.toggleCollapse(node.id)"
+            @port-drag-start="onPortDragStart"
+            @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
+            @bring-to-front="bringToFront(node.id)"
+            @select="onNodeSelect"
+          />
+        </div>
+
+        <!-- Toolbar -->
+        <div class="ew-graph-editor__toolbar">
+          <button type="button" @click="undo" title="撤销 (Ctrl+Z)">↩</button>
+          <button type="button" @click="redo" title="重做 (Ctrl+Shift+Z)">
+            ↪
+          </button>
+          <span class="ew-graph-editor__toolbar-sep"></span>
+          <button type="button" @click="zoomIn" title="放大">+</button>
+          <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
+          <button type="button" @click="zoomOut" title="缩小">−</button>
+          <button type="button" @click="fitView" title="适配视图">◎</button>
+          <button type="button" @click="autoLayout" title="自动排列">⊞</button>
+          <button type="button" @click="reloadCurrentSlot" title="重新加载">
+            ↻
+          </button>
+          <button
+            type="button"
+            @click="toggleFullscreen"
+            :title="isFullscreen ? '退出全屏' : '全屏'"
+          >
+            ⛶
+          </button>
+        </div>
+
+        <!-- Canvas slot bar -->
+        <div class="ew-graph-editor__slots">
+          <button
+            v-for="slot in canvasSlots"
+            :key="slot.id"
+            class="ew-graph-editor__slot-tab"
+            :class="{ 'is-active': activeSlotId === slot.id }"
+            @click="switchSlot(slot.id)"
+          >
+            <span>{{ slot.name }}</span>
+            <span
+              v-if="slot.id !== 'overview'"
+              class="ew-graph-editor__slot-close"
+              @click.stop="removeSlot(slot.id)"
+              >×</span
+            >
+          </button>
+          <button
+            class="ew-graph-editor__slot-add"
+            @click="addSlot"
+            title="新建画布"
+          >
+            +
+          </button>
+        </div>
+
+        <!-- Context menu -->
         <div
-          v-if="marquee"
-          class="ew-graph-editor__marquee"
-          :style="marqueeStyle"
+          v-if="ctxMenu"
+          class="ew-graph-ctx"
+          :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
+        >
+          <button v-if="ctxMenu.edgeId" @click="deleteEdge(ctxMenu.edgeId)">
+            🗑 删除连线
+          </button>
+          <button v-if="ctxMenu.nodeId" @click="deleteNode(ctxMenu.nodeId)">
+            🗑 删除节点
+          </button>
+          <button @click="ctxMenu = null">✕ 取消</button>
+        </div>
+        <!-- Click-away overlay -->
+        <div
+          v-if="ctxMenu"
+          class="ew-graph-ctx-overlay"
+          @pointerdown="ctxMenu = null"
         />
 
-        <!-- Nodes -->
-        <EwGraphNode
-          v-for="node in graph.state.nodes"
-          :key="node.id"
-          :ref="(el: any) => registerNodeRef(node.id, el)"
-          :node="node"
-          :edges="graph.state.edges"
-          :zoom="graph.state.viewport.zoom"
-          :selected="selectedNodes.has(node.id)"
-          :selected-nodes="selectedNodes"
-          :z-index="nodeZIndex.get(node.id) || 1"
-          @move="onNodeMove"
-          @group-move="onGroupMove"
-          @toggle-collapse="graph.toggleCollapse(node.id)"
-          @port-drag-start="onPortDragStart"
-          @contextmenu.stop.prevent="onNodeContextMenu(node.id, $event)"
-          @bring-to-front="bringToFront(node.id)"
-          @select="onNodeSelect"
+        <!-- Minimap -->
+        <div
+          class="ew-graph-minimap"
+          :style="{ right: minimapPos.x + 'px', bottom: minimapPos.y + 'px' }"
+          @contextmenu.prevent
+          @selectstart.prevent
         >
-          <div class="ew-graph-node__type-label">{{ node.moduleId }}</div>
-        </EwGraphNode>
-      </div>
-
-      <!-- Toolbar -->
-      <div class="ew-graph-editor__toolbar">
-        <button type="button" @click="undo" title="撤销 (Ctrl+Z)">↩</button>
-        <button type="button" @click="redo" title="重做 (Ctrl+Shift+Z)">↪</button>
-        <span class="ew-graph-editor__toolbar-sep"></span>
-        <button type="button" @click="zoomIn" title="放大">+</button>
-        <span class="ew-graph-editor__zoom-label">{{ zoomPercent }}%</span>
-        <button type="button" @click="zoomOut" title="缩小">−</button>
-        <button type="button" @click="fitView" title="适配视图">◎</button>
-        <button type="button" @click="autoLayout" title="自动排列">⊞</button>
-        <button type="button" @click="reloadCurrentSlot" title="重新加载">↻</button>
-        <button type="button" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">⛶</button>
-      </div>
-
-      <!-- Canvas slot bar -->
-      <div class="ew-graph-editor__slots">
-        <button
-          v-for="slot in canvasSlots"
-          :key="slot.id"
-          class="ew-graph-editor__slot-tab"
-          :class="{ 'is-active': activeSlotId === slot.id }"
-          @click="switchSlot(slot.id)"
-        >
-          <span>{{ slot.name }}</span>
-          <span
-            v-if="slot.id !== 'overview'"
-            class="ew-graph-editor__slot-close"
-            @click.stop="removeSlot(slot.id)"
-          >×</span>
-        </button>
-        <button class="ew-graph-editor__slot-add" @click="addSlot" title="新建画布">+</button>
-      </div>
-
-      <!-- Context menu -->
-      <div
-        v-if="ctxMenu"
-        class="ew-graph-ctx"
-        :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
-      >
-        <button v-if="ctxMenu.edgeId" @click="deleteEdge(ctxMenu.edgeId)">🗑 删除连线</button>
-        <button v-if="ctxMenu.nodeId" @click="deleteNode(ctxMenu.nodeId)">🗑 删除节点</button>
-        <button @click="ctxMenu = null">✕ 取消</button>
-      </div>
-      <!-- Click-away overlay -->
-      <div v-if="ctxMenu" class="ew-graph-ctx-overlay" @pointerdown="ctxMenu = null" />
-
-      <!-- Minimap -->
-      <div
-        class="ew-graph-minimap"
-        :style="{ right: minimapPos.x + 'px', bottom: minimapPos.y + 'px' }"
-        @contextmenu.prevent
-        @selectstart.prevent
-      >
-        <div class="ew-graph-minimap__handle" @pointerdown.stop.prevent="onMinimapDragStart">
-          <span>⡇</span>
-        </div>
-        <svg
-          :viewBox="minimapViewBox"
-          preserveAspectRatio="xMidYMid meet"
-          width="100%" height="100%"
-          @pointerdown.stop.prevent="onMinimapPointerDown"
-        >
-          <!-- Edges as cubic Bézier curves -->
-          <path
-            v-for="edge in minimapEdges"
-            :key="'mm-e-' + edge.id"
-            :d="edge.path"
-            fill="none"
-            :stroke="edge.color"
-            stroke-width="2"
-            stroke-opacity="0.5"
-          />
-          <!-- Nodes with type-specific colors -->
-          <g v-for="node in graph.state.nodes" :key="'mm-' + node.id">
-            <rect
-              :x="node.position.x"
-              :y="node.position.y"
-              :width="180"
-              :height="node.collapsed ? 36 : 100"
-              rx="4"
-              :fill="getMinimapNodeColor(node.moduleId) + '55'"
-              :stroke="getMinimapNodeColor(node.moduleId)"
-              stroke-width="1.5"
+          <div
+            class="ew-graph-minimap__handle"
+            @pointerdown.stop.prevent="onMinimapDragStart"
+          >
+            <span>⡇</span>
+          </div>
+          <svg
+            :viewBox="minimapViewBox"
+            preserveAspectRatio="xMidYMid meet"
+            width="100%"
+            height="100%"
+            @pointerdown.stop.prevent="onMinimapPointerDown"
+          >
+            <!-- Edges as cubic Bézier curves -->
+            <path
+              v-for="edge in minimapEdges"
+              :key="'mm-e-' + edge.id"
+              :d="edge.path"
+              fill="none"
+              :stroke="edge.color"
+              stroke-width="2"
+              stroke-opacity="0.5"
             />
-            <text
-              :x="node.position.x + 90"
-              :y="node.position.y + (node.collapsed ? 22 : 16)"
-              text-anchor="middle"
-              fill="rgba(255,255,255,0.7)"
-              font-size="11"
-              font-family="sans-serif"
-            >{{ (node.config?._label ?? node.moduleId).slice(0, 8) }}</text>
-          </g>
-          <!-- Viewport indicator -->
-          <rect
-            :x="viewportRect.x"
-            :y="viewportRect.y"
-            :width="viewportRect.w"
-            :height="viewportRect.h"
-            fill="rgba(255,255,255,0.04)"
-            stroke="rgba(255,255,255,0.6)"
-            stroke-width="4"
-            stroke-dasharray="8 4"
-            rx="3"
-          />
-        </svg>
+            <!-- Nodes with type-specific colors -->
+            <g v-for="node in graph.state.nodes" :key="'mm-' + node.id">
+              <rect
+                :x="node.position.x"
+                :y="node.position.y"
+                :width="180"
+                :height="node.collapsed ? 36 : 100"
+                rx="4"
+                :fill="getMinimapNodeColor(node.moduleId) + '55'"
+                :stroke="getMinimapNodeColor(node.moduleId)"
+                stroke-width="1.5"
+              />
+              <text
+                :x="node.position.x + 90"
+                :y="node.position.y + (node.collapsed ? 22 : 16)"
+                text-anchor="middle"
+                fill="rgba(255,255,255,0.7)"
+                font-size="11"
+                font-family="sans-serif"
+              >
+                {{ (node.config?._label ?? node.moduleId).slice(0, 8) }}
+              </text>
+            </g>
+            <!-- Viewport indicator -->
+            <rect
+              :x="viewportRect.x"
+              :y="viewportRect.y"
+              :width="viewportRect.w"
+              :height="viewportRect.h"
+              fill="rgba(255,255,255,0.04)"
+              stroke="rgba(255,255,255,0.6)"
+              stroke-width="4"
+              stroke-dasharray="8 4"
+              rx="3"
+            />
+          </svg>
+        </div>
+
+        <EwNodePropertyPanel
+          :node="editingNode"
+          @close="clearSelection"
+          @update-config="onUpdateConfig"
+        />
       </div>
     </div>
-  </div>
   </Teleport>
 </template>
 
@@ -225,19 +260,24 @@
 import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
 import EwModulePalette from "./EwModulePalette.vue";
+import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
 import { MODULE_REGISTRY } from "./module-registry";
-import type { WorkbenchNode, WorkbenchEdge, WorkbenchGraph } from "./module-types";
+import type {
+  WorkbenchEdge,
+  WorkbenchGraph,
+  WorkbenchNode,
+} from "./module-types";
 import { wouldCreateCycle } from "./module-types";
 
 const props = defineProps<{
-  graphs: WorkbenchGraph[];
+  graph: WorkbenchGraph | null;
   savedSlots?: Array<any>;
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:graphs', graphs: WorkbenchGraph[]): void;
-  (e: 'save-slots', slots: any[]): void;
-  (e: 'select-node', nodeId: string | null): void;
+  (e: "update:graph", graph: WorkbenchGraph): void;
+  (e: "save-slots", slots: any[]): void;
+  (e: "select-node", nodeId: string | null): void;
 }>();
 
 // ── Inline reactive graph state (replaces createGraphState) ──
@@ -253,7 +293,12 @@ const graphNodeMap = computed(() => {
   return m;
 });
 
-function graphAddNode(moduleId: string, x: number, y: number, extraConfig?: Record<string, any>): WorkbenchNode {
+function graphAddNode(
+  moduleId: string,
+  x: number,
+  y: number,
+  extraConfig?: Record<string, any>,
+): WorkbenchNode {
   const bp = MODULE_REGISTRY.get(moduleId);
   const node: WorkbenchNode = {
     id: `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
@@ -267,30 +312,46 @@ function graphAddNode(moduleId: string, x: number, y: number, extraConfig?: Reco
 }
 
 function graphRemoveNode(nodeId: string) {
-  graphState.edges = graphState.edges.filter(e => e.source !== nodeId && e.target !== nodeId);
-  graphState.nodes = graphState.nodes.filter(n => n.id !== nodeId);
+  graphState.edges = graphState.edges.filter(
+    (e) => e.source !== nodeId && e.target !== nodeId,
+  );
+  graphState.nodes = graphState.nodes.filter((n) => n.id !== nodeId);
 }
 
-function graphAddEdge(source: string, sourcePort: string, target: string, targetPort: string) {
+function graphAddEdge(
+  source: string,
+  sourcePort: string,
+  target: string,
+  targetPort: string,
+) {
   if (wouldCreateCycle(graphState.edges, source, target)) return;
-  const dup = graphState.edges.some(e =>
-    e.source === source && e.sourcePort === sourcePort &&
-    e.target === target && e.targetPort === targetPort
+  const dup = graphState.edges.some(
+    (e) =>
+      e.source === source &&
+      e.sourcePort === sourcePort &&
+      e.target === target &&
+      e.targetPort === targetPort,
   );
   if (dup) return;
   graphState.edges.push({
     id: `e_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-    source, sourcePort, target, targetPort,
+    source,
+    sourcePort,
+    target,
+    targetPort,
   });
 }
 
 function graphRemoveEdge(edgeId: string) {
-  graphState.edges = graphState.edges.filter(e => e.id !== edgeId);
+  graphState.edges = graphState.edges.filter((e) => e.id !== edgeId);
 }
 
 function graphMoveNode(nodeId: string, x: number, y: number) {
   const node = graphNodeMap.value.get(nodeId);
-  if (node) { node.position.x = x; node.position.y = y; }
+  if (node) {
+    node.position.x = x;
+    node.position.y = y;
+  }
 }
 
 function graphToggleCollapse(nodeId: string) {
@@ -316,7 +377,10 @@ function graphZoomTo(newZoom: number, cx?: number, cy?: number) {
 function graphFitToView(width: number, height: number) {
   if (graphState.nodes.length === 0) return;
   const PAD = 80;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (const n of graphState.nodes) {
     minX = Math.min(minX, n.position.x);
     minY = Math.min(minY, n.position.y);
@@ -327,8 +391,14 @@ function graphFitToView(width: number, height: number) {
   const contentH = maxY - minY + PAD * 2;
   const z = Math.min(1.5, Math.min(width / contentW, height / contentH));
   graphState.viewport.zoom = Math.max(0.1, z);
-  graphState.viewport.x = (width - contentW * graphState.viewport.zoom) / 2 - minX * graphState.viewport.zoom + PAD * graphState.viewport.zoom;
-  graphState.viewport.y = (height - contentH * graphState.viewport.zoom) / 2 - minY * graphState.viewport.zoom + PAD * graphState.viewport.zoom;
+  graphState.viewport.x =
+    (width - contentW * graphState.viewport.zoom) / 2 -
+    minX * graphState.viewport.zoom +
+    PAD * graphState.viewport.zoom;
+  graphState.viewport.y =
+    (height - contentH * graphState.viewport.zoom) / 2 -
+    minY * graphState.viewport.zoom +
+    PAD * graphState.viewport.zoom;
 }
 
 // Wrap into graph object to preserve template & downstream API compatibility
@@ -352,9 +422,12 @@ const selectedNodes = reactive(new Set<string>());
 const isFullscreen = ref(false);
 
 // Forward primary node selection to parent
-watch(() => [...selectedNodes], (ids) => {
-  emit('select-node', ids.length === 1 ? ids[0] : null);
-});
+watch(
+  () => [...selectedNodes],
+  (ids) => {
+    emit("select-node", ids.length === 1 ? ids[0] : null);
+  },
+);
 
 // ── Z-index (bring to front on click) ──
 const nodeZIndex = reactive(new Map<string, number>());
@@ -391,27 +464,39 @@ interface CanvasSlot {
 
 function emitSaveSlots() {
   saveCurrentSlotState();
-  emit('save-slots', JSON.parse(JSON.stringify(canvasSlots.value)));
+  emit("save-slots", JSON.parse(JSON.stringify(canvasSlots.value)));
 }
 
 const canvasSlots = ref<CanvasSlot[]>([
-  { id: 'overview', name: '★ 实时总览', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+  {
+    id: "overview",
+    name: "★ 实时总览",
+    nodes: [],
+    edges: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+  },
 ]);
-const activeSlotId = ref('overview');
+const activeSlotId = ref("overview");
 
 function initSlots() {
   const saved = props.savedSlots || [];
   if (saved.length > 0) {
-    const hasOverview = saved.some((s: any) => s.id === 'overview');
+    const hasOverview = saved.some((s: any) => s.id === "overview");
     if (!hasOverview) {
-      saved.unshift({ id: 'overview', name: '★ 实时总览', nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } });
+      saved.unshift({
+        id: "overview",
+        name: "★ 实时总览",
+        nodes: [],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      });
     }
     canvasSlots.value = saved;
   }
 }
 
 function saveCurrentSlotState() {
-  const slot = canvasSlots.value.find(s => s.id === activeSlotId.value);
+  const slot = canvasSlots.value.find((s) => s.id === activeSlotId.value);
   if (slot) {
     slot.nodes = JSON.parse(JSON.stringify(graph.state.nodes));
     slot.edges = JSON.parse(JSON.stringify(graph.state.edges));
@@ -427,12 +512,12 @@ function switchSlot(slotId: string) {
 
   activeSlotId.value = slotId;
 
-  if (slotId === 'overview') {
-    // Overview always reloads from flows
-    loadFromGraphs();
+  if (slotId === "overview") {
+    // Overview always reloads from the bound workbench graph
+    loadFromGraph();
   } else {
     // Load saved state
-    const slot = canvasSlots.value.find(s => s.id === slotId);
+    const slot = canvasSlots.value.find((s) => s.id === slotId);
     if (slot) {
       graph.state.nodes = JSON.parse(JSON.stringify(slot.nodes));
       graph.state.edges = JSON.parse(JSON.stringify(slot.edges));
@@ -457,21 +542,21 @@ function addSlot() {
 }
 
 function removeSlot(slotId: string) {
-  if (slotId === 'overview') return;
-  const idx = canvasSlots.value.findIndex(s => s.id === slotId);
+  if (slotId === "overview") return;
+  const idx = canvasSlots.value.findIndex((s) => s.id === slotId);
   if (idx === -1) return;
   canvasSlots.value.splice(idx, 1);
   if (activeSlotId.value === slotId) {
-    switchSlot('overview');
+    switchSlot("overview");
   }
   emitSaveSlots();
 }
 
 function reloadCurrentSlot() {
-  if (activeSlotId.value === 'overview') {
-    loadFromGraphs();
+  if (activeSlotId.value === "overview") {
+    loadFromGraph();
   } else {
-    const slot = canvasSlots.value.find(s => s.id === activeSlotId.value);
+    const slot = canvasSlots.value.find((s) => s.id === activeSlotId.value);
     if (slot) {
       graph.state.nodes = JSON.parse(JSON.stringify(slot.nodes));
       graph.state.edges = JSON.parse(JSON.stringify(slot.edges));
@@ -480,7 +565,9 @@ function reloadCurrentSlot() {
 }
 
 // ── Marquee selection ──
-const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+const marquee = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(
+  null,
+);
 
 const marqueeStyle = computed(() => {
   if (!marquee.value) return {};
@@ -488,22 +575,22 @@ const marqueeStyle = computed(() => {
   const left = Math.min(x1, x2);
   const top = Math.min(y1, y2);
   return {
-    left: left + 'px',
-    top: top + 'px',
-    width: Math.abs(x2 - x1) + 'px',
-    height: Math.abs(y2 - y1) + 'px',
+    left: left + "px",
+    top: top + "px",
+    width: Math.abs(x2 - x1) + "px",
+    height: Math.abs(y2 - y1) + "px",
   };
 });
 
 function onNodeMove(nodeId: string, x: number, y: number) {
   // If the dragged node is selected and there are other selected nodes, move all
   if (selectedNodes.has(nodeId) && selectedNodes.size > 1) {
-    const node = graph.state.nodes.find(n => n.id === nodeId);
+    const node = graph.state.nodes.find((n) => n.id === nodeId);
     if (!node) return;
     const dx = x - node.position.x;
     const dy = y - node.position.y;
     for (const sid of selectedNodes) {
-      const sn = graph.state.nodes.find(n => n.id === sid);
+      const sn = graph.state.nodes.find((n) => n.id === sid);
       if (sn) {
         sn.position.x += dx;
         sn.position.y += dy;
@@ -516,7 +603,7 @@ function onNodeMove(nodeId: string, x: number, y: number) {
 
 function onGroupMove(dx: number, dy: number) {
   for (const sid of selectedNodes) {
-    const sn = graph.state.nodes.find(n => n.id === sid);
+    const sn = graph.state.nodes.find((n) => n.id === sid);
     if (sn) {
       sn.position.x += dx;
       sn.position.y += dy;
@@ -525,18 +612,31 @@ function onGroupMove(dx: number, dy: number) {
 }
 
 // ── Context menu ──
-const ctxMenu = ref<{ x: number; y: number; edgeId?: string; nodeId?: string } | null>(null);
+const ctxMenu = ref<{
+  x: number;
+  y: number;
+  edgeId?: string;
+  nodeId?: string;
+} | null>(null);
 
 function onEdgeContextMenu(edgeId: string, event: MouseEvent) {
   const rect = canvasContainer.value?.getBoundingClientRect();
   if (!rect) return;
-  ctxMenu.value = { x: event.clientX - rect.left, y: event.clientY - rect.top, edgeId };
+  ctxMenu.value = {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+    edgeId,
+  };
 }
 
 function onNodeContextMenu(nodeId: string, event: MouseEvent) {
   const rect = canvasContainer.value?.getBoundingClientRect();
   if (!rect) return;
-  ctxMenu.value = { x: event.clientX - rect.left, y: event.clientY - rect.top, nodeId };
+  ctxMenu.value = {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+    nodeId,
+  };
 }
 
 function onCanvasContextMenu(event: MouseEvent) {
@@ -545,18 +645,26 @@ function onCanvasContextMenu(event: MouseEvent) {
 }
 
 function deleteEdge(edgeId: string) {
+  pushUndo();
   graph.removeEdge(edgeId);
   selectedEdge.value = null;
   ctxMenu.value = null;
 }
 
 function deleteNode(nodeId: string) {
+  pushUndo();
   graph.removeNode(nodeId);
+  selectedNodes.delete(nodeId);
   ctxMenu.value = null;
 }
 
 // ── Touch (mobile) ──
-let touchPanState: { startX: number; startY: number; vpX: number; vpY: number } | null = null;
+let touchPanState: {
+  startX: number;
+  startY: number;
+  vpX: number;
+  vpY: number;
+} | null = null;
 let pinchState: { dist: number; zoom: number } | null = null;
 
 function getTouchDist(t1: Touch, t2: Touch): number {
@@ -606,13 +714,13 @@ function onTouchEnd() {
 // ── Palette drag-drop ──
 
 function onDragOver(e: DragEvent) {
-  if (e.dataTransfer?.types.includes('application/ew-module')) {
-    e.dataTransfer.dropEffect = 'copy';
+  if (e.dataTransfer?.types.includes("application/ew-module")) {
+    e.dataTransfer.dropEffect = "copy";
   }
 }
 
 function onDrop(e: DragEvent) {
-  const moduleId = e.dataTransfer?.getData('application/ew-module');
+  const moduleId = e.dataTransfer?.getData("application/ew-module");
   if (!moduleId) return;
   const bp = MODULE_REGISTRY.get(moduleId);
   if (!bp) return;
@@ -664,9 +772,12 @@ const zoomPercent = computed(() => Math.round(graph.state.viewport.zoom * 100));
 // ── Minimap ──
 const minimapViewBox = computed(() => {
   const nodes = graph.state.nodes;
-  if (nodes.length === 0) return '0 0 1000 600';
+  if (nodes.length === 0) return "0 0 1000 600";
   const PAD = 200;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
   for (const n of nodes) {
     minX = Math.min(minX, n.position.x);
     minY = Math.min(minY, n.position.y);
@@ -677,7 +788,7 @@ const minimapViewBox = computed(() => {
 });
 
 const minimapEdges = computed(() => {
-  return graph.state.edges.map(edge => {
+  return graph.state.edges.map((edge) => {
     const sx = getEdgeSourceX(edge);
     const sy = getEdgeSourceY(edge);
     const tx = getEdgeTargetX(edge);
@@ -691,7 +802,24 @@ const minimapEdges = computed(() => {
 });
 
 function getMinimapNodeColor(moduleId: string): string {
-  return MODULE_REGISTRY.get(moduleId)?.color ?? '#6366f1';
+  return MODULE_REGISTRY.get(moduleId)?.color ?? "#6366f1";
+}
+
+const editingNode = computed(() => {
+  if (selectedNodes.size !== 1) return null;
+  const [nodeId] = [...selectedNodes];
+  return graph.nodeMap.value.get(nodeId) ?? null;
+});
+
+function clearSelection() {
+  selectedNodes.clear();
+  selectedEdge.value = null;
+}
+
+function onUpdateConfig(nodeId: string, config: Record<string, any>) {
+  const node = graph.nodeMap.value.get(nodeId);
+  if (!node) return;
+  node.config = { ...config };
 }
 
 const viewportRect = computed(() => {
@@ -705,16 +833,18 @@ const viewportRect = computed(() => {
   return { x, y, w, h };
 });
 
-function minimapScreenToWorld(e: PointerEvent): { worldX: number; worldY: number } | null {
+function minimapScreenToWorld(
+  e: PointerEvent,
+): { worldX: number; worldY: number } | null {
   const target = (e.currentTarget || e.target) as HTMLElement;
-  const minimapEl = target.closest('.ew-graph-minimap') as HTMLElement;
+  const minimapEl = target.closest(".ew-graph-minimap") as HTMLElement;
   if (!minimapEl) return null;
-  const svg = minimapEl.querySelector('svg');
+  const svg = minimapEl.querySelector("svg");
   if (!svg) return null;
   const rect = svg.getBoundingClientRect();
   const xRatio = (e.clientX - rect.left) / rect.width;
   const yRatio = (e.clientY - rect.top) / rect.height;
-  const vb = minimapViewBox.value.split(' ').map(Number);
+  const vb = minimapViewBox.value.split(" ").map(Number);
   return {
     worldX: vb[0] + xRatio * vb[2],
     worldY: vb[1] + yRatio * vb[3],
@@ -734,27 +864,29 @@ function onMinimapPointerDown(e: PointerEvent) {
   if (!pos) return;
   navigateToWorld(pos.worldX, pos.worldY);
 
-  const minimapEl = (e.currentTarget as HTMLElement).closest('.ew-graph-minimap') as HTMLElement;
+  const minimapEl = (e.currentTarget as HTMLElement).closest(
+    ".ew-graph-minimap",
+  ) as HTMLElement;
   if (!minimapEl) return;
   minimapEl.setPointerCapture(e.pointerId);
 
-  const svg = minimapEl.querySelector('svg')!;
+  const svg = minimapEl.querySelector("svg")!;
 
   const onMove = (me: PointerEvent) => {
     const rect = svg.getBoundingClientRect();
     const xRatio = (me.clientX - rect.left) / rect.width;
     const yRatio = (me.clientY - rect.top) / rect.height;
-    const vb = minimapViewBox.value.split(' ').map(Number);
+    const vb = minimapViewBox.value.split(" ").map(Number);
     navigateToWorld(vb[0] + xRatio * vb[2], vb[1] + yRatio * vb[3]);
   };
 
   const onUp = () => {
-    svg.removeEventListener('pointermove', onMove);
-    svg.removeEventListener('pointerup', onUp);
+    svg.removeEventListener("pointermove", onMove);
+    svg.removeEventListener("pointerup", onUp);
   };
 
-  svg.addEventListener('pointermove', onMove);
-  svg.addEventListener('pointerup', onUp);
+  svg.addEventListener("pointermove", onMove);
+  svg.addEventListener("pointerup", onUp);
 }
 
 // ── Minimap position (draggable) ──
@@ -763,7 +895,7 @@ const minimapPos = ref({ x: 12, y: 90 });
 function onMinimapDragStart(e: PointerEvent) {
   e.preventDefault();
   const handle = e.currentTarget as HTMLElement;
-  const minimap = handle.closest('.ew-graph-minimap') as HTMLElement;
+  const minimap = handle.closest(".ew-graph-minimap") as HTMLElement;
   if (!minimap) return;
 
   const container = minimap.parentElement;
@@ -781,17 +913,23 @@ function onMinimapDragStart(e: PointerEvent) {
     const dx = me.clientX - startX;
     const dy = me.clientY - startY;
     // right/bottom positioning: moving right on screen decreases 'right', moving down decreases 'bottom'
-    minimapPos.value.x = Math.max(0, Math.min(containerRect.width - 190, startRight - dx));
-    minimapPos.value.y = Math.max(0, Math.min(containerRect.height - 140, startBottom - dy));
+    minimapPos.value.x = Math.max(
+      0,
+      Math.min(containerRect.width - 190, startRight - dx),
+    );
+    minimapPos.value.y = Math.max(
+      0,
+      Math.min(containerRect.height - 140, startBottom - dy),
+    );
   };
 
   const onUp = () => {
-    handle.removeEventListener('pointermove', onMove);
-    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener("pointermove", onMove);
+    handle.removeEventListener("pointerup", onUp);
   };
 
-  handle.addEventListener('pointermove', onMove);
-  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", onUp);
 }
 
 // ── Edge position helpers ──
@@ -809,9 +947,33 @@ function getPortWorldPosition(
 ): { x: number; y: number } {
   const node = graph.nodeMap.value.get(nodeId);
   if (!node) return { x: 0, y: 0 };
-  // Approximate: in ports on left, out ports on right
+
+  const nodeComp = nodeRefs.get(nodeId);
+  const screenPos = nodeComp?.getPortCenter?.(portId) as {
+    x: number;
+    y: number;
+  } | null;
+  const rect = canvasContainer.value?.getBoundingClientRect();
+  if (screenPos && rect) {
+    return {
+      x:
+        (screenPos.x - rect.left - graph.state.viewport.x) /
+        graph.state.viewport.zoom,
+      y:
+        (screenPos.y - rect.top - graph.state.viewport.y) /
+        graph.state.viewport.zoom,
+    };
+  }
+
+  const blueprint = MODULE_REGISTRY.get(node.moduleId);
+  const ports =
+    blueprint?.ports.filter((port) => port.direction === direction) ?? [];
+  const index = Math.max(
+    0,
+    ports.findIndex((port) => port.id === portId),
+  );
   const x = direction === "out" ? node.position.x + 240 : node.position.x;
-  const y = node.position.y + 40; // middle-ish
+  const y = node.position.y + 46 + index * 24;
   return { x, y };
 }
 
@@ -854,10 +1016,10 @@ let marqueeOriginY = 0;
 function onCanvasPointerDown(e: PointerEvent) {
   const isBackground =
     e.target === canvasContainer.value ||
-    (e.target as HTMLElement)?.classList?.contains('ew-graph-editor__grid') ||
-    (e.target as HTMLElement)?.tagName === 'rect' ||
-    (e.target as HTMLElement)?.tagName === 'pattern' ||
-    (e.target as HTMLElement)?.classList?.contains('ew-graph-editor__canvas');
+    (e.target as HTMLElement)?.classList?.contains("ew-graph-editor__grid") ||
+    (e.target as HTMLElement)?.tagName === "rect" ||
+    (e.target as HTMLElement)?.tagName === "pattern" ||
+    (e.target as HTMLElement)?.classList?.contains("ew-graph-editor__canvas");
 
   // Middle button = always pan
   if (e.button === 1) {
@@ -901,13 +1063,18 @@ function onCanvasPointerDown(e: PointerEvent) {
         const rect = canvasContainer.value?.getBoundingClientRect();
         if (!rect) return;
         const zoom = graph.state.viewport.zoom;
-        marquee.value.x2 = (ev.clientX - rect.left - graph.state.viewport.x) / zoom;
-        marquee.value.y2 = (ev.clientY - rect.top - graph.state.viewport.y) / zoom;
+        marquee.value.x2 =
+          (ev.clientX - rect.left - graph.state.viewport.x) / zoom;
+        marquee.value.y2 =
+          (ev.clientY - rect.top - graph.state.viewport.y) / zoom;
       }
     };
 
     const onUpMarquee = () => {
-      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
       if (isMarqueeMode && marquee.value) {
         // Hit-test: select nodes inside the marquee rect
         const { x1, y1, x2, y2 } = marquee.value;
@@ -919,7 +1086,7 @@ function onCanvasPointerDown(e: PointerEvent) {
           const nx = node.position.x;
           const ny = node.position.y;
           const nw = 240; // node width
-          const nh = 80;  // approximate node height
+          const nh = 80; // approximate node height
           // Check overlap
           if (nx + nw > left && nx < right && ny + nh > top && ny < bottom) {
             selectedNodes.add(node.id);
@@ -928,12 +1095,12 @@ function onCanvasPointerDown(e: PointerEvent) {
       }
       isMarqueeMode = false;
       marquee.value = null;
-      window.removeEventListener('pointermove', onMoveMarquee);
-      window.removeEventListener('pointerup', onUpMarquee);
+      window.removeEventListener("pointermove", onMoveMarquee);
+      window.removeEventListener("pointerup", onUpMarquee);
     };
 
-    window.addEventListener('pointermove', onMoveMarquee);
-    window.addEventListener('pointerup', onUpMarquee);
+    window.addEventListener("pointermove", onMoveMarquee);
+    window.addEventListener("pointerup", onUpMarquee);
   }
 }
 
@@ -947,7 +1114,8 @@ function startPan(e: PointerEvent) {
   const onMove = (ev: PointerEvent) => {
     if (!isPanning) return;
     // If we moved far enough, cancel the long-press timer
-    const dist = Math.abs(ev.clientX - panStartX) + Math.abs(ev.clientY - panStartY);
+    const dist =
+      Math.abs(ev.clientX - panStartX) + Math.abs(ev.clientY - panStartY);
     if (dist > 5 && longPressTimer) {
       clearTimeout(longPressTimer);
       longPressTimer = null;
@@ -959,11 +1127,11 @@ function startPan(e: PointerEvent) {
   };
   const onUp = () => {
     isPanning = false;
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
   };
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 }
 
 function onWheel(e: WheelEvent) {
@@ -1041,16 +1209,16 @@ function autoLayout() {
 
   // Assign layers via BFS from roots
   const layer = new Map<string, number>();
-  const roots = nodes.filter(n => (incoming.get(n.id)?.length || 0) === 0);
+  const roots = nodes.filter((n) => (incoming.get(n.id)?.length || 0) === 0);
   if (roots.length === 0) roots.push(nodes[0]); // fallback
 
-  const queue: string[] = roots.map(n => n.id);
+  const queue: string[] = roots.map((n) => n.id);
   for (const id of queue) layer.set(id, 0);
 
   while (queue.length > 0) {
     const id = queue.shift()!;
     const l = layer.get(id)!;
-    for (const next of (outgoing.get(id) || [])) {
+    for (const next of outgoing.get(id) || []) {
       const existing = layer.get(next);
       if (existing === undefined || existing < l + 1) {
         layer.set(next, l + 1);
@@ -1080,7 +1248,7 @@ function autoLayout() {
   for (const [l, ids] of layers) {
     const x = START_X + l * H_GAP;
     for (let i = 0; i < ids.length; i++) {
-      const node = nodes.find(n => n.id === ids[i]);
+      const node = nodes.find((n) => n.id === ids[i]);
       if (node) {
         node.position.x = x;
         node.position.y = START_Y + i * V_GAP;
@@ -1098,11 +1266,11 @@ function copySelectedNodes() {
   if (selectedNodes.size === 0) return;
   const nodeIds = new Set(selectedNodes);
   const copiedNodes = graph.state.nodes
-    .filter(n => nodeIds.has(n.id))
-    .map(n => JSON.parse(JSON.stringify(n)));
+    .filter((n) => nodeIds.has(n.id))
+    .map((n) => JSON.parse(JSON.stringify(n)));
   const copiedEdges = graph.state.edges
-    .filter(e => nodeIds.has(e.source) && nodeIds.has(e.target))
-    .map(e => JSON.parse(JSON.stringify(e)));
+    .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+    .map((e) => JSON.parse(JSON.stringify(e)));
   clipboard = { nodes: copiedNodes, edges: copiedEdges };
 }
 
@@ -1141,7 +1309,7 @@ function pasteNodes() {
 
   // Update clipboard positions for cascading pastes
   clipboard = {
-    nodes: clipboard.nodes.map(n => ({
+    nodes: clipboard.nodes.map((n) => ({
       ...n,
       position: { x: n.position.x + OFFSET, y: n.position.y + OFFSET },
     })),
@@ -1184,13 +1352,20 @@ function onFullscreenKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && isFullscreen.value) {
     isFullscreen.value = false;
   }
-  if ((event.key === "Delete" || event.key === "Backspace") && selectedEdge.value) {
+  if (
+    (event.key === "Delete" || event.key === "Backspace") &&
+    selectedEdge.value
+  ) {
     pushUndo();
     graph.removeEdge(selectedEdge.value);
     selectedEdge.value = null;
   }
   // Delete selected nodes
-  if ((event.key === "Delete" || event.key === "Backspace") && selectedNodes.size > 0 && !selectedEdge.value) {
+  if (
+    (event.key === "Delete" || event.key === "Backspace") &&
+    selectedNodes.size > 0 &&
+    !selectedEdge.value
+  ) {
     pushUndo();
     for (const nodeId of selectedNodes) {
       graph.removeNode(nodeId);
@@ -1206,12 +1381,19 @@ function onFullscreenKeydown(event: KeyboardEvent) {
     pasteNodes();
   }
   // Undo
-  if ((event.ctrlKey || event.metaKey) && event.key === "z" && !event.shiftKey) {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.key === "z" &&
+    !event.shiftKey
+  ) {
     event.preventDefault();
     undo();
   }
   // Redo
-  if ((event.ctrlKey || event.metaKey) && ((event.key === "z" && event.shiftKey) || event.key === "y")) {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    ((event.key === "z" && event.shiftKey) || event.key === "y")
+  ) {
     event.preventDefault();
     redo();
   }
@@ -1222,8 +1404,8 @@ function onFullscreenKeydown(event: KeyboardEvent) {
 function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
   // Determine if we're dragging from an 'in' or 'out' port
   const sourceNode = graph.nodeMap.value.get(nodeId);
-  const sourceBp = MODULE_REGISTRY.get(sourceNode?.moduleId ?? '');
-  const sourcePortDef = sourceBp?.ports.find(p => p.id === portId);
+  const sourceBp = MODULE_REGISTRY.get(sourceNode?.moduleId ?? "");
+  const sourcePortDef = sourceBp?.ports.find((p) => p.id === portId);
   const sourceDir = sourcePortDef?.direction || "out";
 
   const pos = getPortWorldPosition(nodeId, portId, sourceDir);
@@ -1280,6 +1462,7 @@ function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
     }
 
     if (targetNodeId && targetPortId) {
+      pushUndo();
       // Ensure correct direction: always source(out) → target(in)
       if (sourceDir === "out") {
         graph.addEdge(nodeId, portId, targetNodeId, targetPortId);
@@ -1297,56 +1480,59 @@ function onPortDragStart(nodeId: string, portId: string, e: PointerEvent) {
 
 // ── Load graph data from props ──
 
-function loadFromGraphs() {
+function loadFromGraph() {
   graph.state.nodes = [];
   graph.state.edges = [];
+  graph.state.viewport.x = 0;
+  graph.state.viewport.y = 0;
+  graph.state.viewport.zoom = 1;
 
-  const graphs = props.graphs || [];
-  if (graphs.length === 0) return;
+  const boundGraph = props.graph;
+  if (!boundGraph) return;
 
-  // Load the first graph
-  const g = graphs[0];
-  if (g) {
-    graph.state.nodes = JSON.parse(JSON.stringify(g.nodes));
-    graph.state.edges = JSON.parse(JSON.stringify(g.edges));
-    if (g.viewport) {
-      graph.state.viewport.x = g.viewport.x;
-      graph.state.viewport.y = g.viewport.y;
-      graph.state.viewport.zoom = g.viewport.zoom;
-    }
+  graph.state.nodes = JSON.parse(JSON.stringify(boundGraph.nodes ?? []));
+  graph.state.edges = JSON.parse(JSON.stringify(boundGraph.edges ?? []));
+  if (boundGraph.viewport) {
+    graph.state.viewport.x = boundGraph.viewport.x;
+    graph.state.viewport.y = boundGraph.viewport.y;
+    graph.state.viewport.zoom = boundGraph.viewport.zoom;
   }
   nextTick(() => fitView());
 }
 
-// Reload when graphs data changes
-watch(() => props.graphs, (newGraphs) => {
-  if (newGraphs && newGraphs.length > 0 && graph.state.nodes.length === 0) {
-    loadFromGraphs();
-  }
-}, { deep: false });
+watch(
+  () => props.graph,
+  () => {
+    if (activeSlotId.value === "overview") {
+      loadFromGraph();
+    }
+  },
+  { deep: true, immediate: true },
+);
 
 // ── Bidirectional data sync (overview only) ──
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 
 watch(
-  () => [graph.state.nodes.length, graph.state.edges.length],
+  () => [
+    graph.state.nodes,
+    graph.state.edges,
+    graph.state.viewport.x,
+    graph.state.viewport.y,
+    graph.state.viewport.zoom,
+  ],
   () => {
-    if (activeSlotId.value !== 'overview') return;
-    if (!props.graphs || props.graphs.length === 0) return;
+    if (activeSlotId.value !== "overview") return;
+    if (!props.graph) return;
     if (syncTimer) clearTimeout(syncTimer);
     syncTimer = setTimeout(() => {
-      const updated = props.graphs.map((g, i) => {
-        if (i === 0) {
-          return {
-            ...g,
-            nodes: JSON.parse(JSON.stringify(graph.state.nodes)),
-            edges: JSON.parse(JSON.stringify(graph.state.edges)),
-          };
-        }
-        return g;
+      emit("update:graph", {
+        ...props.graph!,
+        nodes: JSON.parse(JSON.stringify(graph.state.nodes)),
+        edges: JSON.parse(JSON.stringify(graph.state.edges)),
+        viewport: { ...graph.state.viewport },
       });
-      emit('update:graphs', updated);
-    }, 500);
+    }, 150);
   },
   { deep: true },
 );
@@ -1354,7 +1540,7 @@ watch(
 // Initialize
 onMounted(() => {
   initSlots();
-  loadFromGraphs();
+  loadFromGraph();
   containerResizeObserver = new ResizeObserver(() => {
     if (isFullscreen.value) {
       scheduleFitView(2);
@@ -1499,13 +1685,6 @@ onUnmounted(() => {
   text-align: center;
 }
 
-/* Node type label (placeholder for Phase 1) */
-.ew-graph-node__type-label {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-  font-family: monospace;
-}
-
 /* ── Context menu ── */
 .ew-graph-ctx {
   position: absolute;
@@ -1523,8 +1702,14 @@ onUnmounted(() => {
 }
 
 @keyframes ew-ctx-in {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .ew-graph-ctx button {
