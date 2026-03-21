@@ -22,7 +22,45 @@ import {
   hasRegisteredHandler,
   resolveNodeHandler,
 } from "./runtime-node-registry";
-import type { EwFlowConfig } from "./types";
+import { loadLastRun, loadLastRunForChat, setLastRun } from "./settings";
+import { RunSummarySchema, type EwFlowConfig, type RunSummary } from "./types";
+
+type MemoryStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  clear: () => void;
+};
+
+function ensureMemoryLocalStorage(): MemoryStorage {
+  const existing = globalThis.localStorage as MemoryStorage | undefined;
+  if (existing) {
+    existing.clear();
+    return existing;
+  }
+
+  const store = new Map<string, string>();
+  const memoryStorage: MemoryStorage = {
+    getItem: (key) => (store.has(key) ? (store.get(key) ?? null) : null),
+    setItem: (key, value) => {
+      store.set(String(key), String(value));
+    },
+    removeItem: (key) => {
+      store.delete(String(key));
+    },
+    clear: () => {
+      store.clear();
+    },
+  };
+
+  Object.defineProperty(globalThis, "localStorage", {
+    value: memoryStorage,
+    configurable: true,
+    writable: true,
+  });
+
+  return memoryStorage;
+}
 
 function makeBaseGraph(): WorkbenchGraph {
   return {
@@ -681,7 +719,83 @@ function assertBridgeDiagnostics(
   );
 }
 
+function assertRunSummaryBridgeContract(
+  actual: RunSummary | null,
+  expected: {
+    chatId: string;
+    requestId: string;
+    ok: boolean;
+    reason: string;
+    route: WorkflowBridgeRouteSelection["route"];
+    bridgeReason: WorkflowBridgeRouteSelection["reason"];
+    hasExplicitLegacyFlowSelection: boolean;
+    enabledGraphCount: number;
+    selectedGraphIds?: string[];
+    failureOrigin?:
+      | "graph_dispatch"
+      | "legacy_dispatch"
+      | "legacy_merge"
+      | "legacy_writeback"
+      | "cancelled";
+    hasFailure: boolean;
+  },
+): void {
+  assert(actual, "Expected run summary to exist");
+  const summary = actual as RunSummary;
+  assert(
+    summary.chat_id === expected.chatId,
+    `Expected summary.chat_id to be ${expected.chatId}. Actual: ${summary.chat_id}`,
+  );
+  assert(
+    summary.request_id === expected.requestId,
+    `Expected summary.request_id to be ${expected.requestId}. Actual: ${summary.request_id}`,
+  );
+  assert(
+    summary.ok === expected.ok,
+    `Expected summary.ok to be ${expected.ok}. Actual: ${summary.ok}`,
+  );
+  assert(
+    summary.reason === expected.reason,
+    `Expected summary.reason to be ${expected.reason}. Actual: ${summary.reason}`,
+  );
+  assertBridgeDiagnostics(summary.diagnostics, {
+    route: expected.route,
+    reason: expected.bridgeReason,
+    hasExplicitLegacyFlowSelection: expected.hasExplicitLegacyFlowSelection,
+    enabledGraphCount: expected.enabledGraphCount,
+    selectedGraphIds: expected.selectedGraphIds,
+    failureOrigin: expected.failureOrigin,
+  });
+  assert(
+    Boolean(summary.failure) === expected.hasFailure,
+    `Expected summary.failure presence to be ${expected.hasFailure}. Actual: ${JSON.stringify(summary.failure)}`,
+  );
+}
+
+function createRunSummaryFixture(params: {
+  chatId: string;
+  requestId: string;
+  ok: boolean;
+  reason: string;
+  bridgeDiagnostics: Record<string, any>;
+  failure?: RunSummary["failure"];
+}): RunSummary {
+  return RunSummarySchema.parse({
+    at: Date.now(),
+    ok: params.ok,
+    reason: params.reason,
+    request_id: params.requestId,
+    chat_id: params.chatId,
+    flow_count: 1,
+    elapsed_ms: 12,
+    mode: "manual",
+    diagnostics: params.bridgeDiagnostics,
+    ...(params.failure ? { failure: params.failure } : {}),
+  });
+}
+
 async function runValidationSpec(): Promise<void> {
+  ensureMemoryLocalStorage();
   const validGraphErrors = validateGraph(makeBaseGraph());
   assert(
     validGraphErrors.length === 0,
@@ -1860,6 +1974,128 @@ async function runValidationSpec(): Promise<void> {
       failureOrigin: "cancelled",
     },
   );
+
+  const graphSummary = createRunSummaryFixture({
+    chatId: "chat_graph_success",
+    requestId: "req_graph_success",
+    ok: true,
+    reason: "",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: graphFirstRoute,
+    }),
+  });
+  setLastRun(graphSummary);
+  assertRunSummaryBridgeContract(loadLastRun(), {
+    chatId: "chat_graph_success",
+    requestId: "req_graph_success",
+    ok: true,
+    reason: "",
+    route: "graph",
+    bridgeReason: "graph_first",
+    hasExplicitLegacyFlowSelection: false,
+    enabledGraphCount: 1,
+    selectedGraphIds: ["graph_test"],
+    hasFailure: false,
+  });
+  assertRunSummaryBridgeContract(loadLastRunForChat("chat_graph_success"), {
+    chatId: "chat_graph_success",
+    requestId: "req_graph_success",
+    ok: true,
+    reason: "",
+    route: "graph",
+    bridgeReason: "graph_first",
+    hasExplicitLegacyFlowSelection: false,
+    enabledGraphCount: 1,
+    selectedGraphIds: ["graph_test"],
+    hasFailure: false,
+  });
+
+  const legacySuccessSummary = createRunSummaryFixture({
+    chatId: "chat_legacy_success",
+    requestId: "req_legacy_success",
+    ok: true,
+    reason: "",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+    }),
+  });
+  setLastRun(legacySuccessSummary);
+  assertRunSummaryBridgeContract(loadLastRunForChat("chat_legacy_success"), {
+    chatId: "chat_legacy_success",
+    requestId: "req_legacy_success",
+    ok: true,
+    reason: "",
+    route: "legacy",
+    bridgeReason: "legacy_flow_selection",
+    hasExplicitLegacyFlowSelection: true,
+    enabledGraphCount: 1,
+    hasFailure: false,
+  });
+
+  const legacyFailureSummary = createRunSummaryFixture({
+    chatId: "chat_legacy_failure",
+    requestId: "req_legacy_failure",
+    ok: false,
+    reason: "legacy dispatch failed",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+      failureOrigin: "legacy_dispatch",
+    }),
+    failure: {
+      stage: "dispatch",
+      kind: "unknown",
+      summary: "legacy dispatch failed",
+      detail: "legacy dispatch failed",
+      suggestion: "",
+      request_id: "req_legacy_failure",
+      flow_id: "flow_legacy",
+      flow_name: "Legacy Flow",
+      api_preset_name: "preset",
+      http_status: null,
+      retry_count: 0,
+      attempted_flow_count: 1,
+      successful_flow_count: 0,
+      failed_flow_count: 1,
+      partial_success: false,
+      whole_workflow_failed: true,
+    },
+  });
+  setLastRun(legacyFailureSummary);
+  assertRunSummaryBridgeContract(loadLastRunForChat("chat_legacy_failure"), {
+    chatId: "chat_legacy_failure",
+    requestId: "req_legacy_failure",
+    ok: false,
+    reason: "legacy dispatch failed",
+    route: "legacy",
+    bridgeReason: "legacy_flow_selection",
+    hasExplicitLegacyFlowSelection: true,
+    enabledGraphCount: 1,
+    failureOrigin: "legacy_dispatch",
+    hasFailure: true,
+  });
+
+  const noEnabledGraphSummary = createRunSummaryFixture({
+    chatId: "chat_legacy_skip",
+    requestId: "req_legacy_skip",
+    ok: true,
+    reason: "no flows match timing 'after_reply'",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: legacyFallbackRoute,
+    }),
+  });
+  setLastRun(noEnabledGraphSummary);
+  assertRunSummaryBridgeContract(loadLastRunForChat("chat_legacy_skip"), {
+    chatId: "chat_legacy_skip",
+    requestId: "req_legacy_skip",
+    ok: true,
+    reason: "no flows match timing 'after_reply'",
+    route: "legacy",
+    bridgeReason: "no_enabled_graph",
+    hasExplicitLegacyFlowSelection: false,
+    enabledGraphCount: 0,
+    hasFailure: false,
+  });
+
   // ══════════════════════════════════════════════════════════════════
   // P2.1 — Runtime Node Registry Tests
   // ══════════════════════════════════════════════════════════════════

@@ -683,6 +683,30 @@ function mergeWorkflowDiagnostics(
   };
 }
 
+function composeWorkflowSummaryDiagnostics(params: {
+  diagnostics?: Record<string, any>;
+  bridgeDiagnostics: Record<string, any>;
+}): Record<string, any> {
+  const baseDiagnostics = params.diagnostics ?? {};
+  const nextBridgeDiagnostics =
+    params.bridgeDiagnostics?.bridge &&
+    typeof params.bridgeDiagnostics.bridge === "object"
+      ? params.bridgeDiagnostics.bridge
+      : {};
+  const baseBridgeDiagnostics =
+    baseDiagnostics.bridge && typeof baseDiagnostics.bridge === "object"
+      ? baseDiagnostics.bridge
+      : {};
+
+  return {
+    ...baseDiagnostics,
+    bridge: {
+      ...baseBridgeDiagnostics,
+      ...nextBridgeDiagnostics,
+    },
+  };
+}
+
 function persistWorkflowSummary(params: {
   ok: boolean;
   reason: string;
@@ -692,6 +716,7 @@ function persistWorkflowSummary(params: {
   startedAt: number;
   mode: RunWorkflowInput["mode"];
   diagnostics?: Record<string, any>;
+  bridgeDiagnostics: Record<string, any>;
   failure?: WorkflowFailureDiagnostic | null;
 }): void {
   persistRunSummarySafe(
@@ -704,7 +729,10 @@ function persistWorkflowSummary(params: {
       flow_count: params.flowCount,
       elapsed_ms: Date.now() - params.startedAt,
       mode: params.mode,
-      diagnostics: params.diagnostics ?? {},
+      diagnostics: composeWorkflowSummaryDiagnostics({
+        diagnostics: params.diagnostics,
+        bridgeDiagnostics: params.bridgeDiagnostics,
+      }),
       ...(params.failure ? { failure: params.failure } : {}),
     }),
   );
@@ -805,7 +833,7 @@ async function runGraphWorkflow(
           flowCount: sorted.length,
           startedAt,
           mode: input.mode,
-          diagnostics,
+          bridgeDiagnostics: diagnostics,
           failure,
         });
         return {
@@ -828,7 +856,7 @@ async function runGraphWorkflow(
       flowCount: sorted.length,
       startedAt,
       mode: input.mode,
-      diagnostics: bridgeDiagnostics,
+      bridgeDiagnostics,
     });
 
     return {
@@ -863,7 +891,7 @@ async function runGraphWorkflow(
       flowCount: bridgeRoute.enabledGraphs.length,
       startedAt,
       mode: input.mode,
-      diagnostics,
+      bridgeDiagnostics: diagnostics,
       failure,
     });
     return {
@@ -981,7 +1009,7 @@ export async function runWorkflow(
           flowCount: 0,
           startedAt,
           mode: input.mode,
-          diagnostics,
+          bridgeDiagnostics: diagnostics,
         });
         return {
           ok: true,
@@ -1007,7 +1035,7 @@ export async function runWorkflow(
           flowCount: 0,
           startedAt,
           mode: input.mode,
-          diagnostics,
+          bridgeDiagnostics: diagnostics,
         });
         return {
           ok: true,
@@ -1124,7 +1152,8 @@ export async function runWorkflow(
       flowCount: results.length,
       startedAt,
       mode: input.mode,
-      diagnostics,
+      diagnostics: mergedPlan.diagnostics,
+      bridgeDiagnostics: baseBridgeDiagnostics,
     });
 
     input.onProgress?.({
@@ -1194,7 +1223,7 @@ export async function runWorkflow(
           : settings.flows.filter((flow) => flow.enabled).length,
       startedAt,
       mode: input.mode,
-      diagnostics,
+      bridgeDiagnostics: diagnostics,
       failure,
     });
 

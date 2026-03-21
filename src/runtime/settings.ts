@@ -634,10 +634,33 @@ export function subscribeSettings(listener: SettingsListener): {
   return { stop: () => settingsListeners.delete(listener) };
 }
 
+function persistNormalizedLastRunRecord(
+  storage: ScriptStorageShape,
+  summary: RunSummary,
+): void {
+  writeScriptStorage((previous) => {
+    const byChat = normalizeRunRecordMap({
+      ...previous,
+      last_run_by_chat: storage.last_run_by_chat ?? previous.last_run_by_chat,
+    });
+    if (summary.chat_id.trim()) {
+      byChat[summary.chat_id.trim()] = summary;
+    }
+    return {
+      ...previous,
+      last_run: summary,
+      last_run_by_chat: trimDebugRecordMap(byChat, MAX_DEBUG_RECORD_CHATS),
+    };
+  });
+}
+
 export function loadLastRun(): RunSummary | null {
   const storage = readScriptStorage();
   const parsed = RunSummarySchema.safeParse(storage.last_run);
   cachedLastRun = parsed.success ? parsed.data : null;
+  if (cachedLastRun) {
+    persistNormalizedLastRunRecord(storage, cachedLastRun);
+  }
   return cachedLastRun ? klona(cachedLastRun) : null;
 }
 
@@ -651,17 +674,7 @@ export function getLastRun(): RunSummary | null {
 export function setLastRun(summary: RunSummary) {
   const normalized = RunSummarySchema.parse(summary);
   cachedLastRun = normalized;
-  writeScriptStorage((previous) => {
-    const byChat = normalizeRunRecordMap(previous);
-    if (normalized.chat_id.trim()) {
-      byChat[normalized.chat_id.trim()] = normalized;
-    }
-    return {
-      ...previous,
-      last_run: normalized,
-      last_run_by_chat: trimDebugRecordMap(byChat, MAX_DEBUG_RECORD_CHATS),
-    };
-  });
+  persistNormalizedLastRunRecord(readScriptStorage(), normalized);
   emitRun(klona(normalized));
 }
 
@@ -717,6 +730,7 @@ export function loadLastRunForChat(chatId: string): RunSummary | null {
   const summary = byChat[normalizedChatId] ?? null;
   if (summary) {
     cachedLastRun = summary;
+    persistNormalizedLastRunRecord(storage, summary);
     return klona(summary);
   }
 
@@ -726,6 +740,7 @@ export function loadLastRunForChat(chatId: string): RunSummary | null {
     globalSummary.data.chat_id.trim() === normalizedChatId
   ) {
     cachedLastRun = globalSummary.data;
+    persistNormalizedLastRunRecord(storage, globalSummary.data);
     return klona(globalSummary.data);
   }
 
