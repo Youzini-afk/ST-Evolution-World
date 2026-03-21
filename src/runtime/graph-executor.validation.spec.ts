@@ -190,6 +190,24 @@ function makePlanExecutionGraph(): WorkbenchGraph {
   };
 }
 
+function makeFingerprintMutationGraph(): WorkbenchGraph {
+  const graph = makePlanExecutionGraph();
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.id === "filter_text"
+        ? {
+            ...node,
+            config: {
+              ...node.config,
+              trimMode: "strict",
+            },
+          }
+        : node,
+    ),
+  };
+}
+
 function makeDispatchSmokeGraph(): WorkbenchGraph {
   return {
     id: "graph_dispatch_smoke",
@@ -930,7 +948,48 @@ async function runValidationSpec(): Promise<void> {
     "unknown module node ref",
   );
   const compilePlanFixture = compileGraphPlan(makePlanExecutionGraph());
+  const compilePlanFixtureRepeat = compileGraphPlan(makePlanExecutionGraph());
+  const fingerprintMutationPlan = compileGraphPlan(
+    makeFingerprintMutationGraph(),
+  );
   assertPlanMatchesGraph(compilePlanFixture, makePlanExecutionGraph());
+  assert(
+    compilePlanFixture.fingerprintVersion === 1,
+    `Expected compile plan fingerprintVersion to be 1. Actual: ${compilePlanFixture.fingerprintVersion}`,
+  );
+  assert(
+    compilePlanFixture.compileFingerprint ===
+      compilePlanFixtureRepeat.compileFingerprint,
+    `Expected compileFingerprint to stay stable for identical graph compile. Actual: ${compilePlanFixture.compileFingerprint} vs ${compilePlanFixtureRepeat.compileFingerprint}`,
+  );
+  assert(
+    compilePlanFixture.nodes.every(
+      (node, index) =>
+        node.nodeFingerprint ===
+        compilePlanFixtureRepeat.nodes[index]?.nodeFingerprint,
+    ),
+    `Expected nodeFingerprint to stay stable for identical graph compile. Actual: ${compilePlanFixture.nodes.map((node) => node.nodeFingerprint).join(",")} vs ${compilePlanFixtureRepeat.nodes.map((node) => node.nodeFingerprint).join(",")}`,
+  );
+  assert(
+    compilePlanFixture.compileFingerprint !==
+      fingerprintMutationPlan.compileFingerprint,
+    `Expected compileFingerprint to change when graph structure/compile semantics change. Actual: ${compilePlanFixture.compileFingerprint} vs ${fingerprintMutationPlan.compileFingerprint}`,
+  );
+  assert(
+    compilePlanFixture.nodes.find((node) => node.nodeId === "filter_text")
+      ?.nodeFingerprint !==
+      fingerprintMutationPlan.nodes.find(
+        (node) => node.nodeId === "filter_text",
+      )?.nodeFingerprint,
+    `Expected mutated nodeFingerprint to change for affected node. Actual: ${compilePlanFixture.nodes.find((node) => node.nodeId === "filter_text")?.nodeFingerprint} vs ${fingerprintMutationPlan.nodes.find((node) => node.nodeId === "filter_text")?.nodeFingerprint}`,
+  );
+  assert(
+    compilePlanFixture.nodes.find((node) => node.nodeId === "src_text")
+      ?.nodeFingerprint ===
+      fingerprintMutationPlan.nodes.find((node) => node.nodeId === "src_text")
+        ?.nodeFingerprint,
+    `Expected unaffected nodeFingerprint to remain stable. Actual: ${compilePlanFixture.nodes.find((node) => node.nodeId === "src_text")?.nodeFingerprint} vs ${fingerprintMutationPlan.nodes.find((node) => node.nodeId === "src_text")?.nodeFingerprint}`,
+  );
   assert(
     compilePlanFixture.terminalNodeIds.join(",") === "out_reply",
     `Expected compile plan terminal node to be out_reply. Actual: ${compilePlanFixture.terminalNodeIds.join(",")}`,
@@ -1039,6 +1098,24 @@ async function runValidationSpec(): Promise<void> {
     compiledExecution.moduleResults.map((result) => result.nodeId).join(",") ===
       reversedPlan.nodeOrder.join(","),
     `Expected executeCompiledGraph to follow compile plan nodeOrder. Actual: ${compiledExecution.moduleResults.map((result) => result.nodeId).join(",")}`,
+  );
+  assert(
+    compiledExecution.moduleResults.every(
+      (result) =>
+        result.nodeFingerprint ===
+        reversedPlan.nodes.find((node) => node.nodeId === result.nodeId)
+          ?.nodeFingerprint,
+    ),
+    `Expected executeCompiledGraph moduleResults to preserve compile-plan nodeFingerprint. Actual: ${compiledExecution.moduleResults.map((result) => `${result.nodeId}:${result.nodeFingerprint}`).join(",")}`,
+  );
+  assert(
+    compiledExecution.nodeTraces?.every(
+      (trace) =>
+        trace.nodeFingerprint ===
+        reversedPlan.nodes.find((node) => node.nodeId === trace.nodeId)
+          ?.nodeFingerprint,
+    ) === true,
+    `Expected executeCompiledGraph nodeTraces to preserve compile-plan nodeFingerprint. Actual: ${compiledExecution.nodeTraces?.map((trace) => `${trace.nodeId}:${trace.nodeFingerprint}`).join(",")}`,
   );
   assert(
     compiledExecution.moduleResults
@@ -1335,6 +1412,20 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(successResult.ok, "Expected executeGraph to succeed for valid graph");
   assert(
+    successResult.runState.status === "completed" &&
+      successResult.runState.runId === successResult.requestId,
+    `Expected success runState to be completed and runId=requestId. Actual: ${JSON.stringify(successResult.runState)}`,
+  );
+  assert(
+    successResult.runState.failedStage === undefined,
+    `Expected success runState.failedStage to be undefined. Actual: ${successResult.runState.failedStage}`,
+  );
+  assert(
+    successResult.runState.compileFingerprint ===
+      successResult.compilePlan?.compileFingerprint,
+    `Expected success runState.compileFingerprint to match compilePlan. Actual: ${successResult.runState.compileFingerprint} vs ${successResult.compilePlan?.compileFingerprint}`,
+  );
+  assert(
     successResult.failedStage === undefined,
     "Expected no failedStage on success",
   );
@@ -1438,6 +1529,12 @@ async function runValidationSpec(): Promise<void> {
     makeExecutionContext(),
   );
   assert(
+    validationFailureResult.runState.status === "failed" &&
+      validationFailureResult.runState.failedStage === "validate" &&
+      validationFailureResult.runState.compileFingerprint === undefined,
+    `Expected validation failure runState to be failed/validate without compileFingerprint. Actual: ${JSON.stringify(validationFailureResult.runState)}`,
+  );
+  assert(
     !validationFailureResult.compilePlan,
     "Expected validation failure to stop before compile plan generation",
   );
@@ -1464,6 +1561,13 @@ async function runValidationSpec(): Promise<void> {
   const handlerFailureResult = await executeGraph(
     makeHandlerFailureGraph(),
     makeExecutionContext(),
+  );
+  assert(
+    handlerFailureResult.runState.status === "failed" &&
+      handlerFailureResult.runState.failedStage === "execute" &&
+      handlerFailureResult.runState.compileFingerprint ===
+        handlerFailureResult.compilePlan?.compileFingerprint,
+    `Expected handler failure runState to align with execute failure and compile plan fingerprint. Actual: ${JSON.stringify(handlerFailureResult.runState)}`,
   );
   assert(
     handlerFailureResult.ok === false &&
@@ -1593,6 +1697,13 @@ async function runValidationSpec(): Promise<void> {
   const cancelledExecutionResult = await executeGraph(
     makeBaseGraph(),
     makeExecutionContext({ isCancelled: () => true }),
+  );
+  assert(
+    cancelledExecutionResult.runState.status === "failed" &&
+      cancelledExecutionResult.runState.failedStage === "execute" &&
+      cancelledExecutionResult.runState.compileFingerprint ===
+        cancelledExecutionResult.compilePlan?.compileFingerprint,
+    `Expected cancelled execution runState to align with execute failure and retain compileFingerprint. Actual: ${JSON.stringify(cancelledExecutionResult.runState)}`,
   );
   assert(
     cancelledExecutionResult.ok === false &&
@@ -2790,6 +2901,24 @@ async function runValidationSpec(): Promise<void> {
   const registrySuccessResult = await executeGraph(
     makeBaseGraph(),
     makeExecutionContext({ userInput: "registry_test" }),
+  );
+  assert(
+    registrySuccessResult.compilePlan?.compileFingerprint ===
+      successResult.compilePlan?.compileFingerprint,
+    `Expected runtime-only input changes not to affect compileFingerprint. Actual: ${registrySuccessResult.compilePlan?.compileFingerprint} vs ${successResult.compilePlan?.compileFingerprint}`,
+  );
+  assert(
+    registrySuccessResult.compilePlan?.nodes.every(
+      (node, index) =>
+        node.nodeFingerprint ===
+        successResult.compilePlan?.nodes[index]?.nodeFingerprint,
+    ) === true,
+    `Expected runtime-only input changes not to affect nodeFingerprint. Actual: ${registrySuccessResult.compilePlan?.nodes.map((node) => node.nodeFingerprint).join(",")} vs ${successResult.compilePlan?.nodes.map((node) => node.nodeFingerprint).join(",")}`,
+  );
+  assert(
+    registrySuccessResult.moduleResults.length ===
+      registrySuccessResult.compilePlan?.nodeOrder.length,
+    `Expected executor to remain full-run instead of cache-hit/skip semantics. Actual moduleResults=${registrySuccessResult.moduleResults.length}, planNodes=${registrySuccessResult.compilePlan?.nodeOrder.length}`,
   );
   assert(
     registrySuccessResult.ok === true,

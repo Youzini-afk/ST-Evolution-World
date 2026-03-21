@@ -245,6 +245,7 @@ export interface GraphStageTrace {
 export interface GraphCompilePlanNode {
   nodeId: string;
   moduleId: string;
+  nodeFingerprint: string;
   order: number;
   sequence: number;
   dependsOn: string[];
@@ -259,6 +260,13 @@ export interface GraphCompilePlanNode {
 }
 
 export interface GraphCompilePlan {
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  fingerprintSource?: {
+    graphId: string;
+    nodeCount: number;
+    edgeCount: number;
+  };
   nodeOrder: string[];
   terminalNodeIds: string[];
   sideEffectNodeIds: string[];
@@ -275,6 +283,7 @@ export interface GraphNodeTraceError {
 export interface GraphNodeTrace {
   nodeId: string;
   moduleId: string;
+  nodeFingerprint: string;
   stage?: GraphExecutionStage;
   status?: ModuleExecutionStatus | GraphTraceStageStatus | "error" | "skipped";
   capability?: WorkbenchCapability;
@@ -322,6 +331,7 @@ export interface ExecutionContext {
 export interface ModuleExecutionResult {
   nodeId: string;
   moduleId: string;
+  nodeFingerprint: string;
   outputs: Record<string, any>; // keyed by output port ID
   elapsedMs: number;
   error?: string;
@@ -335,11 +345,22 @@ export interface ModuleExecutionResult {
   hostCommitContracts?: HostCommitContract[];
 }
 
+export interface GraphRunState {
+  runId: string;
+  status: "completed" | "failed";
+  failedStage?: GraphExecutionStage;
+  startedAt: number;
+  completedAt: number;
+  elapsedMs: number;
+  compileFingerprint?: string;
+}
+
 /** Result of executing the entire graph */
 export interface GraphExecutionResult {
   ok: boolean;
   reason?: string;
   requestId: string;
+  runState: GraphRunState;
   moduleResults: ModuleExecutionResult[];
   finalOutputs: Record<string, any>;
   elapsedMs: number;

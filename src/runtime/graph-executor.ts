@@ -221,6 +221,129 @@ function startStage(stage: GraphExecutionStage): StageTimer {
   };
 }
 
+function stableSerialize(value: unknown): string {
+  if (value === null || value === undefined) {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([left], [right]) => left.localeCompare(right),
+    );
+    return `{${entries
+      .map(
+        ([key, nestedValue]) =>
+          `${JSON.stringify(key)}:${stableSerialize(nestedValue)}`,
+      )
+      .join(",")}}`;
+  }
+  return JSON.stringify(String(value));
+}
+
+function hashFingerprint(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fp1_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function createNodeFingerprint(
+  node: WorkbenchNode,
+  dependsOn: string[],
+  order: number,
+  capability: WorkbenchCapability,
+  sideEffect: WorkbenchSideEffectLevel,
+  isTerminal: boolean,
+  hostWriteSummary?: HostWriteSummary,
+  hostCommitSummary?: HostCommitSummary,
+): string {
+  return hashFingerprint(
+    stableSerialize({
+      scope: "graph_node",
+      version: 1,
+      nodeId: node.id,
+      moduleId: node.moduleId,
+      order,
+      dependsOn: [...dependsOn].sort(),
+      isTerminal,
+      capability,
+      sideEffect,
+      config: node.config,
+      runtimeMeta: node.runtimeMeta,
+      hostWriteSummary,
+      hostCommitSummary,
+    }),
+  );
+}
+
+function createCompileFingerprint(
+  graph: WorkbenchGraph,
+  nodes: GraphCompilePlanNode[],
+): string {
+  return hashFingerprint(
+    stableSerialize({
+      scope: "graph_compile",
+      version: 1,
+      graphId: graph.id,
+      timing: graph.timing,
+      runtimeMeta: graph.runtimeMeta,
+      nodes: nodes.map((node) => ({
+        nodeId: node.nodeId,
+        moduleId: node.moduleId,
+        nodeFingerprint: node.nodeFingerprint,
+        order: node.order,
+        sequence: node.sequence,
+        dependsOn: [...node.dependsOn].sort(),
+        isTerminal: node.isTerminal,
+        capability: node.capability,
+        sideEffect: node.sideEffect,
+        isSideEffectNode: node.isSideEffectNode,
+        hostWriteSummary: node.hostWriteSummary,
+        hostCommitSummary: node.hostCommitSummary,
+      })),
+      edges: graph.edges
+        .map((edge) => ({
+          id: edge.id,
+          source: edge.source,
+          sourcePort: edge.sourcePort,
+          target: edge.target,
+          targetPort: edge.targetPort,
+          runtimeMeta: edge.runtimeMeta,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    }),
+  );
+}
+
+function createRunState(
+  requestId: string,
+  startedAt: number,
+  status: "completed" | "failed",
+  failedStage?: GraphExecutionStage,
+  compileFingerprint?: string,
+) {
+  const completedAt = Date.now();
+  return {
+    runId: requestId,
+    status,
+    failedStage,
+    startedAt,
+    completedAt,
+    elapsedMs: completedAt - startedAt,
+    ...(compileFingerprint ? { compileFingerprint } : {}),
+  };
+}
+
 function normalizeCapability(
   capability?: WorkbenchCapability,
   sideEffect?: WorkbenchSideEffectLevel,
@@ -320,27 +443,48 @@ export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
     ({ node, dependsOn }, order) => {
       const capability = getNodeCapability(node);
       const sideEffect = getNodeLegacySideEffect(node, capability);
+      const resolvedDependsOn = dependsOn
+        .map((index) => graph.nodes[index]?.id)
+        .filter((nodeId): nodeId is string => Boolean(nodeId));
+      const isTerminal = !nodesWithOutgoing.has(node.id);
+      const hostWriteSummary = getHostWriteSummary(node);
+      const hostCommitSummary = getHostCommitSummary(node);
       return {
         nodeId: node.id,
         moduleId: node.moduleId,
+        nodeFingerprint: createNodeFingerprint(
+          node,
+          resolvedDependsOn,
+          order,
+          capability,
+          sideEffect,
+          isTerminal,
+          hostWriteSummary,
+          hostCommitSummary,
+        ),
         order,
         sequence: order,
-        dependsOn: dependsOn
-          .map((index) => graph.nodes[index]?.id)
-          .filter((nodeId): nodeId is string => Boolean(nodeId)),
-        isTerminal: !nodesWithOutgoing.has(node.id),
+        dependsOn: resolvedDependsOn,
+        isTerminal,
         capability,
         sideEffect,
         stage: "compile",
         status: "ok",
         isSideEffectNode: isSideEffectNode(sideEffect),
-        hostWriteSummary: getHostWriteSummary(node),
-        hostCommitSummary: getHostCommitSummary(node),
+        hostWriteSummary,
+        hostCommitSummary,
       };
     },
   );
 
   return {
+    compileFingerprint: createCompileFingerprint(graph, nodes),
+    fingerprintVersion: 1,
+    fingerprintSource: {
+      graphId: graph.id,
+      nodeCount: graph.nodes.length,
+      edgeCount: graph.edges.length,
+    },
     nodeOrder: nodes.map((node) => node.nodeId),
     terminalNodeIds: nodes
       .filter((node) => node.isTerminal)
@@ -382,6 +526,7 @@ function createNodeTraceBase(
   return {
     nodeId: planNode.nodeId,
     moduleId: planNode.moduleId,
+    nodeFingerprint: planNode.nodeFingerprint,
     stage: planNode.stage ?? "execute",
     capability: planNode.capability ?? planNode.sideEffect,
     sideEffect: planNode.sideEffect,
@@ -518,6 +663,7 @@ export async function executeCompiledGraph(
       moduleResults.push({
         nodeId: node.id,
         moduleId: node.moduleId,
+        nodeFingerprint: planNode.nodeFingerprint,
         outputs,
         elapsedMs,
         stage: "execute",
@@ -555,6 +701,7 @@ export async function executeCompiledGraph(
       moduleResults.push({
         nodeId: node.id,
         moduleId: node.moduleId,
+        nodeFingerprint: planNode.nodeFingerprint,
         outputs: {},
         elapsedMs,
         error: errorMsg,
@@ -586,6 +733,7 @@ export async function executeCompiledGraph(
         nodeTraces.push({
           nodeId: skippedId,
           moduleId: skippedPlanNode.moduleId,
+          nodeFingerprint: skippedPlanNode.nodeFingerprint,
           stage: "execute",
           status: "skipped",
           capability: skippedPlanNode.capability,
@@ -653,6 +801,12 @@ export async function executeGraph(
       ok: false,
       reason: formatGraphValidationErrors(validationErrors),
       requestId: context.requestId,
+      runState: createRunState(
+        context.requestId,
+        startedAt,
+        "failed",
+        "validate",
+      ),
       moduleResults: [],
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
@@ -677,6 +831,7 @@ export async function executeGraph(
       ...compilePlan.nodes.map((planNode) => ({
         nodeId: planNode.nodeId,
         moduleId: planNode.moduleId,
+        nodeFingerprint: planNode.nodeFingerprint,
         stage: "compile" as const,
         status: planNode.status ?? "ok",
         capability: planNode.capability,
@@ -699,6 +854,12 @@ export async function executeGraph(
       ok: false,
       reason,
       requestId: context.requestId,
+      runState: createRunState(
+        context.requestId,
+        startedAt,
+        "failed",
+        "compile",
+      ),
       moduleResults: [],
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
@@ -728,6 +889,13 @@ export async function executeGraph(
     return {
       ok: true,
       requestId: context.requestId,
+      runState: createRunState(
+        context.requestId,
+        startedAt,
+        "completed",
+        undefined,
+        compilePlan.compileFingerprint,
+      ),
       moduleResults: execution.moduleResults,
       finalOutputs: execution.finalOutputs,
       hostWrites: execution.hostWrites,
@@ -757,6 +925,13 @@ export async function executeGraph(
       ok: false,
       reason,
       requestId: context.requestId,
+      runState: createRunState(
+        context.requestId,
+        startedAt,
+        "failed",
+        "execute",
+        compilePlan.compileFingerprint,
+      ),
       moduleResults:
         error instanceof GraphExecutionStageError ? error.moduleResults : [],
       finalOutputs: {},
