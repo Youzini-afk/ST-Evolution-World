@@ -2,7 +2,9 @@ import type {
   ExecutionContext,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
+import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import { executeGraph, validateGraph } from "./graph-executor";
+import type { EwFlowConfig } from "./types";
 
 function makeBaseGraph(): WorkbenchGraph {
   return {
@@ -78,6 +80,102 @@ function makeExecutionContext(
     userInput: "hello world",
     settings: {},
     ...overrides,
+  };
+}
+
+function makeLegacyFlowFixture(): EwFlowConfig {
+  return {
+    id: "legacy_flow_1",
+    name: "Legacy Flow",
+    enabled: true,
+    timing: "after_reply",
+    run_every_n_floors: 1,
+    priority: 5,
+    timeout_ms: 30_000,
+    api_preset_id: "preset_default",
+    generation_options: {
+      unlock_context_length: false,
+      max_context_tokens: 200000,
+      max_reply_tokens: 4096,
+      n_candidates: 1,
+      stream: true,
+      temperature: 0.7,
+      frequency_penalty: 0,
+      presence_penalty: 0,
+      top_p: 0.92,
+    },
+    behavior_options: {
+      name_behavior: "default",
+      continue_prefill: false,
+      squash_system_messages: false,
+      enable_function_calling: false,
+      send_inline_media: false,
+      request_thinking: false,
+      reasoning_effort: "auto",
+      verbosity: "auto",
+    },
+    dyn_write: {
+      mode: "overwrite",
+      item_format: "markdown_list",
+      activation_mode: "controller_only",
+      profile: {
+        comment: "",
+        position: {
+          type: "before_character_definition",
+          role: "system",
+          depth: 0,
+          order: 100,
+        },
+        strategy: {
+          type: "constant",
+          keys: [],
+          keys_secondary: {
+            logic: "and_any",
+            keys: [],
+          },
+          scan_depth: "same_as_global",
+        },
+        probability: 100,
+        effect: {
+          sticky: null,
+          cooldown: null,
+          delay: null,
+        },
+        extra: {
+          caseSensitive: false,
+          matchWholeWords: false,
+          group: "",
+          groupOverride: false,
+          groupWeight: 100,
+          useGroupScoring: false,
+        },
+      },
+    },
+    prompt_order: [
+      {
+        identifier: "main",
+        name: "Main Prompt",
+        enabled: true,
+        type: "marker",
+        role: "system",
+        content: "",
+        injection_position: "relative",
+        injection_depth: 0,
+      },
+    ],
+    prompt_items: [],
+    api_url: "",
+    api_key: "",
+    context_turns: 6,
+    extract_rules: [],
+    exclude_rules: [],
+    use_tavern_regex: false,
+    custom_regex_rules: [],
+    request_template: "",
+    response_extract_regex: "",
+    response_remove_regex: "",
+    system_prompt: "System {{char}}",
+    headers_json: "",
   };
 }
 
@@ -265,6 +363,14 @@ async function runValidationSpec(): Promise<void> {
     makeExecutionContext(),
   );
   assert(
+    !validationFailureResult.compilePlan,
+    "Expected validation failure to stop before compile plan generation",
+  );
+  assert(
+    validationFailureResult.reason?.includes("[graph_validation") === true,
+    `Expected validation failure reason to include graph_validation marker. Actual: ${validationFailureResult.reason}`,
+  );
+  assert(
     validationFailureResult.ok === false &&
       validationFailureResult.failedStage === "validate",
     `Expected validation failure to be attributed to validate stage. Actual: ok=${validationFailureResult.ok}, failedStage=${validationFailureResult.failedStage}`,
@@ -302,6 +408,59 @@ async function runValidationSpec(): Promise<void> {
       .map((stage) => `${stage.stage}:${stage.status}`)
       .join(",") === "validate:ok,compile:ok,execute:error",
     `Expected cancelled execution trace to end with execute:error. Actual: ${cancelledExecutionResult.trace?.stages.map((stage) => `${stage.stage}:${stage.status}`).join(",")}`,
+  );
+  assert(
+    cancelledExecutionResult.reason === "workflow cancelled by user",
+    `Expected cancellation reason to be preserved. Actual: ${cancelledExecutionResult.reason}`,
+  );
+  assert(
+    cancelledExecutionResult.moduleResults.length === 0,
+    `Expected cancellation before first node execution to keep moduleResults empty. Actual: ${cancelledExecutionResult.moduleResults.length}`,
+  );
+
+  const migratedGraph = migrateFlowToGraph(makeLegacyFlowFixture());
+  assert(
+    migratedGraph.id === "migrated_legacy_flow_1",
+    `Expected migrated graph id to be prefixed. Actual: ${migratedGraph.id}`,
+  );
+  assert(
+    migratedGraph.name === "[迁移] Legacy Flow",
+    `Expected migrated graph name to be prefixed. Actual: ${migratedGraph.name}`,
+  );
+  assert(
+    migratedGraph.nodes.some((node) => node.moduleId === "src_user_input"),
+    "Expected migrated graph to retain user input source node",
+  );
+  assert(
+    migratedGraph.nodes.some((node) => node.moduleId === "exe_llm_call"),
+    "Expected migrated graph to include execution node",
+  );
+  assert(
+    migratedGraph.nodes.some((node) => node.moduleId === "out_floor_bind"),
+    "Expected migrated graph to include legacy output bridge node",
+  );
+  assert(
+    Array.isArray(validateGraph(migratedGraph)),
+    "Expected migrated graph to remain acceptable to validateGraph entrypoint",
+  );
+
+  const passthroughGraphs = autoMigrateIfNeeded({
+    flows: [makeLegacyFlowFixture()],
+    workbench_graphs: [makeBaseGraph()],
+  });
+  assert(
+    passthroughGraphs.length === 1 && passthroughGraphs[0].id === "graph_test",
+    `Expected existing workbench graphs to bypass auto migration. Actual: ${passthroughGraphs.map((graph) => graph.id).join(",")}`,
+  );
+
+  const autoMigratedGraphs = autoMigrateIfNeeded({
+    flows: [makeLegacyFlowFixture()],
+    workbench_graphs: [],
+  });
+  assert(
+    autoMigratedGraphs.length === 1 &&
+      autoMigratedGraphs[0].id === migratedGraph.id,
+    `Expected auto migration to produce migrated legacy graph. Actual: ${autoMigratedGraphs.map((graph) => graph.id).join(",")}`,
   );
 }
 

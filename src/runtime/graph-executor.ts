@@ -632,7 +632,7 @@ async function executeCompiledGraph(
 
       throw new GraphExecutionStageError(
         "execute",
-        `模块「${getModuleBlueprint(node.moduleId).label}」执行失败: ${errorMsg}`,
+        `模块「${getModuleBlueprint(node.moduleId).label}」执行失败（node=${node.id}, module=${node.moduleId}）: ${errorMsg}`,
         moduleResults,
       );
     }
