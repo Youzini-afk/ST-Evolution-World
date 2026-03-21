@@ -1,7 +1,11 @@
 /* ═══ Module Workbench — Module Registry ═══ */
 /* All 44 atomic modules + composite packages */
 
-import type { ModuleBlueprint, ModulePortDef } from "./module-types";
+import type {
+  HostWriteSummary,
+  ModuleBlueprint,
+  ModulePortDef,
+} from "./module-types";
 export type { ModuleBlueprint, ModulePortDef };
 
 const withRuntimeMeta = (
@@ -19,6 +23,17 @@ const withRuntimeMeta = (
       },
     },
   }));
+
+const withHostTargetHint = (
+  module: ModuleBlueprint,
+  hostTargetHint: HostWriteSummary,
+): ModuleBlueprint => ({
+  ...module,
+  runtimeMeta: {
+    ...module.runtimeMeta,
+    hostTargetHint,
+  },
+});
 
 // ── Helper for common port patterns ──
 
@@ -665,7 +680,12 @@ const OUTPUT_MODULES: ModuleBlueprint[] = [
     icon: "📌",
     description: "将工作流结果绑定到对话中指定楼层的 extra 数据",
     ports: [
-      { id: "result", label: "执行结果", direction: "in", dataType: "json" },
+      {
+        id: "result",
+        label: "执行结果",
+        direction: "in",
+        dataType: "json",
+      },
       {
         id: "message_id",
         label: "消息 ID",
@@ -695,16 +715,25 @@ const OUTPUT_MODULES: ModuleBlueprint[] = [
       storage_mode: "file",
     },
   },
-  {
-    moduleId: "out_reply_inject",
-    label: "回复指令注入",
-    category: "output",
-    color: "#14b8a6",
-    icon: "💉",
-    description: "向 AI 的下一次回复注入指令文本",
-    ports: [textIn("instruction", "指令文本")],
-    defaultConfig: {},
-  },
+  withHostTargetHint(
+    {
+      moduleId: "out_reply_inject",
+      label: "回复指令注入",
+      category: "output",
+      color: "#14b8a6",
+      icon: "💉",
+      description: "向 AI 的下一次回复注入指令文本",
+      ports: [textIn("instruction", "指令文本")],
+      defaultConfig: {},
+    },
+    {
+      kind: "host_write",
+      targetType: "reply_instruction",
+      targetId: undefined,
+      operation: "inject_reply_instruction",
+      path: "reply.instruction",
+    },
+  ),
   {
     moduleId: "out_merge_results",
     label: "结果合并",

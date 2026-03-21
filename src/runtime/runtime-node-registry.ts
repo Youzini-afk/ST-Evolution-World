@@ -15,6 +15,7 @@ import { getModuleBlueprint } from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
   GraphCompilePlanNode,
+  HostWriteDescriptor,
   ModuleOutput,
   WorkbenchCapability,
   WorkbenchNode,
@@ -55,6 +56,12 @@ export interface NodeHandlerRequest {
   modules: RuntimeImplModules;
 }
 
+export interface HostWriteDescriptorRequest {
+  planNode: GraphCompilePlanNode;
+  node: WorkbenchNode;
+  inputs: Record<string, any>;
+}
+
 /**
  * The result shape returned by a node handler.
  */
@@ -63,6 +70,7 @@ export interface NodeHandlerResult {
   handlerId: string;
   capability?: WorkbenchCapability;
   isFallback?: boolean;
+  hostWrites?: HostWriteDescriptor[];
 }
 
 /**
@@ -71,6 +79,10 @@ export interface NodeHandlerResult {
 export type NodeExecutionHandler = (
   request: NodeHandlerRequest,
 ) => Promise<NodeHandlerResult>;
+
+export type HostWriteDescriptorProducer = (
+  request: HostWriteDescriptorRequest,
+) => HostWriteDescriptor[];
 
 /**
  * **Plugin Contract v1 — NodeHandlerDescriptor**
@@ -93,6 +105,7 @@ export interface NodeHandlerDescriptor {
   capability?: WorkbenchCapability;
   sideEffect?: WorkbenchSideEffectLevel;
   kind: "builtin" | "fallback";
+  produceHostWriteDescriptors?: HostWriteDescriptorProducer;
 }
 
 /**
@@ -151,10 +164,18 @@ function normalizeDescriptor(
     descriptor.kind,
     descriptor.moduleId,
   );
+  const normalizedSideEffect = normalizeLegacySideEffect(
+    descriptor.sideEffect,
+    capability,
+  );
   return {
     ...descriptor,
     capability,
-    sideEffect: normalizeLegacySideEffect(descriptor.sideEffect, capability),
+    sideEffect: normalizedSideEffect,
+    produceHostWriteDescriptors:
+      capability === "writes_host" && descriptor.kind !== "fallback"
+        ? descriptor.produceHostWriteDescriptors
+        : undefined,
   };
 }
 
@@ -956,6 +977,17 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
       );
       return { outputs: {}, handlerId: "out_reply_inject" };
     },
+    produceHostWriteDescriptors: () => [
+      {
+        kind: "host_write",
+        targetType: "reply_instruction",
+        targetId: undefined,
+        operation: "inject_reply_instruction",
+        path: "reply.instruction",
+        idempotency: "non_idempotent",
+        retryable: false,
+      },
+    ],
   });
 
   registerNodeHandler({

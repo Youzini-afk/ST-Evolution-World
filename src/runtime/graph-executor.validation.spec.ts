@@ -697,6 +697,21 @@ async function runValidationSpec(): Promise<void> {
       )
       .join(",")}`,
   );
+  assert(
+    compilePlanFixture.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.hostWriteSummary?.targetType ?? "none"}:${node.hostWriteSummary?.operation ?? "none"}`,
+      )
+      .join(",") ===
+      "src_text:none:none,filter_text:none:none,out_reply:reply_instruction:inject_reply_instruction",
+    `Expected compile plan hostWriteSummary to be attached only for writes_host nodes. Actual: ${compilePlanFixture.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.hostWriteSummary?.targetType ?? "none"}:${node.hostWriteSummary?.operation ?? "none"}`,
+      )
+      .join(",")}`,
+  );
 
   const networkTerminalPlan = compileGraphPlan(makeNetworkTerminalGraph());
   assert(
@@ -768,6 +783,36 @@ async function runValidationSpec(): Promise<void> {
       reversedPlan.nodes.map((node) => node.moduleId).join(","),
     `Expected dispatch-backed progress events to preserve module ids. Actual: ${progressEvents.map((event) => event.module_id).join(",")}`,
   );
+  assert(
+    compiledExecution.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.hostWrites?.length ?? 0}:${result.hostWriteSummary?.targetType ?? "none"}`,
+      )
+      .join(",") ===
+      "src_text:0:none,filter_text:0:none,out_reply:1:reply_instruction",
+    `Expected executeCompiledGraph moduleResults to expose host write descriptors only for writes_host nodes. Actual: ${compiledExecution.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.hostWrites?.length ?? 0}:${result.hostWriteSummary?.targetType ?? "none"}`,
+      )
+      .join(",")}`,
+  );
+  assert(
+    compiledExecution.hostWrites?.length === 1 &&
+      compiledExecution.hostWrites[0]?.targetType === "reply_instruction" &&
+      compiledExecution.hostWrites[0]?.operation === "inject_reply_instruction",
+    `Expected executeCompiledGraph to aggregate graph-level hostWrites. Actual: ${JSON.stringify(compiledExecution.hostWrites)}`,
+  );
+  const replyTrace = compiledExecution.nodeTraces?.find(
+    (trace) => trace.nodeId === "out_reply" && trace.stage === "execute",
+  );
+  assert(
+    replyTrace?.hostWrites?.length === 1 &&
+      replyTrace.hostWrites[0]?.targetType === "reply_instruction" &&
+      replyTrace.hostWriteSummary?.targetType === "reply_instruction",
+    `Expected writes_host execute trace to expose hostWrites and hostWriteSummary. Actual: ${JSON.stringify(replyTrace)}`,
+  );
 
   const networkTerminalExecution = await executeCompiledGraph(
     makeNetworkTerminalGraph(),
@@ -792,6 +837,22 @@ async function runValidationSpec(): Promise<void> {
           `${result.nodeId}:${result.isSideEffectNode}:${result.capability}`,
       )
       .join(",")}`,
+  );
+  assert(
+    networkTerminalPlan.nodes.every(
+      (node) => node.hostWriteSummary === undefined,
+    ),
+    `Expected network compile plan not to expose hostWriteSummary. Actual: ${JSON.stringify(networkTerminalPlan.nodes)}`,
+  );
+  assert(
+    networkTerminalExecution.hostWrites?.length === 0 &&
+      networkTerminalExecution.moduleResults.every(
+        (result) => (result.hostWrites?.length ?? 0) === 0,
+      ) &&
+      networkTerminalExecution.nodeTraces?.every(
+        (trace) => (trace.hostWrites?.length ?? 0) === 0,
+      ) === true,
+    `Expected network execution not to expose host write descriptors. Actual: ${JSON.stringify(networkTerminalExecution)}`,
   );
 
   const dispatchSmokeGraph = makeDispatchSmokeGraph();
@@ -841,6 +902,97 @@ async function runValidationSpec(): Promise<void> {
   assert(
     fallbackTrace?.inputKeys?.join(",") === "messages",
     `Expected fallback node trace to expose collected input keys. Actual: ${JSON.stringify(fallbackTrace?.inputKeys)}`,
+  );
+  assert(
+    (fallbackTrace?.hostWrites?.length ?? 0) === 0,
+    `Expected fallback trace not to expose hostWrites. Actual: ${JSON.stringify(fallbackTrace)}`,
+  );
+  assert(
+    dispatchSmokeExecution.hostWrites?.length === 0,
+    `Expected fallback graph not to expose graph-level hostWrites. Actual: ${JSON.stringify(dispatchSmokeExecution.hostWrites)}`,
+  );
+
+  const dualHostGraphFixture = makeIntegratedSmokeGraph();
+  const dualHostGraph = {
+    ...dualHostGraphFixture,
+    nodes: [
+      ...dualHostGraphFixture.nodes,
+      {
+        id: "out_reply_2",
+        moduleId: "out_reply_inject",
+        position: { x: 900, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      ...dualHostGraphFixture.edges,
+      {
+        id: "edge_filter_to_reply_2",
+        source: "filter_text",
+        sourcePort: "text_out",
+        target: "out_reply_2",
+        targetPort: "instruction",
+      },
+    ],
+  };
+  const dualHostPlan = compileGraphPlan(dualHostGraph);
+  assert(
+    dualHostPlan.nodes
+      .filter((node) => node.hostWriteSummary)
+      .map((node) => `${node.nodeId}:${node.hostWriteSummary?.targetType}`)
+      .join(",") ===
+      "out_reply:reply_instruction,out_reply_2:reply_instruction",
+    `Expected compile plan hostWriteSummary coverage to stay within reply inject nodes. Actual: ${dualHostPlan.nodes
+      .filter((node) => node.hostWriteSummary)
+      .map((node) => `${node.nodeId}:${node.hostWriteSummary?.targetType}`)
+      .join(",")}`,
+  );
+  assert(
+    dualHostPlan.nodes.some((node) => node.nodeId === "out_floor") &&
+      dualHostPlan.nodes.find((node) => node.nodeId === "out_floor")
+        ?.hostWriteSummary === undefined,
+    `Expected out_floor to remain writes_host without compile-time descriptor summary. Actual: ${JSON.stringify(dualHostPlan.nodes.find((node) => node.nodeId === "out_floor"))}`,
+  );
+  const dualHostExecution = await executeCompiledGraph(
+    dualHostGraph,
+    dualHostPlan,
+    makeExecutionContext(),
+  );
+  assert(
+    dualHostExecution.hostWrites?.length === 2,
+    `Expected dual reply-inject graph to aggregate only reply descriptors. Actual: ${JSON.stringify(dualHostExecution.hostWrites)}`,
+  );
+  assert(
+    dualHostExecution.moduleResults
+      .filter((result) => (result.hostWrites?.length ?? 0) > 0)
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.hostWrites?.[0]?.targetType}:${result.hostWrites?.[0]?.operation}`,
+      )
+      .join(",") ===
+      "out_reply:reply_instruction:inject_reply_instruction,out_reply_2:reply_instruction:inject_reply_instruction",
+    `Expected runtime hostWrites to stay limited to reply inject nodes. Actual: ${dualHostExecution.moduleResults
+      .filter((result) => (result.hostWrites?.length ?? 0) > 0)
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.hostWrites?.[0]?.targetType}:${result.hostWrites?.[0]?.operation}`,
+      )
+      .join(",")}`,
+  );
+  assert(
+    dualHostExecution.moduleResults.some(
+      (result) =>
+        result.nodeId === "out_floor" &&
+        (result.hostWrites?.length ?? 0) === 0 &&
+        result.capability === "writes_host" &&
+        result.hostWriteSummary === undefined,
+    ),
+    `Expected out_floor module result to keep writes_host capability while producing no descriptor. Actual: ${JSON.stringify(dualHostExecution.moduleResults.find((result) => result.nodeId === "out_floor"))}`,
+  );
+  assert(
+    Object.keys(dualHostExecution.finalOutputs).length === 0,
+    `Expected finalOutputs behavior to remain conservative with writes_host terminals. Actual: ${Object.keys(dualHostExecution.finalOutputs).join(",")}`,
   );
 
   const successResult = await executeGraph(
@@ -916,6 +1068,10 @@ async function runValidationSpec(): Promise<void> {
         trace.isFallback === false,
     ) === true,
     `Expected successful execute traces to expose structured handler metadata. Actual: ${JSON.stringify(successExecuteTraces)}`,
+  );
+  assert(
+    successResult.hostWrites?.length === 0,
+    `Expected base graph executeGraph success path not to expose hostWrites. Actual: ${JSON.stringify(successResult.hostWrites)}`,
   );
   const filterTrace = successExecuteTraces?.find(
     (trace) => trace.nodeId === "filter_text",

@@ -85,6 +85,24 @@ export interface RuntimeMigrationMeta {
   notes?: string;
 }
 
+export interface HostWriteDescriptor {
+  kind: string;
+  targetType: string;
+  targetId?: string;
+  operation: string;
+  path?: string;
+  idempotency: "idempotent" | "non_idempotent" | "unknown";
+  retryable: boolean;
+}
+
+export interface HostWriteSummary {
+  kind: HostWriteDescriptor["kind"];
+  targetType: HostWriteDescriptor["targetType"];
+  targetId?: HostWriteDescriptor["targetId"];
+  operation: HostWriteDescriptor["operation"];
+  path?: HostWriteDescriptor["path"];
+}
+
 /** Blueprint definition for a module type (registered in the registry) */
 export interface ModuleBlueprint {
   /** Unique module type ID, e.g. 'src_char_fields' */
@@ -119,6 +137,7 @@ export interface ModuleBlueprint {
     capability?: WorkbenchCapability;
     sideEffect?: WorkbenchSideEffectLevel;
     migration?: RuntimeMigrationMeta;
+    hostTargetHint?: HostWriteSummary;
   };
 }
 
@@ -214,6 +233,7 @@ export interface GraphCompilePlanNode {
   stage?: "compile";
   status?: Extract<GraphTraceStageStatus, "ok" | "error">;
   isSideEffectNode: boolean;
+  hostWriteSummary?: HostWriteSummary;
 }
 
 export interface GraphCompilePlan {
@@ -248,6 +268,8 @@ export interface GraphNodeTrace {
   error?: string | GraphNodeTraceError;
   failedAt?: "dispatch" | "handler";
   outputIncludedInFinalOutputs?: boolean;
+  hostWriteSummary?: HostWriteSummary;
+  hostWrites?: HostWriteDescriptor[];
 }
 
 export interface GraphExecutionTrace {
@@ -283,6 +305,8 @@ export interface ModuleExecutionResult {
   status?: ModuleExecutionStatus;
   capability?: WorkbenchCapability;
   isSideEffectNode?: boolean;
+  hostWriteSummary?: HostWriteSummary;
+  hostWrites?: HostWriteDescriptor[];
 }
 
 /** Result of executing the entire graph */
@@ -297,6 +321,7 @@ export interface GraphExecutionResult {
   compilePlan?: GraphCompilePlan;
   trace?: GraphExecutionTrace;
   nodeTraces?: GraphNodeTrace[];
+  hostWrites?: HostWriteDescriptor[];
 }
 
 // ── Category Metadata ──
