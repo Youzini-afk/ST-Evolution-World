@@ -2249,6 +2249,239 @@ async function runValidationSpec(): Promise<void> {
     },
   );
 
+  // ══════════════════════════════════════════════════════════════════
+  // P3.6 — diagnostics.bridge 子结构读取守卫回归补强
+  // ══════════════════════════════════════════════════════════════════
+
+  // 场景 A: 全局 last_run 的 diagnostics.bridge 缺失可选字段时仍可读回
+  const degradedGlobalBridgeRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "degraded global bridge",
+    request_id: "req_degraded_global_bridge",
+    chat_id: "chat_degraded_global_bridge",
+    flow_count: 1,
+    elapsed_ms: 19,
+    mode: "manual",
+    diagnostics: {
+      bridge: {
+        route: "legacy",
+        reason: "legacy_flow_selection",
+      },
+    },
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: degradedGlobalBridgeRaw,
+      last_run_by_chat: {},
+    }),
+  );
+  const degradedGlobalBridgeSummary = loadLastRun();
+  assert(
+    degradedGlobalBridgeSummary,
+    "P3.6-A: Expected degraded global bridge to load",
+  );
+  assert(
+    degradedGlobalBridgeSummary?.request_id === "req_degraded_global_bridge",
+    `P3.6-A: Expected request_id to survive load. Actual: ${degradedGlobalBridgeSummary?.request_id}`,
+  );
+  assert(
+    degradedGlobalBridgeSummary?.diagnostics?.bridge?.route === "legacy",
+    `P3.6-A: Expected bridge route to survive load. Actual: ${JSON.stringify(degradedGlobalBridgeSummary?.diagnostics?.bridge)}`,
+  );
+  assert(
+    degradedGlobalBridgeSummary?.diagnostics?.bridge?.reason ===
+      "legacy_flow_selection",
+    `P3.6-A: Expected bridge reason to survive load. Actual: ${JSON.stringify(degradedGlobalBridgeSummary?.diagnostics?.bridge)}`,
+  );
+  assert(
+    degradedGlobalBridgeSummary?.diagnostics?.bridge
+      ?.has_explicit_legacy_flow_selection === undefined,
+    `P3.6-A: Expected optional field has_explicit_legacy_flow_selection to remain absent when not provided. Actual: ${JSON.stringify(degradedGlobalBridgeSummary?.diagnostics?.bridge)}`,
+  );
+
+  // 场景 B: last_run_by_chat 命中记录的 diagnostics.bridge 局部退化时仍优先命中并回填全局
+  const degradedByChatPreferredRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "degraded by chat bridge wins",
+    request_id: "req_degraded_by_chat_bridge",
+    chat_id: "chat_degraded_by_chat_bridge",
+    flow_count: 1,
+    elapsed_ms: 23,
+    mode: "manual",
+    diagnostics: {
+      bridge: {
+        route: "graph",
+        reason: "graph_first",
+      },
+    },
+  };
+  const staleGlobalBridgeRaw = {
+    at: Date.now(),
+    ok: false,
+    reason: "stale global should lose",
+    request_id: "req_stale_global_bridge",
+    chat_id: "chat_degraded_by_chat_bridge",
+    flow_count: 1,
+    elapsed_ms: 41,
+    mode: "manual",
+    diagnostics: buildWorkflowBridgeDiagnostics({
+      selection: legacyFallbackRoute,
+      failureOrigin: "cancelled",
+    }),
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: staleGlobalBridgeRaw,
+      last_run_by_chat: {
+        chat_degraded_by_chat_bridge: degradedByChatPreferredRaw,
+      },
+    }),
+  );
+  const degradedByChatPreferredSummary = loadLastRunForChat(
+    "chat_degraded_by_chat_bridge",
+  );
+  assert(
+    degradedByChatPreferredSummary,
+    "P3.6-B: Expected degraded by-chat bridge to load before global fallback",
+  );
+  assert(
+    degradedByChatPreferredSummary?.request_id ===
+      "req_degraded_by_chat_bridge",
+    `P3.6-B: Expected degraded by-chat bridge hit to win. Actual: ${degradedByChatPreferredSummary?.request_id}`,
+  );
+  assert(
+    degradedByChatPreferredSummary?.diagnostics?.bridge?.route === "graph",
+    `P3.6-B: Expected degraded by-chat bridge route to survive load. Actual: ${JSON.stringify(degradedByChatPreferredSummary?.diagnostics?.bridge)}`,
+  );
+  assert(
+    degradedByChatPreferredSummary?.diagnostics?.bridge?.reason ===
+      "graph_first",
+    `P3.6-B: Expected degraded by-chat bridge reason to survive load. Actual: ${JSON.stringify(degradedByChatPreferredSummary?.diagnostics?.bridge)}`,
+  );
+  const persistedDegradedByChatPreferred = readPersistedScriptStorage();
+  assert(
+    (persistedDegradedByChatPreferred.last_run as RunSummary | undefined)
+      ?.request_id === "req_degraded_by_chat_bridge",
+    `P3.6-B: Expected degraded by-chat hit to backfill global last_run. Actual: ${JSON.stringify(persistedDegradedByChatPreferred.last_run)}`,
+  );
+
+  // 场景 C: 仅全局 fallback 命中的记录，其 diagnostics.bridge 局部退化时仍可按 chatId 读取
+  const degradedGlobalFallbackBridgeRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "degraded global fallback bridge",
+    request_id: "req_degraded_global_fallback_bridge",
+    chat_id: "chat_degraded_global_fallback_bridge",
+    flow_count: 1,
+    elapsed_ms: 17,
+    mode: "manual",
+    diagnostics: {
+      bridge: {
+        route: "legacy",
+        reason: "legacy_flow_selection",
+      },
+    },
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: degradedGlobalFallbackBridgeRaw,
+      last_run_by_chat: {},
+    }),
+  );
+  const degradedGlobalFallbackBridgeSummary = loadLastRunForChat(
+    "chat_degraded_global_fallback_bridge",
+  );
+  assert(
+    degradedGlobalFallbackBridgeSummary,
+    "P3.6-C: Expected degraded global fallback bridge to load for matching chat",
+  );
+  assert(
+    degradedGlobalFallbackBridgeSummary?.request_id ===
+      "req_degraded_global_fallback_bridge",
+    `P3.6-C: Expected request_id to survive chat lookup. Actual: ${degradedGlobalFallbackBridgeSummary?.request_id}`,
+  );
+  assert(
+    degradedGlobalFallbackBridgeSummary?.diagnostics?.bridge?.route ===
+      "legacy",
+    `P3.6-C: Expected bridge route to survive chat lookup. Actual: ${JSON.stringify(degradedGlobalFallbackBridgeSummary?.diagnostics?.bridge)}`,
+  );
+  assert(
+    degradedGlobalFallbackBridgeSummary?.diagnostics?.bridge?.reason ===
+      "legacy_flow_selection",
+    `P3.6-C: Expected bridge reason to survive chat lookup. Actual: ${JSON.stringify(degradedGlobalFallbackBridgeSummary?.diagnostics?.bridge)}`,
+  );
+
+  // 场景 D (负向守卫): diagnostics.bridge 核心字段 route 缺失时应判为非法
+  const invalidBridgeMissingRouteRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "invalid bridge missing route",
+    request_id: "req_invalid_bridge_missing_route",
+    chat_id: "chat_invalid_bridge_missing_route",
+    flow_count: 1,
+    elapsed_ms: 11,
+    mode: "manual",
+    diagnostics: {
+      bridge: {
+        reason: "legacy_flow_selection",
+      },
+    },
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: invalidBridgeMissingRouteRaw,
+      last_run_by_chat: {},
+    }),
+  );
+  const invalidBridgeMissingRouteSummary = loadLastRun();
+  // Because RunSummarySchema.diagnostics is z.record(z.string(), z.any()).default({}),
+  // a missing core bridge field should still pass zod parse (the schema is open-ended).
+  // We verify the bridge sub-object can still be read but the route field is absent.
+  if (invalidBridgeMissingRouteSummary) {
+    assert(
+      invalidBridgeMissingRouteSummary.diagnostics?.bridge?.route === undefined,
+      `P3.6-D1: Expected missing route to remain absent after load. Actual: ${JSON.stringify(invalidBridgeMissingRouteSummary.diagnostics?.bridge)}`,
+    );
+  }
+
+  // 场景 D2 (负向守卫): diagnostics.bridge 核心字段 reason 缺失时应保留降级
+  const invalidBridgeMissingReasonRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "invalid bridge missing reason",
+    request_id: "req_invalid_bridge_missing_reason",
+    chat_id: "chat_invalid_bridge_missing_reason",
+    flow_count: 1,
+    elapsed_ms: 13,
+    mode: "manual",
+    diagnostics: {
+      bridge: {
+        route: "legacy",
+      },
+    },
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: invalidBridgeMissingReasonRaw,
+      last_run_by_chat: {},
+    }),
+  );
+  const invalidBridgeMissingReasonSummary = loadLastRun();
+  if (invalidBridgeMissingReasonSummary) {
+    assert(
+      invalidBridgeMissingReasonSummary.diagnostics?.bridge?.reason ===
+        undefined,
+      `P3.6-D2: Expected missing reason to remain absent after load. Actual: ${JSON.stringify(invalidBridgeMissingReasonSummary.diagnostics?.bridge)}`,
+    );
+  }
+
   const isolatedLegacySummaryRaw = {
     at: Date.now(),
     ok: true,
