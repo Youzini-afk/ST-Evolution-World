@@ -551,6 +551,47 @@ function makeLegacyFlowFixture(): EwFlowConfig {
   };
 }
 
+function makeLegacyPromptContextFixture(): EwFlowConfig {
+  return {
+    ...makeLegacyFlowFixture(),
+    id: "legacy_prompt_context_1",
+    name: "Legacy Prompt Context Flow",
+    enabled: false,
+    timing: "before_reply",
+    priority: 9,
+    context_turns: 12,
+    extract_rules: [
+      {
+        start: "<context>",
+        end: "</context>",
+      },
+    ],
+    exclude_rules: [
+      {
+        start: "<hidden>",
+        end: "</hidden>",
+      },
+    ],
+    system_prompt: "System {{char}}\nRemember {{user}}",
+    custom_regex_rules: [
+      {
+        id: "regex_enabled_cleanup",
+        name: "Cleanup enabled rule",
+        enabled: true,
+        find_regex: "foo(\\s+)bar",
+        replace_string: "baz",
+      },
+      {
+        id: "regex_disabled_passthrough",
+        name: "Disabled passthrough rule",
+        enabled: false,
+        find_regex: "do-not-import",
+        replace_string: "ignored",
+      },
+    ],
+  };
+}
+
 function assertBridgeRoute(
   actual: WorkflowBridgeRouteSelection,
   expected: {
@@ -1524,6 +1565,63 @@ async function runValidationSpec(): Promise<void> {
   assert(
     Array.isArray(validateGraph(migratedGraph)),
     "Expected migrated graph to remain acceptable to validateGraph entrypoint",
+  );
+
+  const promptContextGraph = migrateFlowToGraph(
+    makeLegacyPromptContextFixture(),
+  );
+  const promptContextNodeByModule = new Map(
+    promptContextGraph.nodes.map((node) => [node.moduleId, node]),
+  );
+  const promptContextEdgePairs = promptContextGraph.edges.map(
+    (edge) =>
+      `${promptContextGraph.nodes.find((node) => node.id === edge.source)?.moduleId}:${edge.sourcePort}->${promptContextGraph.nodes.find((node) => node.id === edge.target)?.moduleId}:${edge.targetPort}`,
+  );
+  const promptContextRegexNode =
+    promptContextNodeByModule.get("flt_custom_regex");
+  assert(
+    promptContextNodeByModule.has("src_chat_history") &&
+      promptContextNodeByModule.has("src_user_input") &&
+      promptContextNodeByModule.has("src_flow_context") &&
+      promptContextNodeByModule.has("src_worldbook_raw"),
+    `Expected migrated prompt-context fixture to include required source assembly nodes. Actual modules: ${promptContextGraph.nodes.map((node) => node.moduleId).join(",")}`,
+  );
+  assert(
+    promptContextEdgePairs.includes(
+      "src_chat_history:messages->flt_context_extract:msgs_in",
+    ) &&
+      promptContextEdgePairs.includes(
+        "flt_context_extract:msgs_out->flt_context_exclude:msgs_in",
+      ) &&
+      promptContextEdgePairs.includes(
+        "flt_context_exclude:msgs_out->flt_hide_messages:msgs_in",
+      ),
+    `Expected context filtering chain order to remain chat_history -> flt_context_extract -> flt_context_exclude -> flt_hide_messages. Actual: ${promptContextEdgePairs.join(",")}`,
+  );
+  assert(
+    promptContextEdgePairs.includes(
+      "cfg_system_prompt:prompt->tfm_macro_replace:text_in",
+    ) &&
+      promptContextEdgePairs.includes(
+        "tfm_macro_replace:text_out->flt_custom_regex:text_in",
+      ),
+    `Expected system prompt transform chain to remain cfg_system_prompt -> tfm_macro_replace -> flt_custom_regex when enabled regex rules exist. Actual: ${promptContextEdgePairs.join(",")}`,
+  );
+  assert(
+    Array.isArray(promptContextRegexNode?.config.rules) &&
+      promptContextRegexNode.config.rules.length === 1 &&
+      promptContextRegexNode.config.rules[0]?.find === "foo(\\s+)bar" &&
+      promptContextRegexNode.config.rules[0]?.replace === "baz" &&
+      promptContextRegexNode.config.rules[0]?.flags === "g",
+    `Expected only enabled custom regex rules to migrate with stable field mapping. Actual: ${JSON.stringify(promptContextRegexNode?.config)}`,
+  );
+  assert(
+    promptContextGraph.enabled === false &&
+      promptContextGraph.timing === "before_reply" &&
+      promptContextGraph.priority === 9 &&
+      promptContextGraph.id === "migrated_legacy_prompt_context_1" &&
+      promptContextGraph.name === "[迁移] Legacy Prompt Context Flow",
+    `Expected migrated graph metadata to stay bridge-consumable. Actual: ${JSON.stringify({ enabled: promptContextGraph.enabled, timing: promptContextGraph.timing, priority: promptContextGraph.priority, id: promptContextGraph.id, name: promptContextGraph.name })}`,
   );
 
   const passthroughGraphs = autoMigrateIfNeeded({
