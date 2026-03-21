@@ -794,6 +794,11 @@ function createRunSummaryFixture(params: {
   });
 }
 
+function readPersistedScriptStorage(): Record<string, unknown> {
+  const raw = globalThis.localStorage?.getItem("evolution_world_assistant");
+  return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+}
+
 async function runValidationSpec(): Promise<void> {
   ensureMemoryLocalStorage();
   const validGraphErrors = validateGraph(makeBaseGraph());
@@ -2095,6 +2100,209 @@ async function runValidationSpec(): Promise<void> {
     enabledGraphCount: 0,
     hasFailure: false,
   });
+
+  const legacyGlobalSummaryRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "",
+    request_id: "req_legacy_global_only",
+    chat_id: "chat_legacy_global_only",
+    flow_count: 1,
+    elapsed_ms: 21,
+    mode: "manual",
+    diagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+    }),
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: legacyGlobalSummaryRaw,
+    }),
+  );
+  assertRunSummaryBridgeContract(loadLastRun(), {
+    chatId: "chat_legacy_global_only",
+    requestId: "req_legacy_global_only",
+    ok: true,
+    reason: "",
+    route: "legacy",
+    bridgeReason: "legacy_flow_selection",
+    hasExplicitLegacyFlowSelection: true,
+    enabledGraphCount: 1,
+    hasFailure: false,
+  });
+  assertRunSummaryBridgeContract(
+    loadLastRunForChat("chat_legacy_global_only"),
+    {
+      chatId: "chat_legacy_global_only",
+      requestId: "req_legacy_global_only",
+      ok: true,
+      reason: "",
+      route: "legacy",
+      bridgeReason: "legacy_flow_selection",
+      hasExplicitLegacyFlowSelection: true,
+      enabledGraphCount: 1,
+      hasFailure: false,
+    },
+  );
+
+  const legacyByChatPreferredRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "preferred by chat",
+    request_id: "req_legacy_by_chat_preferred",
+    chat_id: "chat_legacy_by_chat_preferred",
+    flow_count: 1,
+    elapsed_ms: 34,
+    mode: "manual",
+    diagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+    }),
+  };
+  const legacyGlobalFallbackRaw = {
+    at: Date.now(),
+    ok: false,
+    reason: "should not win over by chat",
+    request_id: "req_legacy_global_stale",
+    chat_id: "chat_legacy_by_chat_preferred",
+    flow_count: 1,
+    elapsed_ms: 55,
+    mode: "manual",
+    diagnostics: buildWorkflowBridgeDiagnostics({
+      selection: legacyFallbackRoute,
+      failureOrigin: "cancelled",
+    }),
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: legacyGlobalFallbackRaw,
+      last_run_by_chat: {
+        chat_legacy_by_chat_preferred: legacyByChatPreferredRaw,
+      },
+    }),
+  );
+  assertRunSummaryBridgeContract(
+    loadLastRunForChat("chat_legacy_by_chat_preferred"),
+    {
+      chatId: "chat_legacy_by_chat_preferred",
+      requestId: "req_legacy_by_chat_preferred",
+      ok: true,
+      reason: "preferred by chat",
+      route: "legacy",
+      bridgeReason: "legacy_flow_selection",
+      hasExplicitLegacyFlowSelection: true,
+      enabledGraphCount: 1,
+      hasFailure: false,
+    },
+  );
+  assertRunSummaryBridgeContract(loadLastRun(), {
+    chatId: "chat_legacy_by_chat_preferred",
+    requestId: "req_legacy_by_chat_preferred",
+    ok: true,
+    reason: "preferred by chat",
+    route: "legacy",
+    bridgeReason: "legacy_flow_selection",
+    hasExplicitLegacyFlowSelection: true,
+    enabledGraphCount: 1,
+    hasFailure: false,
+  });
+  const persistedByChatPreferred = readPersistedScriptStorage();
+  assert(
+    (persistedByChatPreferred.last_run as RunSummary | undefined)
+      ?.request_id === "req_legacy_by_chat_preferred",
+    `Expected by-chat hit to backfill global last_run. Actual: ${JSON.stringify(persistedByChatPreferred.last_run)}`,
+  );
+
+  const legacyGlobalChatFallbackRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "fallback from global",
+    request_id: "req_legacy_global_chat_fallback",
+    chat_id: "chat_legacy_global_chat_fallback",
+    flow_count: 1,
+    elapsed_ms: 18,
+    mode: "manual",
+    diagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+    }),
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: legacyGlobalChatFallbackRaw,
+      last_run_by_chat: {},
+    }),
+  );
+  assertRunSummaryBridgeContract(
+    loadLastRunForChat("chat_legacy_global_chat_fallback"),
+    {
+      chatId: "chat_legacy_global_chat_fallback",
+      requestId: "req_legacy_global_chat_fallback",
+      ok: true,
+      reason: "fallback from global",
+      route: "legacy",
+      bridgeReason: "legacy_flow_selection",
+      hasExplicitLegacyFlowSelection: true,
+      enabledGraphCount: 1,
+      hasFailure: false,
+    },
+  );
+
+  const isolatedLegacySummaryRaw = {
+    at: Date.now(),
+    ok: true,
+    reason: "isolated legacy summary",
+    request_id: "req_legacy_isolated",
+    chat_id: "chat_legacy_isolated",
+    flow_count: 1,
+    elapsed_ms: 16,
+    mode: "manual",
+    diagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+    }),
+  };
+  globalThis.localStorage?.setItem(
+    "evolution_world_assistant",
+    JSON.stringify({
+      last_run: isolatedLegacySummaryRaw,
+      last_run_by_chat: {},
+    }),
+  );
+  assert(
+    loadLastRunForChat("chat_other") === null,
+    `Expected mismatched chatId not to read legacy summary for another chat`,
+  );
+
+  const emptyChatIdSummary = createRunSummaryFixture({
+    chatId: "   ",
+    requestId: "req_legacy_empty_chat",
+    ok: true,
+    reason: "empty chat id preserved",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+    }),
+  });
+  setLastRun(emptyChatIdSummary);
+  assertRunSummaryBridgeContract(loadLastRunForChat("   "), {
+    chatId: "   ",
+    requestId: "req_legacy_empty_chat",
+    ok: true,
+    reason: "empty chat id preserved",
+    route: "legacy",
+    bridgeReason: "legacy_flow_selection",
+    hasExplicitLegacyFlowSelection: true,
+    enabledGraphCount: 1,
+    hasFailure: false,
+  });
+  const persistedEmptyChatId = readPersistedScriptStorage();
+  assert(
+    !persistedEmptyChatId.last_run_by_chat ||
+      Object.keys(
+        persistedEmptyChatId.last_run_by_chat as Record<string, unknown>,
+      ).length === 0,
+    `Expected empty chatId summary not to create by-chat entry. Actual: ${JSON.stringify(persistedEmptyChatId.last_run_by_chat)}`,
+  );
 
   // ══════════════════════════════════════════════════════════════════
   // P2.1 — Runtime Node Registry Tests
