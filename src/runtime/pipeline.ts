@@ -24,6 +24,24 @@ import {
 } from "./types";
 import { resolveTargetWorldbook } from "./worldbook-runtime";
 
+export type WorkflowBridgeFailureOrigin =
+  | "graph_dispatch"
+  | "legacy_dispatch"
+  | "legacy_merge"
+  | "legacy_writeback"
+  | "cancelled";
+
+export type WorkflowBridgeDiagnostics = {
+  route: WorkflowBridgeRoute;
+  reason: WorkflowBridgeRouteSelection["reason"];
+  has_explicit_legacy_flow_selection: boolean;
+  enabled_graph_count: number;
+  graph_context?: {
+    selected_graph_ids: string[];
+  };
+  failure_origin?: WorkflowBridgeFailureOrigin;
+};
+
 type WorkflowExecutionStage =
   | "preparing"
   | "dispatch"
@@ -629,95 +647,235 @@ export function selectWorkflowBridgeRoute(params: {
   };
 }
 
+export function buildWorkflowBridgeDiagnostics(params: {
+  selection: WorkflowBridgeRouteSelection;
+  failureOrigin?: WorkflowBridgeFailureOrigin;
+}): Record<string, any> {
+  const { selection, failureOrigin } = params;
+  const diagnostics: WorkflowBridgeDiagnostics = {
+    route: selection.route,
+    reason: selection.reason,
+    has_explicit_legacy_flow_selection:
+      selection.hasExplicitLegacyFlowSelection,
+    enabled_graph_count: selection.enabledGraphs.length,
+    ...(selection.route === "graph"
+      ? {
+          graph_context: {
+            selected_graph_ids: selection.enabledGraphs.map(
+              (graph) => graph.id,
+            ),
+          },
+        }
+      : {}),
+    ...(failureOrigin ? { failure_origin: failureOrigin } : {}),
+  };
+
+  return { bridge: diagnostics };
+}
+
+function mergeWorkflowDiagnostics(
+  base: Record<string, any> | undefined,
+  bridgeDiagnostics: Record<string, any>,
+): Record<string, any> {
+  return {
+    ...(base ?? {}),
+    ...bridgeDiagnostics,
+  };
+}
+
+function persistWorkflowSummary(params: {
+  ok: boolean;
+  reason: string;
+  requestId: string;
+  chatId: string;
+  flowCount: number;
+  startedAt: number;
+  mode: RunWorkflowInput["mode"];
+  diagnostics?: Record<string, any>;
+  failure?: WorkflowFailureDiagnostic | null;
+}): void {
+  persistRunSummarySafe(
+    RunSummarySchema.parse({
+      at: Date.now(),
+      ok: params.ok,
+      reason: params.reason,
+      request_id: params.requestId,
+      chat_id: params.chatId,
+      flow_count: params.flowCount,
+      elapsed_ms: Date.now() - params.startedAt,
+      mode: params.mode,
+      diagnostics: params.diagnostics ?? {},
+      ...(params.failure ? { failure: params.failure } : {}),
+    }),
+  );
+}
+
+function inferLegacyBridgeFailureOrigin(
+  stage: WorkflowFailureDiagnostic["stage"],
+): WorkflowBridgeFailureOrigin {
+  switch (stage) {
+    case "dispatch":
+      return "legacy_dispatch";
+    case "merge":
+      return "legacy_merge";
+    case "commit":
+      return "legacy_writeback";
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "legacy_dispatch";
+  }
+}
+
 // ── Graph Execution Path (Module Workbench) ──
 
 async function runGraphWorkflow(
   input: RunWorkflowInput,
   settings: any,
-  enabledGraphs: WorkbenchGraph[],
+  bridgeRoute: WorkflowBridgeRouteSelection,
   requestId: string,
   startedAt: number,
 ): Promise<RunWorkflowOutput> {
   const currentChatId = String(getChatId() ?? "unknown");
-
-  input.onProgress?.({
-    phase: "preparing",
-    request_id: requestId,
-    message: `正在准备图工作流（${enabledGraphs.length} 个图）…`,
+  const bridgeDiagnostics = buildWorkflowBridgeDiagnostics({
+    selection: bridgeRoute,
   });
 
-  // Sort by priority (lower = earlier)
-  const sorted = [...enabledGraphs].sort((a, b) => a.priority - b.priority);
-  const allResults: DispatchFlowResult[] = [];
-
-  for (const graph of sorted) {
-    if (isWorkflowCancelled(input)) {
-      throw new Error("workflow cancelled by user");
-    }
-
-    // Validate before execution
-    const errors = validateGraph(graph);
-    if (errors.length > 0) {
-      const msg = errors.map((e) => e.message).join("; ");
-      console.warn(`[EW] Graph "${graph.name}" validation failed: ${msg}`);
-      continue; // Skip invalid graphs
-    }
-
+  try {
     input.onProgress?.({
-      phase: "dispatching",
+      phase: "preparing",
       request_id: requestId,
-      message: `正在执行图工作流「${graph.name}」…`,
+      message: `正在准备图工作流（${bridgeRoute.enabledGraphs.length} 个图）…`,
     });
 
-    const graphResult = await executeGraph(graph, {
-      requestId,
-      chatId: currentChatId,
-      messageId: input.message_id,
-      userInput: input.user_input ?? "",
-      trigger: input.trigger,
-      settings,
-      abortSignal: input.abortSignal,
-      isCancelled: input.isCancelled,
-      onProgress: input.onProgress,
-    });
+    // Sort by priority (lower = earlier)
+    const sorted = [...bridgeRoute.enabledGraphs].sort(
+      (a, b) => a.priority - b.priority,
+    );
+    const allResults: DispatchFlowResult[] = [];
 
-    if (!graphResult.ok) {
-      return {
-        ok: false,
-        reason: graphResult.reason,
+    for (const graph of sorted) {
+      if (isWorkflowCancelled(input)) {
+        throw new Error("workflow cancelled by user");
+      }
+
+      // Validate before execution
+      const errors = validateGraph(graph);
+      if (errors.length > 0) {
+        const msg = errors.map((e) => e.message).join("; ");
+        console.warn(`[EW] Graph "${graph.name}" validation failed: ${msg}`);
+        continue; // Skip invalid graphs
+      }
+
+      input.onProgress?.({
+        phase: "dispatching",
         request_id: requestId,
-        attempts: [],
-        results: allResults,
-        failure: buildWorkflowFailureDiagnostic({
+        message: `正在执行图工作流「${graph.name}」…`,
+      });
+
+      const graphResult = await executeGraph(graph, {
+        requestId,
+        chatId: currentChatId,
+        messageId: input.message_id,
+        userInput: input.user_input ?? "",
+        trigger: input.trigger,
+        settings,
+        abortSignal: input.abortSignal,
+        isCancelled: input.isCancelled,
+        onProgress: input.onProgress,
+      });
+
+      if (!graphResult.ok) {
+        const reason = graphResult.reason ?? "graph workflow failed";
+        const diagnostics = buildWorkflowBridgeDiagnostics({
+          selection: bridgeRoute,
+          failureOrigin: "graph_dispatch",
+        });
+        const failure = buildWorkflowFailureDiagnostic({
           stage: "dispatch",
-          reason: graphResult.reason ?? "graph workflow failed",
+          reason,
           requestId,
           attempts: [],
-        }),
-      };
+        });
+        persistWorkflowSummary({
+          ok: false,
+          reason,
+          requestId,
+          chatId: currentChatId,
+          flowCount: sorted.length,
+          startedAt,
+          mode: input.mode,
+          diagnostics,
+          failure,
+        });
+        return {
+          ok: false,
+          reason,
+          request_id: requestId,
+          diagnostics,
+          attempts: [],
+          results: allResults,
+          failure,
+        };
+      }
     }
+
+    persistWorkflowSummary({
+      ok: true,
+      reason: "",
+      requestId,
+      chatId: currentChatId,
+      flowCount: sorted.length,
+      startedAt,
+      mode: input.mode,
+      diagnostics: bridgeDiagnostics,
+    });
+
+    return {
+      ok: true,
+      request_id: requestId,
+      diagnostics: bridgeDiagnostics,
+      attempts: [],
+      results: allResults,
+      failure: null,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    const failureOrigin: WorkflowBridgeFailureOrigin =
+      /workflow cancelled by user/i.test(reason)
+        ? "cancelled"
+        : "graph_dispatch";
+    const diagnostics = buildWorkflowBridgeDiagnostics({
+      selection: bridgeRoute,
+      failureOrigin,
+    });
+    const failure = buildWorkflowFailureDiagnostic({
+      stage: failureOrigin === "cancelled" ? "cancelled" : "dispatch",
+      reason,
+      requestId,
+      attempts: [],
+    });
+    persistWorkflowSummary({
+      ok: false,
+      reason,
+      requestId,
+      chatId: currentChatId,
+      flowCount: bridgeRoute.enabledGraphs.length,
+      startedAt,
+      mode: input.mode,
+      diagnostics,
+      failure,
+    });
+    return {
+      ok: false,
+      reason,
+      request_id: requestId,
+      diagnostics,
+      attempts: [],
+      results: [],
+      failure,
+    };
   }
-
-  const summary = RunSummarySchema.parse({
-    at: Date.now(),
-    ok: true,
-    reason: "",
-    request_id: requestId,
-    chat_id: currentChatId,
-    flow_count: sorted.length,
-    elapsed_ms: Date.now() - startedAt,
-    mode: input.mode,
-    diagnostics: {},
-  });
-  persistRunSummarySafe(summary);
-
-  return {
-    ok: true,
-    request_id: requestId,
-    attempts: [],
-    results: allResults,
-    failure: null,
-  };
 }
 
 // ── Legacy Flow Execution Path ──
@@ -752,21 +910,24 @@ export async function runWorkflow(
   const currentChatId = requestContext.chat_id;
   let attempts: DispatchFlowAttempt[] = [];
   let currentStage: WorkflowExecutionStage = "preparing";
+  const bridgeRoute = selectWorkflowBridgeRoute({
+    input,
+    settings: {
+      workbench_graphs: (settings as any).workbench_graphs,
+    },
+  });
+  const baseBridgeDiagnostics = buildWorkflowBridgeDiagnostics({
+    selection: bridgeRoute,
+  });
 
   try {
     throwIfWorkflowCancelled(input);
 
-    const bridgeRoute = selectWorkflowBridgeRoute({
-      input,
-      settings: {
-        workbench_graphs: (settings as any).workbench_graphs,
-      },
-    });
     if (bridgeRoute.route === "graph") {
       return await runGraphWorkflow(
         input,
         settings,
-        bridgeRoute.enabledGraphs,
+        bridgeRoute,
         requestId,
         startedAt,
       );
@@ -811,10 +972,22 @@ export async function runWorkflow(
       );
 
       if (enabledFlows.length === 0) {
+        const diagnostics = baseBridgeDiagnostics;
+        persistWorkflowSummary({
+          ok: true,
+          reason: `no flows scheduled for timing '${input.timing_filter}' on floor ordinal ${ordinal}`,
+          requestId,
+          chatId: currentChatId,
+          flowCount: 0,
+          startedAt,
+          mode: input.mode,
+          diagnostics,
+        });
         return {
           ok: true,
           reason: `no flows scheduled for timing '${input.timing_filter}' on floor ordinal ${ordinal}`,
           request_id: requestId,
+          diagnostics,
           attempts: [],
           results: [],
           failure: null,
@@ -825,10 +998,22 @@ export async function runWorkflow(
 
     if (enabledFlows.length === 0) {
       if (input.timing_filter) {
+        const diagnostics = baseBridgeDiagnostics;
+        persistWorkflowSummary({
+          ok: true,
+          reason: `no flows match timing '${input.timing_filter}'`,
+          requestId,
+          chatId: currentChatId,
+          flowCount: 0,
+          startedAt,
+          mode: input.mode,
+          diagnostics,
+        });
         return {
           ok: true,
           reason: `no flows match timing '${input.timing_filter}'`,
           request_id: requestId,
+          diagnostics,
           attempts: [],
           results: [],
           failure: null,
@@ -927,18 +1112,20 @@ export async function runWorkflow(
       injectReplyInstructionOnce(mergedPlan.reply_instruction);
     }
 
-    const summary = RunSummarySchema.parse({
-      at: Date.now(),
+    const diagnostics = mergeWorkflowDiagnostics(
+      mergedPlan.diagnostics,
+      baseBridgeDiagnostics,
+    );
+    persistWorkflowSummary({
       ok: true,
       reason: "",
-      request_id: requestId,
-      chat_id: commitResult.chat_id,
-      flow_count: results.length,
-      elapsed_ms: Date.now() - startedAt,
+      requestId,
+      chatId: commitResult.chat_id,
+      flowCount: results.length,
+      startedAt,
       mode: input.mode,
-      diagnostics: mergedPlan.diagnostics,
+      diagnostics,
     });
-    persistRunSummarySafe(summary);
 
     input.onProgress?.({
       phase: "completed",
@@ -950,7 +1137,7 @@ export async function runWorkflow(
     return {
       ok: true,
       request_id: requestId,
-      diagnostics: mergedPlan.diagnostics,
+      diagnostics,
       attempts,
       results,
       failure: null,
@@ -991,28 +1178,31 @@ export async function runWorkflow(
       requestId,
       attempts,
     });
+    const diagnostics = buildWorkflowBridgeDiagnostics({
+      selection: bridgeRoute,
+      failureOrigin: inferLegacyBridgeFailureOrigin(failureStage),
+    });
 
-    const summary = RunSummarySchema.parse({
-      at: Date.now(),
+    persistWorkflowSummary({
       ok: false,
       reason,
-      request_id: requestId,
-      chat_id: currentChatId,
-      flow_count:
+      requestId,
+      chatId: currentChatId,
+      flowCount:
         (input.flow_ids?.length ?? 0) > 0
           ? (input.flow_ids?.length ?? 0)
           : settings.flows.filter((flow) => flow.enabled).length,
-      elapsed_ms: Date.now() - startedAt,
+      startedAt,
       mode: input.mode,
-      diagnostics: {},
+      diagnostics,
       failure,
     });
-    persistRunSummarySafe(summary);
 
     return {
       ok: false,
       reason,
       request_id: requestId,
+      diagnostics,
       attempts,
       results: preservedResults,
       failure,

@@ -12,6 +12,7 @@ import {
   validateGraph,
 } from "./graph-executor";
 import {
+  buildWorkflowBridgeDiagnostics,
   selectWorkflowBridgeRoute,
   type WorkflowBridgeRouteSelection,
 } from "./pipeline";
@@ -618,6 +619,65 @@ function assertBridgeRoute(
     actual.enabledGraphs.map((graph) => graph.id).join(",") ===
       expected.enabledGraphIds.join(","),
     `Expected enabled graph ids to be ${expected.enabledGraphIds.join(",")}. Actual: ${actual.enabledGraphs.map((graph) => graph.id).join(",")}`,
+  );
+}
+
+function assertBridgeDiagnostics(
+  actual: Record<string, any>,
+  expected: {
+    route: WorkflowBridgeRouteSelection["route"];
+    reason: WorkflowBridgeRouteSelection["reason"];
+    hasExplicitLegacyFlowSelection: boolean;
+    enabledGraphCount: number;
+    selectedGraphIds?: string[];
+    failureOrigin?:
+      | "graph_dispatch"
+      | "legacy_dispatch"
+      | "legacy_merge"
+      | "legacy_writeback"
+      | "cancelled";
+  },
+): void {
+  const bridge = actual.bridge;
+  assert(bridge && typeof bridge === "object", "Expected bridge diagnostics");
+  assert(
+    bridge.route === expected.route,
+    `Expected bridge route diagnostics to be ${expected.route}. Actual: ${bridge.route}`,
+  );
+  assert(
+    bridge.reason === expected.reason,
+    `Expected bridge reason diagnostics to be ${expected.reason}. Actual: ${bridge.reason}`,
+  );
+  assert(
+    bridge.has_explicit_legacy_flow_selection ===
+      expected.hasExplicitLegacyFlowSelection,
+    `Expected bridge has_explicit_legacy_flow_selection to be ${expected.hasExplicitLegacyFlowSelection}. Actual: ${bridge.has_explicit_legacy_flow_selection}`,
+  );
+  assert(
+    bridge.enabled_graph_count === expected.enabledGraphCount,
+    `Expected bridge enabled_graph_count to be ${expected.enabledGraphCount}. Actual: ${bridge.enabled_graph_count}`,
+  );
+
+  if (expected.route === "graph") {
+    assert(
+      Array.isArray(bridge.graph_context?.selected_graph_ids),
+      `Expected graph route bridge diagnostics to expose selected_graph_ids. Actual: ${JSON.stringify(bridge.graph_context)}`,
+    );
+    assert(
+      bridge.graph_context.selected_graph_ids.join(",") ===
+        (expected.selectedGraphIds ?? []).join(","),
+      `Expected graph selected_graph_ids to be ${(expected.selectedGraphIds ?? []).join(",")}. Actual: ${bridge.graph_context.selected_graph_ids.join(",")}`,
+    );
+  } else {
+    assert(
+      bridge.graph_context === undefined,
+      `Expected legacy bridge diagnostics to omit graph_context. Actual: ${JSON.stringify(bridge.graph_context)}`,
+    );
+  }
+
+  assert(
+    bridge.failure_origin === expected.failureOrigin,
+    `Expected bridge failure_origin to be ${expected.failureOrigin}. Actual: ${bridge.failure_origin}`,
   );
 }
 
@@ -1713,6 +1773,92 @@ async function runValidationSpec(): Promise<void> {
     ["graph", "legacy"].filter((route) => route === singlePathRoute.route)
       .length === 1,
     `Expected one request to resolve to a single bridge route. Actual route: ${singlePathRoute.route}`,
+  );
+
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({ selection: graphFirstRoute }),
+    {
+      route: "graph",
+      reason: "graph_first",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 1,
+      selectedGraphIds: ["graph_test"],
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({
+      selection: graphFirstRoute,
+      failureOrigin: "graph_dispatch",
+    }),
+    {
+      route: "graph",
+      reason: "graph_first",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 1,
+      selectedGraphIds: ["graph_test"],
+      failureOrigin: "graph_dispatch",
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({ selection: legacyFallbackRoute }),
+    {
+      route: "legacy",
+      reason: "no_enabled_graph",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 0,
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+      failureOrigin: "legacy_dispatch",
+    }),
+    {
+      route: "legacy",
+      reason: "legacy_flow_selection",
+      hasExplicitLegacyFlowSelection: true,
+      enabledGraphCount: 1,
+      failureOrigin: "legacy_dispatch",
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+      failureOrigin: "legacy_merge",
+    }),
+    {
+      route: "legacy",
+      reason: "legacy_flow_selection",
+      hasExplicitLegacyFlowSelection: true,
+      enabledGraphCount: 1,
+      failureOrigin: "legacy_merge",
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({
+      selection: explicitLegacySelectionRoute,
+      failureOrigin: "legacy_writeback",
+    }),
+    {
+      route: "legacy",
+      reason: "legacy_flow_selection",
+      hasExplicitLegacyFlowSelection: true,
+      enabledGraphCount: 1,
+      failureOrigin: "legacy_writeback",
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({
+      selection: legacyFallbackRoute,
+      failureOrigin: "cancelled",
+    }),
+    {
+      route: "legacy",
+      reason: "no_enabled_graph",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 0,
+      failureOrigin: "cancelled",
+    },
   );
   // ══════════════════════════════════════════════════════════════════
   // P2.1 — Runtime Node Registry Tests
