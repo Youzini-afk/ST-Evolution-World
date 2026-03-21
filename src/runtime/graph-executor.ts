@@ -472,7 +472,7 @@ function getNodeSideEffectLevel(node: WorkbenchNode): WorkbenchSideEffectLevel {
   );
 }
 
-function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
+export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
   const sorted = topologicalSort(graph.nodes, graph.edges);
   const nodesWithOutgoing = new Set(graph.edges.map((edge) => edge.source));
   const nodes: GraphCompilePlanNode[] = sorted.map(
@@ -482,9 +482,10 @@ function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
         nodeId: node.id,
         moduleId: node.moduleId,
         order,
+        sequence: order,
         dependsOn: dependsOn
           .map((index) => graph.nodes[index]?.id)
-          .filter(Boolean),
+          .filter((nodeId): nodeId is string => Boolean(nodeId)),
         isTerminal: !nodesWithOutgoing.has(node.id),
         sideEffect,
         stage: "compile",
@@ -498,6 +499,9 @@ function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
     nodeOrder: nodes.map((node) => node.nodeId),
     terminalNodeIds: nodes
       .filter((node) => node.isTerminal)
+      .map((node) => node.nodeId),
+    sideEffectNodeIds: nodes
+      .filter((node) => node.isSideEffectNode)
       .map((node) => node.nodeId),
     nodes,
   };
@@ -519,7 +523,7 @@ class GraphExecutionStageError extends Error {
   }
 }
 
-async function executeCompiledGraph(
+export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
   context: ExecutionContext,
@@ -533,6 +537,7 @@ async function executeCompiledGraph(
     [];
   const nodeOutputs = new Map<string, ModuleOutput>();
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
+  const planNodeMap = new Map(plan.nodes.map((node) => [node.nodeId, node]));
 
   const [
     sourceImpls,
@@ -550,7 +555,11 @@ async function executeCompiledGraph(
     import("./module-impls/output-impls"),
   ]);
 
-  for (const planNode of plan.nodes) {
+  for (const nodeId of plan.nodeOrder) {
+    const planNode = planNodeMap.get(nodeId);
+    if (!planNode) {
+      throw new Error(`compile plan 缺少节点元数据: ${nodeId}`);
+    }
     if (context.abortSignal?.aborted || context.isCancelled?.()) {
       throw new GraphExecutionStageError(
         "execute",
@@ -559,7 +568,7 @@ async function executeCompiledGraph(
       );
     }
 
-    const node = nodeMap.get(planNode.nodeId);
+    const node = nodeMap.get(nodeId);
     if (!node) {
       throw new Error(`compile plan 引用了不存在的节点: ${planNode.nodeId}`);
     }
@@ -595,7 +604,7 @@ async function executeCompiledGraph(
         elapsedMs,
         stage: "execute",
         status: "ok",
-        isSideEffectNode: planNode.sideEffect === "writes_host",
+        isSideEffectNode: planNode.isSideEffectNode,
       });
       nodeTraces.push({
         nodeId: node.id,
@@ -603,7 +612,7 @@ async function executeCompiledGraph(
         stage: "execute",
         status: "ok",
         sideEffect: planNode.sideEffect,
-        isSideEffectNode: planNode.sideEffect === "writes_host",
+        isSideEffectNode: planNode.isSideEffectNode,
         elapsedMs,
       });
     } catch (error) {
@@ -617,7 +626,7 @@ async function executeCompiledGraph(
         error: errorMsg,
         stage: "execute",
         status: "error",
-        isSideEffectNode: planNode.sideEffect === "writes_host",
+        isSideEffectNode: planNode.isSideEffectNode,
       });
       nodeTraces.push({
         nodeId: node.id,
@@ -625,7 +634,7 @@ async function executeCompiledGraph(
         stage: "execute",
         status: "error",
         sideEffect: planNode.sideEffect,
-        isSideEffectNode: planNode.sideEffect === "writes_host",
+        isSideEffectNode: planNode.isSideEffectNode,
         elapsedMs,
         error: errorMsg,
       });

@@ -1,9 +1,15 @@
 import type {
   ExecutionContext,
+  GraphCompilePlan,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
-import { executeGraph, validateGraph } from "./graph-executor";
+import {
+  compileGraphPlan,
+  executeCompiledGraph,
+  executeGraph,
+  validateGraph,
+} from "./graph-executor";
 import type { EwFlowConfig } from "./types";
 
 function makeBaseGraph(): WorkbenchGraph {
@@ -81,6 +87,100 @@ function makeExecutionContext(
     settings: {},
     ...overrides,
   };
+}
+
+function makePlanExecutionGraph(): WorkbenchGraph {
+  return {
+    id: "graph_plan_exec",
+    name: "Plan Execution Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "filter_text",
+        moduleId: "flt_mvu_strip",
+        position: { x: 240, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "out_reply",
+        moduleId: "out_reply_inject",
+        position: { x: 480, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_src_to_filter",
+        source: "src_text",
+        sourcePort: "text",
+        target: "filter_text",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_filter_to_out",
+        source: "filter_text",
+        sourcePort: "text_out",
+        target: "out_reply",
+        targetPort: "instruction",
+      },
+    ],
+  };
+}
+
+function assertPlanMatchesGraph(
+  plan: GraphCompilePlan,
+  graph: WorkbenchGraph,
+): void {
+  const nodesWithOutgoing = new Set(graph.edges.map((edge) => edge.source));
+
+  assert(
+    plan.nodeOrder.join(",") === graph.nodes.map((node) => node.id).join(","),
+    `Expected compile plan node order to align with graph fixture order. Actual: ${plan.nodeOrder.join(",")}`,
+  );
+
+  assert(
+    plan.nodes.every(
+      (node, index) => node.order === index && node.sequence === index,
+    ),
+    `Expected compile plan nodes to carry stable sequential order metadata. Actual: ${plan.nodes.map((node) => `${node.nodeId}:${node.order}:${node.sequence}`).join(",")}`,
+  );
+
+  for (const planNode of plan.nodes) {
+    const graphNode = graph.nodes.find((node) => node.id === planNode.nodeId);
+    assert(
+      graphNode?.moduleId === planNode.moduleId,
+      `Expected compile plan node ${planNode.nodeId} to preserve moduleId. Actual: ${planNode.moduleId}`,
+    );
+
+    const expectedDependsOn = graph.edges
+      .filter((edge) => edge.target === planNode.nodeId)
+      .map((edge) => edge.source)
+      .sort();
+    const actualDependsOn = [...planNode.dependsOn].sort();
+    assert(
+      actualDependsOn.join(",") === expectedDependsOn.join(","),
+      `Expected compile plan dependsOn for ${planNode.nodeId} to align with graph edges. Actual: ${actualDependsOn.join(",")}`,
+    );
+
+    const expectedIsTerminal = !nodesWithOutgoing.has(planNode.nodeId);
+    assert(
+      planNode.isTerminal === expectedIsTerminal,
+      `Expected compile plan terminal flag for ${planNode.nodeId} to align with graph edges. Actual: ${planNode.isTerminal}`,
+    );
+  }
 }
 
 function makeLegacyFlowFixture(): EwFlowConfig {
@@ -305,6 +405,60 @@ async function runValidationSpec(): Promise<void> {
     (error) => error.nodeId === "src_text",
     "unknown module node ref",
   );
+  const compilePlanFixture = compileGraphPlan(makePlanExecutionGraph());
+  assertPlanMatchesGraph(compilePlanFixture, makePlanExecutionGraph());
+  assert(
+    compilePlanFixture.terminalNodeIds.join(",") === "out_reply",
+    `Expected compile plan terminal node to be out_reply. Actual: ${compilePlanFixture.terminalNodeIds.join(",")}`,
+  );
+  assert(
+    compilePlanFixture.sideEffectNodeIds.join(",") === "out_reply",
+    `Expected compile plan side-effect node to be out_reply. Actual: ${compilePlanFixture.sideEffectNodeIds.join(",")}`,
+  );
+  assert(
+    compilePlanFixture.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.isTerminal}:${node.isSideEffectNode}:${node.sideEffect}`,
+      )
+      .join(",") ===
+      "src_text:false:false:reads_host,filter_text:false:false:pure,out_reply:true:true:writes_host",
+    `Expected terminal/side-effect smoke flags to be stable in compile plan. Actual: ${compilePlanFixture.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.isTerminal}:${node.isSideEffectNode}:${node.sideEffect}`,
+      )
+      .join(",")}`,
+  );
+
+  const planExecutionGraph = makePlanExecutionGraph();
+  const reversedGraph = {
+    ...planExecutionGraph,
+    nodes: [...planExecutionGraph.nodes].reverse(),
+  };
+  const reversedPlan = compileGraphPlan(reversedGraph);
+  const compiledExecution = await executeCompiledGraph(
+    planExecutionGraph,
+    reversedPlan,
+    makeExecutionContext(),
+  );
+  assert(
+    compiledExecution.moduleResults.map((result) => result.nodeId).join(",") ===
+      reversedPlan.nodeOrder.join(","),
+    `Expected executeCompiledGraph to follow compile plan nodeOrder. Actual: ${compiledExecution.moduleResults.map((result) => result.nodeId).join(",")}`,
+  );
+  assert(
+    compiledExecution.moduleResults
+      .map((result) => `${result.nodeId}:${result.isSideEffectNode}`)
+      .join(",") === "src_text:false,filter_text:false,out_reply:true",
+    `Expected executeCompiledGraph side-effect markers to come from compile plan. Actual: ${compiledExecution.moduleResults.map((result) => `${result.nodeId}:${result.isSideEffectNode}`).join(",")}`,
+  );
+  assert(
+    Object.keys(compiledExecution.finalOutputs).join(",") ===
+      reversedPlan.terminalNodeIds.join(","),
+    `Expected executeCompiledGraph final outputs to follow compile plan terminalNodeIds. Actual: ${Object.keys(compiledExecution.finalOutputs).join(",")}`,
+  );
+
   const successResult = await executeGraph(
     makeBaseGraph(),
     makeExecutionContext(),
@@ -319,14 +473,27 @@ async function runValidationSpec(): Promise<void> {
     `Expected compile plan node order to be src_text,filter_text. Actual: ${successResult.compilePlan?.nodeOrder.join(",")}`,
   );
   assert(
+    successResult.compilePlan?.sideEffectNodeIds.length === 0,
+    `Expected base graph compile plan to have no side-effect nodes. Actual: ${successResult.compilePlan?.sideEffectNodeIds.join(",")}`,
+  );
+  assert(
     successResult.compilePlan?.terminalNodeIds.join(",") === "filter_text",
     `Expected terminal node to be filter_text. Actual: ${successResult.compilePlan?.terminalNodeIds.join(",")}`,
   );
   assert(
     successResult.compilePlan?.nodes
-      .map((node) => `${node.nodeId}:${node.stage}:${node.status}`)
-      .join(",") === "src_text:compile:ok,filter_text:compile:ok",
-    `Expected compile plan nodes to carry compile status. Actual: ${successResult.compilePlan?.nodes.map((node) => `${node.nodeId}:${node.stage}:${node.status}`).join(",")}`,
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.order}:${node.sequence}:${node.stage}:${node.status}:${node.isTerminal}:${node.isSideEffectNode}`,
+      )
+      .join(",") ===
+      "src_text:0:0:compile:ok:false:false,filter_text:1:1:compile:ok:true:false",
+    `Expected compile plan nodes to carry stable execution metadata. Actual: ${successResult.compilePlan?.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.order}:${node.sequence}:${node.stage}:${node.status}:${node.isTerminal}:${node.isSideEffectNode}`,
+      )
+      .join(",")}`,
   );
   assert(
     successResult.compilePlan?.stageTrace

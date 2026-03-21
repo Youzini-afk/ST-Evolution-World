@@ -194,17 +194,19 @@ export interface GraphCompilePlanNode {
   nodeId: string;
   moduleId: string;
   order: number;
+  sequence: number;
   dependsOn: string[];
   isTerminal: boolean;
   sideEffect?: WorkbenchSideEffectLevel;
   stage?: "compile";
   status?: Extract<GraphTraceStageStatus, "ok" | "error">;
-  isSideEffectNode?: boolean;
+  isSideEffectNode: boolean;
 }
 
 export interface GraphCompilePlan {
   nodeOrder: string[];
   terminalNodeIds: string[];
+  sideEffectNodeIds: string[];
   nodes: GraphCompilePlanNode[];
   failedStage?: GraphExecutionStage;
   stageTrace?: GraphStageTrace[];
