@@ -720,19 +720,6 @@ function createNodeTraceBase(
   };
 }
 
-function createNodeTraceError(error: unknown) {
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
-    };
-  }
-
-  return {
-    message: String(error),
-  };
-}
-
 export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
@@ -864,10 +851,6 @@ export async function executeCompiledGraph(
         failedAt,
         isFallback: false,
       });
-
-      if (planNode.isSideEffectNode) {
-        continue;
-      }
 
       // Append 'skipped' traces for remaining nodes in plan order (fail-fast)
       const failedIndex = plan.nodeOrder.indexOf(node.id);
@@ -1032,8 +1015,9 @@ export async function executeGraph(
       failedStage: "execute",
       stageTrace: [...trace],
     };
-    const errorNodeTraces =
-      error instanceof GraphExecutionStageError ? error.nodeTraces : nodeTraces;
+    const executeNodeTraces =
+      error instanceof GraphExecutionStageError ? (error.nodeTraces ?? []) : [];
+    const combinedNodeTraces = [...nodeTraces, ...executeNodeTraces];
     return {
       ok: false,
       reason,
@@ -1044,7 +1028,7 @@ export async function executeGraph(
       elapsedMs: Date.now() - startedAt,
       failedStage: "execute",
       compilePlan,
-      nodeTraces: errorNodeTraces,
+      nodeTraces: combinedNodeTraces,
       trace: {
         currentStage: "execute",
         failedStage: "execute",
@@ -1053,7 +1037,7 @@ export async function executeGraph(
             ? error.failedNodeId
             : undefined,
         stages: trace,
-        nodeTraces: errorNodeTraces,
+        nodeTraces: combinedNodeTraces,
         compilePlan,
       },
     };

@@ -242,6 +242,24 @@ function makeHandlerFailureGraph(): WorkbenchGraph {
   };
 }
 
+function makeSideEffectHandlerFailureGraph(): WorkbenchGraph {
+  const graph = makeHandlerFailureGraph();
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.id === "llm_call"
+        ? {
+            ...node,
+            runtimeMeta: {
+              ...(node.runtimeMeta ?? {}),
+              sideEffect: "writes_host",
+            },
+          }
+        : node,
+    ),
+  };
+}
+
 function makeIntegratedSmokeGraph(): WorkbenchGraph {
   return {
     id: "graph_integrated_smoke",
@@ -868,6 +886,39 @@ async function runValidationSpec(): Promise<void> {
   assert(
     handlerFailureTrace?.sideEffect === "reads_host",
     `Expected handler failure trace to preserve sideEffect metadata. Actual: ${JSON.stringify(handlerFailureTrace?.sideEffect)}`,
+  );
+
+  assert(
+    handlerFailureResult.nodeTraces
+      ?.map((trace) => `${trace.nodeId}:${trace.stage}:${trace.status}`)
+      .join(",") ===
+      "src_messages:compile:ok,cfg_api:compile:ok,llm_call:compile:ok,src_messages:execute:ok,cfg_api:execute:ok,llm_call:execute:error",
+    `Expected execute failure top-level nodeTraces to retain compile+execute traces. Actual: ${handlerFailureResult.nodeTraces?.map((trace) => `${trace.nodeId}:${trace.stage}:${trace.status}`).join(",")}`,
+  );
+
+  const sideEffectFailureResult = await executeGraph(
+    makeSideEffectHandlerFailureGraph(),
+    makeExecutionContext(),
+  );
+  assert(
+    sideEffectFailureResult.ok === false &&
+      sideEffectFailureResult.failedStage === "execute",
+    `Expected side-effect handler failure to fail the graph at execute stage. Actual: ok=${sideEffectFailureResult.ok}, failedStage=${sideEffectFailureResult.failedStage}`,
+  );
+  assert(
+    sideEffectFailureResult.trace?.failedStage === "execute" &&
+      sideEffectFailureResult.trace?.failedNodeId === "llm_call",
+    `Expected side-effect handler failure trace to expose failed node attribution. Actual: failedStage=${sideEffectFailureResult.trace?.failedStage}, failedNodeId=${sideEffectFailureResult.trace?.failedNodeId}`,
+  );
+  const sideEffectFailureTrace =
+    sideEffectFailureResult.trace?.nodeTraces?.find(
+      (trace) => trace.nodeId === "llm_call" && trace.stage === "execute",
+    );
+  assert(
+    sideEffectFailureTrace?.status === "error" &&
+      sideEffectFailureTrace.isSideEffectNode === true &&
+      sideEffectFailureTrace.sideEffect === "writes_host",
+    `Expected side-effect failed node trace to stay error and preserve writes_host metadata. Actual: ${JSON.stringify(sideEffectFailureTrace)}`,
   );
 
   const cancelledExecutionResult = await executeGraph(

@@ -221,12 +221,7 @@ export interface GraphNodeTrace {
   nodeId: string;
   moduleId: string;
   stage?: GraphExecutionStage;
-  status?:
-    | ModuleExecutionStatus
-    | GraphTraceStageStatus
-    | "success"
-    | "error"
-    | "skipped";
+  status?: ModuleExecutionStatus | GraphTraceStageStatus | "error" | "skipped";
   sideEffect?: WorkbenchSideEffectLevel;
   isSideEffectNode?: boolean;
   elapsedMs?: number;
