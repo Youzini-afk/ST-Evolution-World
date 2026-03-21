@@ -10,6 +10,12 @@ import {
   executeGraph,
   validateGraph,
 } from "./graph-executor";
+import {
+  _resetRegistryForTesting,
+  getRegisteredModuleIds,
+  hasRegisteredHandler,
+  resolveNodeHandler,
+} from "./runtime-node-registry";
 import type { EwFlowConfig } from "./types";
 
 function makeBaseGraph(): WorkbenchGraph {
@@ -1096,6 +1102,142 @@ async function runValidationSpec(): Promise<void> {
     autoMigratedGraphs.length === 1 &&
       autoMigratedGraphs[0].id === migratedGraph.id,
     `Expected auto migration to produce migrated legacy graph. Actual: ${autoMigratedGraphs.map((graph) => graph.id).join(",")}`,
+  );
+
+  // ══════════════════════════════════════════════════════════════════
+  // P2.1 — Runtime Node Registry Tests
+  // ══════════════════════════════════════════════════════════════════
+
+  // 1. Registry resolves registered built-in nodes
+  const builtinModuleIds = getRegisteredModuleIds();
+  assert(
+    builtinModuleIds.length > 0,
+    `Expected registry to have registered built-in handlers after execution. Actual count: ${builtinModuleIds.length}`,
+  );
+  assert(
+    hasRegisteredHandler("src_user_input"),
+    `Expected registry to have src_user_input handler registered`,
+  );
+  assert(
+    hasRegisteredHandler("flt_mvu_strip"),
+    `Expected registry to have flt_mvu_strip handler registered`,
+  );
+  assert(
+    hasRegisteredHandler("exe_llm_call"),
+    `Expected registry to have exe_llm_call handler registered`,
+  );
+  assert(
+    hasRegisteredHandler("out_reply_inject"),
+    `Expected registry to have out_reply_inject handler registered`,
+  );
+
+  // 2. Registry resolves registered handler with resolvedVia='registered'
+  const srcUserResolve = resolveNodeHandler("src_user_input");
+  assert(
+    srcUserResolve.resolvedVia === "registered",
+    `Expected src_user_input to resolve via 'registered'. Actual: ${srcUserResolve.resolvedVia}`,
+  );
+  assert(
+    srcUserResolve.descriptor.kind === "builtin",
+    `Expected src_user_input descriptor kind to be 'builtin'. Actual: ${srcUserResolve.descriptor.kind}`,
+  );
+  assert(
+    srcUserResolve.descriptor.handlerId === "src_user_input",
+    `Expected src_user_input descriptor handlerId to be 'src_user_input'. Actual: ${srcUserResolve.descriptor.handlerId}`,
+  );
+
+  // 3. Registry resolves unregistered moduleId with explicit fallback
+  const unknownResolve = resolveNodeHandler("__totally_unknown_module__");
+  assert(
+    unknownResolve.resolvedVia === "fallback",
+    `Expected unknown module to resolve via 'fallback'. Actual: ${unknownResolve.resolvedVia}`,
+  );
+  assert(
+    unknownResolve.descriptor.kind === "fallback",
+    `Expected unknown module descriptor kind to be 'fallback'. Actual: ${unknownResolve.descriptor.kind}`,
+  );
+  assert(
+    unknownResolve.descriptor.handlerId === "__fallback__",
+    `Expected unknown module fallback handlerId to be '__fallback__'. Actual: ${unknownResolve.descriptor.handlerId}`,
+  );
+
+  // 4. Executor success path without static handler map
+  //    (already tested above via executeGraph / executeCompiledGraph,
+  //     but we add an explicit assertion that executor uses registry)
+  const registrySuccessResult = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext({ userInput: "registry_test" }),
+  );
+  assert(
+    registrySuccessResult.ok === true,
+    `Expected executor to succeed via registry-based dispatch. ok=${registrySuccessResult.ok}`,
+  );
+  const registryExecTraces = registrySuccessResult.trace?.nodeTraces?.filter(
+    (t) => t.stage === "execute",
+  );
+  assert(
+    registryExecTraces?.every(
+      (t) =>
+        typeof t.handlerId === "string" &&
+        t.handlerId.length > 0 &&
+        t.isFallback === false,
+    ) === true,
+    `Expected registry-dispatched execute traces to expose handlerId and isFallback=false. Actual: ${JSON.stringify(registryExecTraces)}`,
+  );
+
+  // 5. Fallback still works in dispatch smoke graph (pkg_prompt_assembly is not registered)
+  const registryFallbackGraph = makeDispatchSmokeGraph();
+  const registryFallbackPlan = compileGraphPlan(registryFallbackGraph);
+  const registryFallbackExec = await executeCompiledGraph(
+    registryFallbackGraph,
+    registryFallbackPlan,
+    makeExecutionContext({ userInput: "fallback_test" }),
+  );
+  assert(
+    registryFallbackExec.moduleResults.every(
+      (result) => result.status === "ok",
+    ),
+    `Expected dispatch smoke graph to succeed with fallback via registry. Actual: ${registryFallbackExec.moduleResults.map((r) => `${r.nodeId}:${r.status}`).join(",")}`,
+  );
+  const registryFallbackTrace = registryFallbackExec.nodeTraces?.find(
+    (t) => t.nodeId === "fallback_pkg" && t.stage === "execute",
+  );
+  assert(
+    registryFallbackTrace?.isFallback === true &&
+      registryFallbackTrace.handlerId === "__fallback__",
+    `Expected fallback trace to show isFallback=true and handlerId='__fallback__'. Actual: ${JSON.stringify(registryFallbackTrace)}`,
+  );
+
+  // 6. Registry reset + re-initialize test (ensures idempotency)
+  _resetRegistryForTesting();
+  assert(
+    getRegisteredModuleIds().length === 0,
+    `Expected registry to be empty after reset. Actual: ${getRegisteredModuleIds().length}`,
+  );
+  assert(
+    !hasRegisteredHandler("src_user_input"),
+    `Expected src_user_input to be absent after registry reset`,
+  );
+
+  // After reset, resolveNodeHandler should return fallback for everything
+  const postResetResolve = resolveNodeHandler("src_user_input");
+  assert(
+    postResetResolve.resolvedVia === "fallback",
+    `Expected post-reset resolve for src_user_input to be 'fallback'. Actual: ${postResetResolve.resolvedVia}`,
+  );
+
+  // Re-run execution which triggers ensureBuiltinHandlers
+  const postResetResult = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext({ userInput: "post_reset" }),
+  );
+  assert(
+    postResetResult.ok === true,
+    `Expected execution after registry reset to succeed (auto re-registration). ok=${postResetResult.ok}`,
+  );
+  assert(
+    hasRegisteredHandler("src_user_input"),
+    `Expected src_user_input to be re-registered after execution`,
   );
 }
 

@@ -3,9 +3,13 @@
  * Executes a WorkbenchGraph by:
  *   1. Topological sort of nodes
  *   2. Per-node execution with input collection from upstream edges
- *   3. Module dispatch to the appropriate runtime function
+ *   3. Module dispatch via runtime-node-registry (P2.1)
  *
  * This is the core that replaces the fixed pipeline with graph-driven execution.
+ *
+ * P2.1 change: The executor no longer owns the static handler map.
+ * Node execution handlers are registered in and resolved from
+ * runtime-node-registry.ts (plugin contract v1).
  */
 
 import { getModuleBlueprint } from "../ui/components/graph/module-registry";
@@ -26,44 +30,13 @@ import type {
   WorkbenchNode,
   WorkbenchSideEffectLevel,
 } from "../ui/components/graph/module-types";
-
-type SourceImpls = typeof import("./module-impls/source-impls");
-type FilterImpls = typeof import("./module-impls/filter-impls");
-type TransformImpls = typeof import("./module-impls/transform-impls");
-type ComposeImpls = typeof import("./module-impls/compose-impls");
-type ExecuteImpls = typeof import("./module-impls/execute-impls");
-type OutputImpls = typeof import("./module-impls/output-impls");
-
-type NodeInputs = Record<string, any>;
-
-interface RuntimeImplModules {
-  sourceImpls: SourceImpls;
-  filterImpls: FilterImpls;
-  transformImpls: TransformImpls;
-  composeImpls: ComposeImpls;
-  executeImpls: ExecuteImpls;
-  outputImpls: OutputImpls;
-}
-
-interface NodeHandlerRequest {
-  planNode: GraphCompilePlanNode;
-  node: WorkbenchNode;
-  inputs: NodeInputs;
-  context: ExecutionContext;
-  modules: RuntimeImplModules;
-}
-
-interface NodeHandlerResult {
-  outputs: ModuleOutput;
-  handlerId: string;
-  isFallback?: boolean;
-}
-
-type NodeExecutionHandler = (
-  request: NodeHandlerRequest,
-) => Promise<NodeHandlerResult>;
-
-type NodeHandlerMap = Record<string, NodeExecutionHandler>;
+import {
+  ensureBuiltinHandlers,
+  resolveNodeHandler,
+  type NodeHandlerRequest,
+  type NodeHandlerResult,
+  type RuntimeImplModules,
+} from "./runtime-node-registry";
 
 // ── Topological Sort ──
 
@@ -162,431 +135,14 @@ function collectNodeInputs(
   return inputs;
 }
 
-// ── Module Execution Dispatch ──
+// ── Module Execution Dispatch (P2.1: registry-based) ──
 
-/**
- * Execute a single module node.
- *
- * Each module is dispatched to the appropriate runtime function based on its moduleId.
- * The module receives:
- *   - inputs: data from upstream edges
- *   - config: per-instance configuration
- *   - context: global execution context (settings, abort, etc.)
- *
- * Returns the module's outputs keyed by output port ID.
- *
- * NOTE: In Iteration 2, only a subset of critical modules are implemented.
- * Others return pass-through or empty outputs.
- * Full implementation will be added in Iterations 4-5.
+/*
+ * P2.1: The executor no longer defines createNodeHandlerMap() or
+ * createFallbackNodeHandler(). All handler registration is owned by
+ * runtime-node-registry.ts. The executor only resolves handlers via
+ * the registry's resolveNodeHandler() API.
  */
-function createFallbackNodeHandler(): NodeExecutionHandler {
-  return async ({ node, inputs }) => {
-    const blueprint = getModuleBlueprint(node.moduleId);
-    const outPorts = blueprint.ports.filter((p) => p.direction === "out");
-    if (outPorts.length === 0) {
-      return { outputs: {}, handlerId: "__fallback__", isFallback: true };
-    }
-
-    const firstInValue = Object.values(inputs)[0];
-    const outputs: ModuleOutput = {};
-    for (const port of outPorts) {
-      outputs[port.id] = firstInValue ?? null;
-    }
-
-    return { outputs, handlerId: "__fallback__", isFallback: true };
-  };
-}
-
-function createNodeHandlerMap(modules: RuntimeImplModules): NodeHandlerMap {
-  const {
-    sourceImpls,
-    filterImpls,
-    transformImpls,
-    composeImpls,
-    executeImpls,
-    outputImpls,
-  } = modules;
-
-  return {
-    src_char_fields: async () => ({
-      outputs: sourceImpls.collectCharFields(),
-      handlerId: "src_char_fields",
-    }),
-    src_chat_history: async ({ node }) => ({
-      outputs: {
-        messages: sourceImpls.collectChatHistory(
-          node.config.context_turns ?? 8,
-        ),
-      },
-      handlerId: "src_chat_history",
-    }),
-    src_worldbook_raw: async ({ node }) => ({
-      outputs: { entries: sourceImpls.collectWorldbookRaw(node.config) },
-      handlerId: "src_worldbook_raw",
-    }),
-    src_extension_prompts: async () => ({
-      outputs: sourceImpls.collectExtensionPrompts(),
-      handlerId: "src_extension_prompts",
-    }),
-    src_user_input: async ({ context }) => ({
-      outputs: { text: context.userInput ?? "" },
-      handlerId: "src_user_input",
-    }),
-    src_flow_context: async ({ context }) => ({
-      outputs: { context: sourceImpls.collectFlowContext(context) },
-      handlerId: "src_flow_context",
-    }),
-    src_serial_results: async ({ context }) => ({
-      outputs: {
-        results: sourceImpls.collectSerialResults(
-          (context as any).previousResults,
-        ),
-      },
-      handlerId: "src_serial_results",
-    }),
-
-    flt_wi_keyword_match: async ({ inputs }) => {
-      const entries = Array.isArray(inputs.entries) ? inputs.entries : [];
-      const chatTexts =
-        typeof inputs.chat_texts === "string"
-          ? inputs.chat_texts
-          : Array.isArray(inputs.chat_texts)
-            ? inputs.chat_texts.map((m: any) => m.content ?? "").join("\n")
-            : "";
-      return {
-        outputs: {
-          activated: filterImpls.filterWiKeywordMatch(entries, chatTexts),
-        },
-        handlerId: "flt_wi_keyword_match",
-      };
-    },
-    flt_wi_probability: async ({ inputs }) => ({
-      outputs: {
-        entries_out: filterImpls.filterWiProbability(
-          Array.isArray(inputs.entries_in) ? inputs.entries_in : [],
-        ),
-      },
-      handlerId: "flt_wi_probability",
-    }),
-    flt_wi_mutex_group: async ({ inputs }) => ({
-      outputs: {
-        entries_out: filterImpls.filterWiMutexGroup(
-          Array.isArray(inputs.entries_in) ? inputs.entries_in : [],
-        ),
-      },
-      handlerId: "flt_wi_mutex_group",
-    }),
-    flt_mvu_strip: async ({ inputs }) => {
-      const text = typeof inputs.text_in === "string" ? inputs.text_in : "";
-      return {
-        outputs: { text_out: await filterImpls.filterMvuStrip(text) },
-        handlerId: "flt_mvu_strip",
-      };
-    },
-    flt_mvu_detect: async ({ inputs }) => {
-      const text = typeof inputs.text_in === "string" ? inputs.text_in : "";
-      const result = filterImpls.filterMvuDetect(text);
-      return {
-        outputs: { text_out: result.text, is_mvu: result.isMvu },
-        handlerId: "flt_mvu_detect",
-      };
-    },
-    flt_blocked_content_strip: async ({ inputs }) => {
-      const text = typeof inputs.text_in === "string" ? inputs.text_in : "";
-      const blocked = Array.isArray(inputs.blocked) ? inputs.blocked : [];
-      return {
-        outputs: {
-          text_out: filterImpls.filterBlockedContentStrip(text, blocked),
-        },
-        handlerId: "flt_blocked_content_strip",
-      };
-    },
-    flt_regex_process: async ({ inputs }) => {
-      const text = typeof inputs.text_in === "string" ? inputs.text_in : "";
-      return {
-        outputs: { text_out: filterImpls.filterRegexProcess(text) },
-        handlerId: "flt_regex_process",
-      };
-    },
-    flt_context_extract: async ({ node, inputs }) => {
-      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
-      return {
-        outputs: {
-          msgs_out: filterImpls.filterContextExtract(
-            msgs,
-            node.config.rules ?? [],
-          ),
-        },
-        handlerId: "flt_context_extract",
-      };
-    },
-    flt_context_exclude: async ({ node, inputs }) => {
-      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
-      return {
-        outputs: {
-          msgs_out: filterImpls.filterContextExclude(
-            msgs,
-            node.config.rules ?? [],
-          ),
-        },
-        handlerId: "flt_context_exclude",
-      };
-    },
-    flt_custom_regex: async ({ node, inputs }) => {
-      const text = typeof inputs.text_in === "string" ? inputs.text_in : "";
-      return {
-        outputs: {
-          text_out: filterImpls.filterCustomRegex(
-            text,
-            node.config.rules ?? [],
-          ),
-        },
-        handlerId: "flt_custom_regex",
-      };
-    },
-    flt_hide_messages: async ({ node, inputs }) => {
-      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
-      return {
-        outputs: {
-          msgs_out: filterImpls.filterHideMessages(msgs, node.config),
-        },
-        handlerId: "flt_hide_messages",
-      };
-    },
-
-    tfm_ejs_render: async ({ inputs }) => {
-      const template =
-        typeof inputs.template === "string" ? inputs.template : "";
-      const ctx = inputs.context ?? {};
-      return {
-        outputs: {
-          rendered: await transformImpls.transformEjsRender(template, ctx),
-        },
-        handlerId: "tfm_ejs_render",
-      };
-    },
-    tfm_macro_replace: async ({ inputs }) => {
-      const text = typeof inputs.text_in === "string" ? inputs.text_in : "";
-      return {
-        outputs: { text_out: transformImpls.transformMacroReplace(text) },
-        handlerId: "tfm_macro_replace",
-      };
-    },
-    tfm_controller_expand: async ({ inputs }) => {
-      const entries = Array.isArray(inputs.controller) ? inputs.controller : [];
-      return {
-        outputs: {
-          expanded: await transformImpls.transformControllerExpand(entries),
-        },
-        handlerId: "tfm_controller_expand",
-      };
-    },
-    tfm_wi_bucket: async ({ inputs }) => {
-      const entries = Array.isArray(inputs.entries_in) ? inputs.entries_in : [];
-      const buckets = transformImpls.transformWiBucket(entries);
-      return {
-        outputs: {
-          before: buckets.before,
-          after: buckets.after,
-          at_depth: buckets.atDepth,
-        },
-        handlerId: "tfm_wi_bucket",
-      };
-    },
-    tfm_entry_name_inject: async ({ inputs }) => {
-      const msgs = Array.isArray(inputs.msgs_in) ? inputs.msgs_in : [];
-      return {
-        outputs: {
-          msgs_out: transformImpls.transformEntryNameInject(
-            msgs,
-            inputs.snapshots,
-          ),
-        },
-        handlerId: "tfm_entry_name_inject",
-      };
-    },
-
-    cfg_api_preset: async ({ node }) => ({
-      outputs: { config: { ...node.config } },
-      handlerId: "cfg_api_preset",
-    }),
-    cfg_generation: async ({ node }) => ({
-      outputs: { options: { ...node.config } },
-      handlerId: "cfg_generation",
-    }),
-    cfg_behavior: async ({ node }) => ({
-      outputs: { options: { ...node.config } },
-      handlerId: "cfg_behavior",
-    }),
-    cfg_timing: async ({ node }) => ({
-      outputs: { timing: node.config.timing ?? "after_reply" },
-      handlerId: "cfg_timing",
-    }),
-    cfg_system_prompt: async ({ node }) => ({
-      outputs: { prompt: node.config.content ?? "" },
-      handlerId: "cfg_system_prompt",
-    }),
-
-    cmp_prompt_order: async ({ node, inputs }) => ({
-      outputs: {
-        msgs_out: composeImpls.composePromptOrder(
-          inputs.components ?? {},
-          inputs.order ?? node.config.prompt_order ?? [],
-        ),
-      },
-      handlerId: "cmp_prompt_order",
-    }),
-    cmp_depth_inject: async ({ inputs }) => {
-      const msgs = Array.isArray(inputs.messages) ? inputs.messages : [];
-      const injections = Array.isArray(inputs.injections)
-        ? inputs.injections
-        : [];
-      return {
-        outputs: {
-          msgs_out: composeImpls.composeDepthInject(msgs, injections),
-        },
-        handlerId: "cmp_depth_inject",
-      };
-    },
-    cmp_message_concat: async ({ inputs }) => {
-      const a = Array.isArray(inputs.a) ? inputs.a : [];
-      const b = Array.isArray(inputs.b) ? inputs.b : [];
-      return {
-        outputs: { msgs_out: [...a, ...b] },
-        handlerId: "cmp_message_concat",
-      };
-    },
-    cmp_json_body_build: async ({ inputs }) => ({
-      outputs: {
-        body: composeImpls.composeJsonBodyBuild(
-          inputs.context ?? {},
-          inputs.config,
-        ),
-      },
-      handlerId: "cmp_json_body_build",
-    }),
-    cmp_request_template: async ({ node, inputs }) => ({
-      outputs: {
-        result: composeImpls.composeRequestTemplate(
-          inputs.body ?? {},
-          typeof inputs.template === "string"
-            ? inputs.template
-            : (node.config.template ?? ""),
-        ),
-      },
-      handlerId: "cmp_request_template",
-    }),
-
-    exe_llm_call: async ({ node, inputs, context }) => {
-      const msgs = Array.isArray(inputs.messages) ? inputs.messages : [];
-      const apiCfg = inputs.api_config ?? node.config;
-      const genOpts = inputs.gen_options ?? {};
-      const behavior = inputs.behavior ?? {};
-      return {
-        outputs: {
-          raw_response: await executeImpls.executeLlmCall(
-            msgs,
-            apiCfg,
-            genOpts,
-            behavior,
-            context.abortSignal,
-          ),
-        },
-        handlerId: "exe_llm_call",
-      };
-    },
-    exe_response_extract: async ({ node, inputs }) => {
-      const raw = typeof inputs.raw === "string" ? inputs.raw : "";
-      return {
-        outputs: {
-          extracted: executeImpls.executeResponseExtract(
-            raw,
-            node.config.pattern ?? "",
-          ),
-        },
-        handlerId: "exe_response_extract",
-      };
-    },
-    exe_response_remove: async ({ node, inputs }) => {
-      const raw = typeof inputs.raw === "string" ? inputs.raw : "";
-      return {
-        outputs: {
-          cleaned: executeImpls.executeResponseRemove(
-            raw,
-            node.config.pattern ?? "",
-          ),
-        },
-        handlerId: "exe_response_remove",
-      };
-    },
-    exe_json_parse: async ({ node, inputs }) => {
-      const text = typeof inputs.text === "string" ? inputs.text : "";
-      if (!text.trim()) {
-        return { outputs: { parsed: {} }, handlerId: "exe_json_parse" };
-      }
-      try {
-        return {
-          outputs: { parsed: JSON.parse(text.trim()) },
-          handlerId: "exe_json_parse",
-        };
-      } catch {
-        const start = text.indexOf("{");
-        const end = text.lastIndexOf("}");
-        if (start >= 0 && end > start) {
-          try {
-            return {
-              outputs: { parsed: JSON.parse(text.slice(start, end + 1)) },
-              handlerId: "exe_json_parse",
-            };
-          } catch {
-            /* fall */
-          }
-        }
-        console.warn(`[GraphExecutor] Node ${node.id}: failed to parse JSON`);
-        return { outputs: { parsed: {} }, handlerId: "exe_json_parse" };
-      }
-    },
-    exe_response_normalize: async ({ inputs }) => ({
-      outputs: {
-        normalized: executeImpls.executeResponseNormalize(inputs.raw ?? {}),
-      },
-      handlerId: "exe_response_normalize",
-    }),
-    exe_stream_sse: async ({ inputs }) => ({
-      outputs: {
-        full_text: await executeImpls.executeStreamSse(inputs.response),
-      },
-      handlerId: "exe_stream_sse",
-    }),
-
-    out_worldbook_write: async ({ inputs }) => {
-      const ops = Array.isArray(inputs.operations) ? inputs.operations : [];
-      await outputImpls.outputWorldbookWrite(ops);
-      return { outputs: {}, handlerId: "out_worldbook_write" };
-    },
-    out_floor_bind: async ({ inputs }) => {
-      await outputImpls.outputFloorBind(inputs.result ?? {}, inputs.message_id);
-      return { outputs: {}, handlerId: "out_floor_bind" };
-    },
-    out_snapshot_save: async ({ node, inputs }) => {
-      await outputImpls.outputSnapshotSave(inputs.snapshot ?? {}, node.config);
-      return { outputs: {}, handlerId: "out_snapshot_save" };
-    },
-    out_reply_inject: async ({ inputs }) => {
-      outputImpls.outputReplyInject(
-        typeof inputs.instruction === "string" ? inputs.instruction : "",
-      );
-      return { outputs: {}, handlerId: "out_reply_inject" };
-    },
-    out_merge_results: async ({ inputs }) => {
-      const results = Array.isArray(inputs.results) ? inputs.results : [];
-      return {
-        outputs: { merged_plan: outputImpls.outputMergeResults(results) },
-        handlerId: "out_merge_results",
-      };
-    },
-  };
-}
 
 class NodeExecutionError extends Error {
   readonly failedAt: "dispatch" | "handler";
@@ -598,20 +154,31 @@ class NodeExecutionError extends Error {
   }
 }
 
+/**
+ * Dispatch node execution via the runtime registry.
+ *
+ * Resolution path:
+ *   1. Ensure built-in handlers are registered (idempotent)
+ *   2. resolveNodeHandler(moduleId) → registered or fallback descriptor
+ *   3. Execute the resolved handler
+ *
+ * The fallback is now an explicit registry strategy, not an implicit
+ * executor-level catch-all.
+ */
 async function dispatchNodeExecution(
   request: NodeHandlerRequest,
 ): Promise<NodeHandlerResult> {
-  let handler: NodeExecutionHandler;
   try {
-    const handlers = createNodeHandlerMap(request.modules);
-    handler = handlers[request.node.moduleId] ?? createFallbackNodeHandler();
+    ensureBuiltinHandlers(request.modules);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new NodeExecutionError(message, "dispatch");
   }
 
+  const resolved = resolveNodeHandler(request.node.moduleId);
+
   try {
-    return await handler(request);
+    return await resolved.descriptor.execute(request);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new NodeExecutionError(message, "handler");
