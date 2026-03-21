@@ -63,6 +63,19 @@ export interface ConfigFieldSchema {
   placeholder?: string; // input placeholder
 }
 
+export type WorkbenchRuntimeKind = "dataflow" | "control" | "hybrid";
+export type WorkbenchSideEffectLevel =
+  | "unknown"
+  | "pure"
+  | "reads_host"
+  | "writes_host";
+
+export interface RuntimeMigrationMeta {
+  from?: string;
+  strategy?: "compatible" | "requires_migration" | "legacy_bridge";
+  notes?: string;
+}
+
 /** Blueprint definition for a module type (registered in the registry) */
 export interface ModuleBlueprint {
   /** Unique module type ID, e.g. 'src_char_fields' */
@@ -90,6 +103,13 @@ export interface ModuleBlueprint {
     nodes: WorkbenchNode[];
     edges: WorkbenchEdge[];
   };
+  /** Optional runtime contract metadata for forward-compatible execution kernels */
+  runtimeMeta?: {
+    schemaVersion?: number;
+    runtimeKind?: WorkbenchRuntimeKind;
+    sideEffect?: WorkbenchSideEffectLevel;
+    migration?: RuntimeMigrationMeta;
+  };
 }
 
 // ── Workbench Instance Types ──
@@ -103,6 +123,14 @@ export interface WorkbenchNode {
   /** Per-instance configuration, merged over blueprint defaults */
   config: Record<string, any>;
   collapsed: boolean;
+  /** Optional runtime-facing per-node metadata, kept non-breaking for stored graphs */
+  runtimeMeta?: {
+    schemaVersion?: number;
+    runtimeKind?: WorkbenchRuntimeKind;
+    sideEffect?: WorkbenchSideEffectLevel;
+    migration?: RuntimeMigrationMeta;
+    disabled?: boolean;
+  };
 }
 
 /** An edge in the workbench graph */
@@ -112,6 +140,12 @@ export interface WorkbenchEdge {
   sourcePort: string; // source port ID
   target: string; // target node ID
   targetPort: string; // target port ID
+  /** Optional runtime metadata for future scheduling / migration use */
+  runtimeMeta?: {
+    schemaVersion?: number;
+    runtimeKind?: WorkbenchRuntimeKind;
+    migration?: RuntimeMigrationMeta;
+  };
 }
 
 /** Viewport state */
@@ -131,6 +165,13 @@ export interface WorkbenchGraph {
   nodes: WorkbenchNode[];
   edges: WorkbenchEdge[];
   viewport: WorkbenchViewport;
+  /** Optional graph-level runtime contract metadata */
+  runtimeMeta?: {
+    schemaVersion?: number;
+    runtimeKind?: WorkbenchRuntimeKind;
+    sideEffect?: WorkbenchSideEffectLevel;
+    migration?: RuntimeMigrationMeta;
+  };
 }
 
 // ── Execution Types ──

@@ -384,6 +384,95 @@ export const EwFlowConfigSchema = z.object({
   headers_json: z.string().default(""),
 });
 
+const RuntimeMigrationMetaShape = {
+  from: z.string().optional(),
+  strategy: z
+    .enum(["compatible", "requires_migration", "legacy_bridge"])
+    .optional(),
+  notes: z.string().optional(),
+};
+
+const RuntimeMigrationMetaSchema = z
+  .object(RuntimeMigrationMetaShape)
+  .default({});
+
+const RuntimeMetadataShape = {
+  schemaVersion: z.coerce.number().int().positive().optional(),
+  runtimeKind: z.enum(["dataflow", "control", "hybrid"]).optional(),
+  sideEffect: z
+    .enum(["unknown", "pure", "reads_host", "writes_host"])
+    .optional(),
+  migration: z.object(RuntimeMigrationMetaShape).optional(),
+};
+
+const RuntimeMetadataSchema = z.object(RuntimeMetadataShape).default({});
+
+const WorkbenchNodeRuntimeMetadataSchema = z
+  .object({
+    ...RuntimeMetadataShape,
+    disabled: z.boolean().optional(),
+  })
+  .default({});
+
+const WorkbenchViewportSchema = z
+  .object({
+    x: z.coerce.number().default(0),
+    y: z.coerce.number().default(0),
+    zoom: z.coerce.number().positive().default(1),
+  })
+  .default({ x: 0, y: 0, zoom: 1 });
+
+const normalizeWorkbenchRef = (value: unknown) => {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const WorkbenchRequiredIdSchema = z.preprocess(
+  normalizeWorkbenchRef,
+  z.string().min(1),
+);
+
+const WorkbenchGraphIdSchema = z.preprocess(
+  normalizeWorkbenchRef,
+  z.string().min(1).catch("graph_legacy"),
+);
+
+const WorkbenchNodeSchema = z.object({
+  id: WorkbenchRequiredIdSchema,
+  moduleId: WorkbenchRequiredIdSchema,
+  position: z
+    .object({
+      x: z.coerce.number().default(0),
+      y: z.coerce.number().default(0),
+    })
+    .default({ x: 0, y: 0 }),
+  config: z.record(z.string(), z.any()).default({}),
+  collapsed: z.boolean().default(false),
+  runtimeMeta: WorkbenchNodeRuntimeMetadataSchema.optional(),
+});
+
+const WorkbenchEdgeSchema = z.object({
+  id: WorkbenchRequiredIdSchema,
+  source: WorkbenchRequiredIdSchema,
+  sourcePort: WorkbenchRequiredIdSchema,
+  target: WorkbenchRequiredIdSchema,
+  targetPort: WorkbenchRequiredIdSchema,
+  runtimeMeta: RuntimeMetadataSchema.optional(),
+});
+
+const WorkbenchGraphSchema = z.object({
+  id: WorkbenchGraphIdSchema,
+  name: z.string().default(""),
+  enabled: z.boolean().default(true),
+  timing: z.enum(["default", "before_reply", "after_reply"]).default("default"),
+  priority: z.coerce.number().int().default(0),
+  nodes: z.array(WorkbenchNodeSchema).default([]),
+  edges: z.array(WorkbenchEdgeSchema).default([]),
+  viewport: WorkbenchViewportSchema,
+  runtimeMeta: RuntimeMetadataSchema.optional(),
+});
+
 export const EwSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   total_timeout_ms: z.coerce.number().int().positive().default(300000),
@@ -426,21 +515,15 @@ export const EwSettingsSchema = z.object({
   ui_open: z.boolean().default(false),
   api_presets: z.array(EwApiPresetSchema).default([]),
   flows: z.array(EwFlowConfigSchema).default([]),
-  workbench_graphs: z.array(z.any()).default([]),
+  workbench_graphs: z.array(WorkbenchGraphSchema).default([]),
   graph_canvas_slots: z
     .array(
       z.object({
         id: z.string(),
         name: z.string(),
-        nodes: z.array(z.any()).default([]),
-        edges: z.array(z.any()).default([]),
-        viewport: z
-          .object({
-            x: z.number().default(0),
-            y: z.number().default(0),
-            zoom: z.number().default(1),
-          })
-          .default({ x: 0, y: 0, zoom: 1 }),
+        nodes: z.array(WorkbenchNodeSchema).default([]),
+        edges: z.array(WorkbenchEdgeSchema).default([]),
+        viewport: WorkbenchViewportSchema,
       }),
     )
     .default([]),

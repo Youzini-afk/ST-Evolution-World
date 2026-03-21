@@ -14,6 +14,8 @@ import type {
   GraphExecutionResult,
   ModuleExecutionResult,
   ModuleOutput,
+  ModulePortDef,
+  PortDataType,
   WorkbenchEdge,
   WorkbenchGraph,
   WorkbenchNode,
@@ -446,6 +448,18 @@ export async function executeGraph(
   const startedAt = Date.now();
   const moduleResults: ModuleExecutionResult[] = [];
   const nodeOutputs = new Map<string, ModuleOutput>();
+  const validationErrors = validateGraph(graph);
+
+  if (validationErrors.length > 0) {
+    return {
+      ok: false,
+      reason: formatGraphValidationErrors(validationErrors),
+      requestId: context.requestId,
+      moduleResults,
+      finalOutputs: {},
+      elapsedMs: Date.now() - startedAt,
+    };
+  }
 
   try {
     // 1. Topological sort
@@ -554,21 +568,91 @@ export async function executeGraph(
 
 export interface GraphValidationError {
   nodeId?: string;
+  edgeId?: string;
+  portId?: string;
   message: string;
+}
+
+function formatGraphValidationErrors(errors: GraphValidationError[]): string {
+  return errors
+    .map((error) => {
+      const refs = [
+        error.nodeId ? `node=${error.nodeId}` : null,
+        error.edgeId ? `edge=${error.edgeId}` : null,
+        error.portId ? `port=${error.portId}` : null,
+      ].filter(Boolean);
+      return refs.length > 0
+        ? `[graph_validation ${refs.join(" ")}] ${error.message}`
+        : `[graph_validation] ${error.message}`;
+    })
+    .join("; ");
+}
+
+interface GraphPortValidationContext {
+  node: WorkbenchNode;
+  port: ModulePortDef;
+}
+
+function formatNodeRef(node: WorkbenchNode, label?: string): string {
+  return `节点「${label ?? node.moduleId}」(${node.id})`;
+}
+
+function formatPortRef(port: ModulePortDef): string {
+  return `端口「${port.label}」(${port.id})`;
+}
+
+function isPortDataTypeCompatible(
+  sourceType: PortDataType,
+  targetType: PortDataType,
+): boolean {
+  if (sourceType === "any" || targetType === "any") return true;
+  return sourceType === targetType;
+}
+
+function getPortContext(
+  node: WorkbenchNode,
+  portId: string,
+): GraphPortValidationContext | null {
+  try {
+    const blueprint = getModuleBlueprint(node.moduleId);
+    const port = blueprint.ports.find((candidate) => candidate.id === portId);
+    if (!port) return null;
+    return { node, port };
+  } catch {
+    return null;
+  }
 }
 
 export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
   const errors: GraphValidationError[] = [];
-  const nodeIds = new Set(graph.nodes.map((n) => n.id));
+  const nodeIds = new Set<string>();
+  const edgeIds = new Set<string>();
+  const nodeMap = new Map<string, WorkbenchNode>();
+  const incomingEdgeCountByPort = new Map<string, number>();
 
-  // Check that all edge references exist
+  for (const node of graph.nodes) {
+    if (nodeIds.has(node.id)) {
+      errors.push({
+        nodeId: node.id,
+        message: `检测到重复的节点 ID: ${node.id}`,
+      });
+      continue;
+    }
+
+    nodeIds.add(node.id);
+    nodeMap.set(node.id, node);
+  }
+
   for (const edge of graph.edges) {
-    if (!nodeIds.has(edge.source)) {
-      errors.push({ message: `连线引用了不存在的源节点: ${edge.source}` });
+    if (edgeIds.has(edge.id)) {
+      errors.push({
+        edgeId: edge.id,
+        message: `检测到重复的连线 ID: ${edge.id}`,
+      });
+      continue;
     }
-    if (!nodeIds.has(edge.target)) {
-      errors.push({ message: `连线引用了不存在的目标节点: ${edge.target}` });
-    }
+
+    edgeIds.add(edge.id);
   }
 
   // Check that all nodes reference valid module IDs
@@ -578,39 +662,130 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
     } catch {
       errors.push({
         nodeId: node.id,
-        message: `节点引用了未知的模块类型: ${node.moduleId}`,
+        message: `节点(${node.id})引用了未知的模块类型: ${node.moduleId}`,
       });
     }
   }
 
-  // Check for cycles
-  try {
-    topologicalSort(graph.nodes, graph.edges);
-  } catch {
-    errors.push({ message: "图中存在循环依赖" });
+  // Check that all edge references and port contracts exist
+  for (const edge of graph.edges) {
+    if (!nodeIds.has(edge.source)) {
+      errors.push({
+        edgeId: edge.id,
+        message: `连线(${edge.id})引用了不存在的源节点: ${edge.source}`,
+      });
+    }
+    if (!nodeIds.has(edge.target)) {
+      errors.push({
+        edgeId: edge.id,
+        message: `连线(${edge.id})引用了不存在的目标节点: ${edge.target}`,
+      });
+    }
+
+    const sourceNode = nodeMap.get(edge.source);
+    const targetNode = nodeMap.get(edge.target);
+    if (!sourceNode || !targetNode) continue;
+
+    const sourcePortCtx = getPortContext(sourceNode, edge.sourcePort);
+    if (!sourcePortCtx) {
+      errors.push({
+        edgeId: edge.id,
+        nodeId: sourceNode.id,
+        portId: edge.sourcePort,
+        message: `${formatNodeRef(sourceNode)} 的源端口(${edge.sourcePort})不存在`,
+      });
+      continue;
+    }
+
+    const targetPortCtx = getPortContext(targetNode, edge.targetPort);
+    if (!targetPortCtx) {
+      errors.push({
+        edgeId: edge.id,
+        nodeId: targetNode.id,
+        portId: edge.targetPort,
+        message: `${formatNodeRef(targetNode)} 的目标端口(${edge.targetPort})不存在`,
+      });
+      continue;
+    }
+
+    if (sourcePortCtx.port.direction !== "out") {
+      errors.push({
+        edgeId: edge.id,
+        nodeId: sourceNode.id,
+        portId: sourcePortCtx.port.id,
+        message: `${formatNodeRef(sourceNode)} 的 ${formatPortRef(sourcePortCtx.port)} 不是输出端口，不能作为连线源端口`,
+      });
+    }
+
+    if (targetPortCtx.port.direction !== "in") {
+      errors.push({
+        edgeId: edge.id,
+        nodeId: targetNode.id,
+        portId: targetPortCtx.port.id,
+        message: `${formatNodeRef(targetNode)} 的 ${formatPortRef(targetPortCtx.port)} 不是输入端口，不能作为连线目标端口`,
+      });
+    }
+
+    if (
+      sourcePortCtx.port.direction === "out" &&
+      targetPortCtx.port.direction === "in" &&
+      !isPortDataTypeCompatible(
+        sourcePortCtx.port.dataType,
+        targetPortCtx.port.dataType,
+      )
+    ) {
+      errors.push({
+        edgeId: edge.id,
+        nodeId: targetNode.id,
+        portId: targetPortCtx.port.id,
+        message: `连线(${edge.id})类型不兼容：${formatNodeRef(sourceNode)} 的 ${formatPortRef(sourcePortCtx.port)} 输出类型为 ${sourcePortCtx.port.dataType}，但 ${formatNodeRef(targetNode)} 的 ${formatPortRef(targetPortCtx.port)} 需要 ${targetPortCtx.port.dataType}`,
+      });
+    }
+
+    const incomingKey = `${targetNode.id}:${targetPortCtx.port.id}`;
+    incomingEdgeCountByPort.set(
+      incomingKey,
+      (incomingEdgeCountByPort.get(incomingKey) ?? 0) + 1,
+    );
   }
 
-  // Check required ports are connected
   for (const node of graph.nodes) {
     try {
       const bp = getModuleBlueprint(node.moduleId);
-      const requiredInPorts = bp.ports.filter(
-        (p) => p.direction === "in" && !p.optional,
-      );
-      for (const port of requiredInPorts) {
-        const hasConnection = graph.edges.some(
-          (e) => e.target === node.id && e.targetPort === port.id,
-        );
-        if (!hasConnection) {
+      const inputPorts = bp.ports.filter((p) => p.direction === "in");
+
+      for (const port of inputPorts) {
+        const connectionCount =
+          incomingEdgeCountByPort.get(`${node.id}:${port.id}`) ?? 0;
+
+        if (!port.optional && connectionCount === 0) {
           errors.push({
             nodeId: node.id,
-            message: `模块「${bp.label}」的必要输入端口「${port.label}」未连接`,
+            portId: port.id,
+            message: `${formatNodeRef(node, bp.label)} 的必要输入 ${formatPortRef(port)} 未连接`,
+          });
+        }
+
+        if (!port.multiple && connectionCount > 1) {
+          errors.push({
+            nodeId: node.id,
+            portId: port.id,
+            message: `${formatNodeRef(node, bp.label)} 的输入 ${formatPortRef(port)} 不允许多入边，但当前检测到 ${connectionCount} 条入边`,
           });
         }
       }
     } catch {
       // Already reported above
     }
+  }
+
+  // Check for cycles
+  try {
+    topologicalSort(graph.nodes, graph.edges);
+  } catch (error) {
+    errors.push({
+      message: error instanceof Error ? error.message : "图中存在循环依赖",
+    });
   }
 
   return errors;
