@@ -208,6 +208,57 @@ function makeFingerprintMutationGraph(): WorkbenchGraph {
   };
 }
 
+function makeDirtyPropagationGraph(): WorkbenchGraph {
+  return {
+    id: "graph_dirty_propagation",
+    name: "Dirty Propagation Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "filter_text",
+        moduleId: "flt_mvu_strip",
+        position: { x: 240, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "out_reply",
+        moduleId: "out_reply_inject",
+        position: { x: 480, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_src_to_filter_dirty",
+        source: "src_text",
+        sourcePort: "text",
+        target: "filter_text",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_filter_to_reply_dirty",
+        source: "filter_text",
+        sourcePort: "text_out",
+        target: "out_reply",
+        targetPort: "instruction",
+      },
+    ],
+  };
+}
+
 function makeDispatchSmokeGraph(): WorkbenchGraph {
   return {
     id: "graph_dispatch_smoke",
@@ -1523,6 +1574,139 @@ async function runValidationSpec(): Promise<void> {
     ),
     `Expected all module results to be execute/ok. Actual: ${successResult.moduleResults.map((result) => `${result.nodeId}:${result.stage}:${result.status}`).join(",")}`,
   );
+  const successSourceResult = successResult.moduleResults.find(
+    (result) => result.nodeId === "src_text",
+  );
+  const successFilterResult = successResult.moduleResults.find(
+    (result) => result.nodeId === "filter_text",
+  );
+  assert(
+    typeof successSourceResult?.inputFingerprint === "string" &&
+      typeof successFilterResult?.inputFingerprint === "string",
+    `Expected successful execute results to expose inputFingerprint. Actual: ${JSON.stringify(successResult.moduleResults)}`,
+  );
+  assert(
+    successSourceResult?.dirtyReason === "initial_run" &&
+      successSourceResult?.isDirty === true &&
+      successFilterResult?.dirtyReason === "initial_run" &&
+      successFilterResult?.isDirty === true,
+    `Expected first run execute results to mark nodes as initial_run dirty. Actual: ${JSON.stringify(successResult.moduleResults.map((result) => ({ nodeId: result.nodeId, dirtyReason: result.dirtyReason, isDirty: result.isDirty })))}`,
+  );
+  assert(
+    successResult.dirtySetSummary?.entries
+      .map((entry) => `${entry.nodeId}:${entry.dirtyReason}:${entry.isDirty}`)
+      .join(",") === "src_text:initial_run:true,filter_text:initial_run:true",
+    `Expected success dirty-set summary to reflect initial_run for first execution. Actual: ${JSON.stringify(successResult.dirtySetSummary)}`,
+  );
+  assert(
+    successResult.trace?.dirtySetSummary?.dirtyNodeIds.join(",") ===
+      "src_text,filter_text",
+    `Expected trace dirty-set summary to mirror top-level result on first execution. Actual: ${JSON.stringify(successResult.trace?.dirtySetSummary)}`,
+  );
+  assert(
+    successFilterResult?.inputSources
+      ?.map(
+        (source) =>
+          `${source.sourceNodeId}:${source.sourcePort}->${source.targetPort}`,
+      )
+      .join(",") === "src_text:text->text_in",
+    `Expected filter_text inputSources to summarize upstream wiring. Actual: ${JSON.stringify(successFilterResult?.inputSources)}`,
+  );
+
+  const repeatedSuccessResult = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext(),
+  );
+  const repeatedSourceResult = repeatedSuccessResult.moduleResults.find(
+    (result) => result.nodeId === "src_text",
+  );
+  const repeatedFilterResult = repeatedSuccessResult.moduleResults.find(
+    (result) => result.nodeId === "filter_text",
+  );
+  assert(
+    repeatedSourceResult?.inputFingerprint ===
+      successSourceResult?.inputFingerprint &&
+      repeatedFilterResult?.inputFingerprint ===
+        successFilterResult?.inputFingerprint,
+    `Expected same graph and same inputs to produce stable inputFingerprint values. Actual: ${JSON.stringify({ first: successResult.moduleResults, second: repeatedSuccessResult.moduleResults })}`,
+  );
+  assert(
+    repeatedSuccessResult.dirtySetSummary?.entries
+      .map((entry) => `${entry.nodeId}:${entry.dirtyReason}:${entry.isDirty}`)
+      .join(",") === "src_text:clean:false,filter_text:clean:false",
+    `Expected second identical run to be observationally clean while still fully executed. Actual: ${JSON.stringify(repeatedSuccessResult.dirtySetSummary)}`,
+  );
+  assert(
+    repeatedSuccessResult.moduleResults.length ===
+      repeatedSuccessResult.compilePlan?.nodeOrder.length,
+    `Expected identical second run to remain full execution with no skip semantics. Actual: moduleResults=${repeatedSuccessResult.moduleResults.length}, planNodes=${repeatedSuccessResult.compilePlan?.nodeOrder.length}`,
+  );
+
+  const changedInputResult = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext({ userInput: "hello world changed" }),
+  );
+  const changedSourceResult = changedInputResult.moduleResults.find(
+    (result) => result.nodeId === "src_text",
+  );
+  const changedFilterResult = changedInputResult.moduleResults.find(
+    (result) => result.nodeId === "filter_text",
+  );
+  assert(
+    changedSourceResult?.inputFingerprint !==
+      successSourceResult?.inputFingerprint &&
+      changedFilterResult?.inputFingerprint !==
+        successFilterResult?.inputFingerprint,
+    `Expected runtime input change to alter downstream inputFingerprint values. Actual: ${JSON.stringify({ baseline: successResult.moduleResults, changed: changedInputResult.moduleResults })}`,
+  );
+  assert(
+    changedSourceResult?.dirtyReason === "input_changed" &&
+      changedFilterResult?.dirtyReason === "upstream_dirty",
+    `Expected changed source node to be input_changed and downstream node to be upstream_dirty. Actual: ${JSON.stringify(changedInputResult.moduleResults.map((result) => ({ nodeId: result.nodeId, dirtyReason: result.dirtyReason })))}`,
+  );
+  assert(
+    changedInputResult.trace?.dirtySetSummary?.entries
+      .map((entry) => `${entry.nodeId}:${entry.dirtyReason}`)
+      .join(",") === "src_text:input_changed,filter_text:upstream_dirty",
+    `Expected trace dirty-set summary to expose minimal propagation semantics. Actual: ${JSON.stringify(changedInputResult.trace?.dirtySetSummary)}`,
+  );
+
+  const dirtyPropagationInitial = await executeGraph(
+    makeDirtyPropagationGraph(),
+    makeExecutionContext({ userInput: "alpha" }),
+  );
+  const dirtyPropagationRepeat = await executeGraph(
+    makeDirtyPropagationGraph(),
+    makeExecutionContext({ userInput: "alpha" }),
+  );
+  const dirtyPropagationChanged = await executeGraph(
+    makeDirtyPropagationGraph(),
+    makeExecutionContext({ userInput: "beta" }),
+  );
+  assert(
+    dirtyPropagationInitial.dirtySetSummary?.entries
+      .map((entry) => `${entry.nodeId}:${entry.dirtyReason}`)
+      .join(",") ===
+      "src_text:initial_run,filter_text:initial_run,out_reply:initial_run",
+    `Expected first dirty propagation run to initialize all nodes as dirty. Actual: ${JSON.stringify(dirtyPropagationInitial.dirtySetSummary)}`,
+  );
+  assert(
+    dirtyPropagationRepeat.dirtySetSummary?.entries
+      .map((entry) => `${entry.nodeId}:${entry.dirtyReason}`)
+      .join(",") === "src_text:clean,filter_text:clean,out_reply:clean",
+    `Expected identical dirty propagation rerun to be observationally clean. Actual: ${JSON.stringify(dirtyPropagationRepeat.dirtySetSummary)}`,
+  );
+  assert(
+    dirtyPropagationChanged.dirtySetSummary?.entries
+      .map((entry) => `${entry.nodeId}:${entry.dirtyReason}`)
+      .join(",") ===
+      "src_text:input_changed,filter_text:upstream_dirty,out_reply:upstream_dirty",
+    `Expected upstream dirty propagation to be visible in downstream nodes. Actual: ${JSON.stringify(dirtyPropagationChanged.dirtySetSummary)}`,
+  );
+  assert(
+    dirtyPropagationChanged.moduleResults.length === 3,
+    `Expected dirty propagation graph to remain fully executed after dirty observation. Actual: ${dirtyPropagationChanged.moduleResults.length}`,
+  );
 
   const validationFailureResult = await executeGraph(
     missingRequiredInputGraph,
@@ -1587,6 +1771,17 @@ async function runValidationSpec(): Promise<void> {
       typeof handlerFailureTrace.error === "string" &&
       handlerFailureTrace.failedAt === "handler",
     `Expected failed node trace to archive error and failedAt=handler. Actual: ${JSON.stringify(handlerFailureTrace)}`,
+  );
+  assert(
+    typeof handlerFailureTrace?.inputFingerprint === "string",
+    `Expected failed execute trace to retain inputFingerprint for diagnostics. Actual: ${JSON.stringify(handlerFailureTrace)}`,
+  );
+  const handlerFailureModuleResult = handlerFailureResult.moduleResults.find(
+    (result) => result.nodeId === "llm_call",
+  );
+  assert(
+    typeof handlerFailureModuleResult?.inputFingerprint === "string",
+    `Expected failed module result to retain inputFingerprint for diagnostics. Actual: ${JSON.stringify(handlerFailureModuleResult)}`,
   );
   assert(
     handlerFailureTrace?.capability === "network" &&

@@ -17,8 +17,12 @@ import type {
   ExecutionContext,
   GraphCompilePlan,
   GraphCompilePlanNode,
+  GraphDirtySetEntry,
+  GraphDirtySetSummary,
   GraphExecutionResult,
   GraphExecutionStage,
+  GraphNodeDirtyReason,
+  GraphNodeInputSource,
   GraphStageTrace,
   GraphTraceStageStatus,
   HostCommitContract,
@@ -138,6 +142,36 @@ function collectNodeInputs(
   }
 
   return inputs;
+}
+
+function collectNodeInputSources(
+  node: WorkbenchNode,
+  edges: WorkbenchEdge[],
+  nodeOutputs: Map<string, ModuleOutput>,
+): GraphNodeInputSource[] {
+  const inputSources: GraphNodeInputSource[] = [];
+
+  for (const edge of edges) {
+    if (edge.target !== node.id) continue;
+
+    const upstream = nodeOutputs.get(edge.source);
+    if (!upstream) continue;
+
+    const value = upstream[edge.sourcePort];
+    if (value === undefined) continue;
+
+    inputSources.push({
+      sourceNodeId: edge.source,
+      sourcePort: edge.sourcePort,
+      targetPort: edge.targetPort,
+    });
+  }
+
+  return inputSources.sort((left, right) => {
+    const leftKey = `${left.targetPort}:${left.sourceNodeId}:${left.sourcePort}`;
+    const rightKey = `${right.targetPort}:${right.sourceNodeId}:${right.sourcePort}`;
+    return leftKey.localeCompare(rightKey);
+  });
 }
 
 // ── Module Execution Dispatch (P2.1: registry-based) ──
@@ -500,6 +534,7 @@ class GraphExecutionStageError extends Error {
   readonly stage: GraphExecutionStage;
   readonly moduleResults: ModuleExecutionResult[];
   readonly nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
+  readonly dirtySetSummary?: GraphDirtySetSummary;
   readonly failedNodeId?: string;
 
   constructor(
@@ -508,6 +543,7 @@ class GraphExecutionStageError extends Error {
     moduleResults: ModuleExecutionResult[],
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"],
     failedNodeId?: string,
+    dirtySetSummary?: GraphDirtySetSummary,
   ) {
     super(message);
     this.name = "GraphExecutionStageError";
@@ -515,6 +551,7 @@ class GraphExecutionStageError extends Error {
     this.moduleResults = moduleResults;
     this.nodeTraces = nodeTraces;
     this.failedNodeId = failedNodeId;
+    this.dirtySetSummary = dirtySetSummary;
   }
 }
 
@@ -558,6 +595,52 @@ function normalizeHostCommitContracts(
   return hostCommitContracts.map((contract) => ({ ...contract }));
 }
 
+const previousInputFingerprintByNode = new Map<string, string>();
+
+function collectStableContextInputFacts(
+  node: WorkbenchNode,
+  context: ExecutionContext,
+): Record<string, unknown> | undefined {
+  switch (node.moduleId) {
+    case "src_user_input":
+      return { userInput: context.userInput };
+    default:
+      return undefined;
+  }
+}
+
+function createInputFingerprint(
+  node: WorkbenchNode,
+  planNode: GraphCompilePlanNode,
+  inputs: Record<string, any>,
+  inputSources: GraphNodeInputSource[],
+  stableContextInputs?: Record<string, unknown>,
+): string {
+  return hashFingerprint(
+    stableSerialize({
+      scope: "graph_node_input",
+      version: 1,
+      nodeId: node.id,
+      nodeFingerprint: planNode.nodeFingerprint,
+      inputs,
+      inputSources,
+      stableContextInputs,
+    }),
+  );
+}
+
+function createDirtySetSummary(
+  entries: GraphDirtySetEntry[],
+): GraphDirtySetSummary {
+  return {
+    fingerprintVersion: 1,
+    entries: entries.map((entry) => ({ ...entry })),
+    dirtyNodeIds: entries
+      .filter((entry) => entry.isDirty)
+      .map((entry) => entry.nodeId),
+  };
+}
+
 export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
@@ -565,7 +648,11 @@ export async function executeCompiledGraph(
 ): Promise<
   Pick<
     GraphExecutionResult,
-    "moduleResults" | "finalOutputs" | "hostWrites" | "hostCommitContracts"
+    | "moduleResults"
+    | "finalOutputs"
+    | "hostWrites"
+    | "hostCommitContracts"
+    | "dirtySetSummary"
   > & {
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
   }
@@ -578,6 +665,15 @@ export async function executeCompiledGraph(
   const nodeOutputs = new Map<string, ModuleOutput>();
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
   const planNodeMap = new Map(plan.nodes.map((node) => [node.nodeId, node]));
+  const dirtySetEntries: GraphDirtySetEntry[] = [];
+  const dirtyStateByNodeId = new Map<
+    string,
+    {
+      inputFingerprint: string;
+      isDirty: boolean;
+      dirtyReason: GraphNodeDirtyReason;
+    }
+  >();
 
   const [
     sourceImpls,
@@ -625,8 +721,54 @@ export async function executeCompiledGraph(
 
     const nodeStart = Date.now();
     const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
+    const inputSources = collectNodeInputSources(
+      node,
+      graph.edges,
+      nodeOutputs,
+    );
+    const stableContextInputs = collectStableContextInputFacts(node, context);
+    const inputFingerprint = createInputFingerprint(
+      node,
+      planNode,
+      inputs,
+      inputSources,
+      stableContextInputs,
+    );
+    const previousInputFingerprint = previousInputFingerprintByNode.get(
+      `${graph.id}:${node.id}`,
+    );
+    const hasDirtyUpstream = planNode.dependsOn.some(
+      (dependencyNodeId) =>
+        dirtyStateByNodeId.get(dependencyNodeId)?.isDirty === true,
+    );
+    const dirtyReason: GraphNodeDirtyReason =
+      previousInputFingerprint === undefined
+        ? "initial_run"
+        : hasDirtyUpstream
+          ? "upstream_dirty"
+          : previousInputFingerprint !== inputFingerprint
+            ? "input_changed"
+            : "clean";
+    const isDirty = dirtyReason !== "clean";
+    dirtyStateByNodeId.set(node.id, {
+      inputFingerprint,
+      isDirty,
+      dirtyReason,
+    });
+    dirtySetEntries.push({
+      nodeId: node.id,
+      inputFingerprint,
+      isDirty,
+      dirtyReason,
+    });
     const inputKeys = Object.keys(inputs);
-    const nodeTraceBase = createNodeTraceBase(planNode, nodeStart, inputKeys);
+    const nodeTraceBase = {
+      ...createNodeTraceBase(planNode, nodeStart, inputKeys),
+      inputFingerprint,
+      inputSources,
+      isDirty,
+      dirtyReason,
+    };
 
     context.onProgress?.({
       phase: "module_executing",
@@ -664,6 +806,10 @@ export async function executeCompiledGraph(
         nodeId: node.id,
         moduleId: node.moduleId,
         nodeFingerprint: planNode.nodeFingerprint,
+        inputFingerprint,
+        inputSources,
+        isDirty,
+        dirtyReason,
         outputs,
         elapsedMs,
         stage: "execute",
@@ -702,6 +848,10 @@ export async function executeCompiledGraph(
         nodeId: node.id,
         moduleId: node.moduleId,
         nodeFingerprint: planNode.nodeFingerprint,
+        inputFingerprint,
+        inputSources,
+        isDirty,
+        dirtyReason,
         outputs: {},
         elapsedMs,
         error: errorMsg,
@@ -752,6 +902,7 @@ export async function executeCompiledGraph(
         moduleResults,
         nodeTraces,
         node.id,
+        createDirtySetSummary(dirtySetEntries),
       );
     }
   }
@@ -768,12 +919,20 @@ export async function executeCompiledGraph(
     }
   }
 
+  for (const [nodeId, dirtyState] of dirtyStateByNodeId) {
+    previousInputFingerprintByNode.set(
+      `${graph.id}:${nodeId}`,
+      dirtyState.inputFingerprint,
+    );
+  }
+
   return {
     moduleResults,
     nodeTraces,
     finalOutputs: terminalOutputs,
     hostWrites,
     hostCommitContracts,
+    dirtySetSummary: createDirtySetSummary(dirtySetEntries),
   };
 }
 
@@ -900,6 +1059,7 @@ export async function executeGraph(
       finalOutputs: execution.finalOutputs,
       hostWrites: execution.hostWrites,
       hostCommitContracts: execution.hostCommitContracts,
+      dirtySetSummary: execution.dirtySetSummary,
       elapsedMs: Date.now() - startedAt,
       compilePlan,
       nodeTraces,
@@ -908,6 +1068,7 @@ export async function executeGraph(
         stages: trace,
         nodeTraces,
         compilePlan,
+        dirtySetSummary: execution.dirtySetSummary,
       },
     };
   } catch (error) {
@@ -937,6 +1098,10 @@ export async function executeGraph(
       finalOutputs: {},
       hostWrites: [],
       hostCommitContracts: [],
+      dirtySetSummary:
+        error instanceof GraphExecutionStageError
+          ? error.dirtySetSummary
+          : undefined,
       elapsedMs: Date.now() - startedAt,
       failedStage: "execute",
       compilePlan,
@@ -951,6 +1116,10 @@ export async function executeGraph(
         stages: trace,
         nodeTraces: combinedNodeTraces,
         compilePlan,
+        dirtySetSummary:
+          error instanceof GraphExecutionStageError
+            ? error.dirtySetSummary
+            : undefined,
       },
     };
   }

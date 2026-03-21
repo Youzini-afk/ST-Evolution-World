@@ -280,10 +280,39 @@ export interface GraphNodeTraceError {
   stack?: string;
 }
 
+export type GraphNodeDirtyReason =
+  | "initial_run"
+  | "input_changed"
+  | "upstream_dirty"
+  | "clean";
+
+export interface GraphNodeInputSource {
+  sourceNodeId: string;
+  sourcePort: string;
+  targetPort: string;
+}
+
+export interface GraphDirtySetEntry {
+  nodeId: string;
+  inputFingerprint: string;
+  isDirty: boolean;
+  dirtyReason: GraphNodeDirtyReason;
+}
+
+export interface GraphDirtySetSummary {
+  fingerprintVersion: 1;
+  entries: GraphDirtySetEntry[];
+  dirtyNodeIds: string[];
+}
+
 export interface GraphNodeTrace {
   nodeId: string;
   moduleId: string;
   nodeFingerprint: string;
+  inputFingerprint?: string;
+  inputSources?: GraphNodeInputSource[];
+  isDirty?: boolean;
+  dirtyReason?: GraphNodeDirtyReason;
   stage?: GraphExecutionStage;
   status?: ModuleExecutionStatus | GraphTraceStageStatus | "error" | "skipped";
   capability?: WorkbenchCapability;
@@ -312,6 +341,7 @@ export interface GraphExecutionTrace {
   stages: GraphStageTrace[];
   nodeTraces?: GraphNodeTrace[];
   compilePlan?: GraphCompilePlan;
+  dirtySetSummary?: GraphDirtySetSummary;
 }
 
 /** Context available to all modules during execution */
@@ -332,6 +362,10 @@ export interface ModuleExecutionResult {
   nodeId: string;
   moduleId: string;
   nodeFingerprint: string;
+  inputFingerprint?: string;
+  inputSources?: GraphNodeInputSource[];
+  isDirty?: boolean;
+  dirtyReason?: GraphNodeDirtyReason;
   outputs: Record<string, any>; // keyed by output port ID
   elapsedMs: number;
   error?: string;
@@ -368,6 +402,7 @@ export interface GraphExecutionResult {
   compilePlan?: GraphCompilePlan;
   trace?: GraphExecutionTrace;
   nodeTraces?: GraphNodeTrace[];
+  dirtySetSummary?: GraphDirtySetSummary;
   hostWrites?: HostWriteDescriptor[];
   hostCommitContracts?: HostCommitContract[];
 }
