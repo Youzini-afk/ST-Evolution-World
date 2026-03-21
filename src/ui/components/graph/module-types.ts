@@ -305,6 +305,35 @@ export interface GraphDirtySetSummary {
   dirtyNodeIds: string[];
 }
 
+export interface GraphNodeCacheKeyFacts {
+  compileFingerprint: string;
+  nodeFingerprint: string;
+  inputFingerprint: string;
+  scopeKey: string;
+  fingerprintVersion: 1;
+}
+
+export type GraphNodeReuseReason =
+  | "eligible"
+  | "ineligible_dirty"
+  | "ineligible_side_effect"
+  | "ineligible_capability"
+  | "ineligible_missing_baseline";
+
+export interface GraphNodeReuseVerdict {
+  canReuse: boolean;
+  reason: GraphNodeReuseReason;
+  baselineInputFingerprint?: string;
+  currentInputFingerprint?: string;
+}
+
+export interface GraphReuseSummary {
+  fingerprintVersion: 1;
+  eligibleNodeIds: string[];
+  ineligibleNodeIds: string[];
+  verdictCounts: Record<GraphNodeReuseReason, number>;
+}
+
 export interface GraphNodeTrace {
   nodeId: string;
   moduleId: string;
@@ -313,6 +342,8 @@ export interface GraphNodeTrace {
   inputSources?: GraphNodeInputSource[];
   isDirty?: boolean;
   dirtyReason?: GraphNodeDirtyReason;
+  cacheKeyFacts?: GraphNodeCacheKeyFacts;
+  reuseVerdict?: GraphNodeReuseVerdict;
   stage?: GraphExecutionStage;
   status?: ModuleExecutionStatus | GraphTraceStageStatus | "error" | "skipped";
   capability?: WorkbenchCapability;
@@ -342,6 +373,7 @@ export interface GraphExecutionTrace {
   nodeTraces?: GraphNodeTrace[];
   compilePlan?: GraphCompilePlan;
   dirtySetSummary?: GraphDirtySetSummary;
+  reuseSummary?: GraphReuseSummary;
 }
 
 /** Context available to all modules during execution */
@@ -366,6 +398,8 @@ export interface ModuleExecutionResult {
   inputSources?: GraphNodeInputSource[];
   isDirty?: boolean;
   dirtyReason?: GraphNodeDirtyReason;
+  cacheKeyFacts?: GraphNodeCacheKeyFacts;
+  reuseVerdict?: GraphNodeReuseVerdict;
   outputs: Record<string, any>; // keyed by output port ID
   elapsedMs: number;
   error?: string;
@@ -403,6 +437,7 @@ export interface GraphExecutionResult {
   trace?: GraphExecutionTrace;
   nodeTraces?: GraphNodeTrace[];
   dirtySetSummary?: GraphDirtySetSummary;
+  reuseSummary?: GraphReuseSummary;
   hostWrites?: HostWriteDescriptor[];
   hostCommitContracts?: HostCommitContract[];
 }

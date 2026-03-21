@@ -1612,6 +1612,53 @@ async function runValidationSpec(): Promise<void> {
       .join(",") === "src_text:text->text_in",
     `Expected filter_text inputSources to summarize upstream wiring. Actual: ${JSON.stringify(successFilterResult?.inputSources)}`,
   );
+  assert(
+    successSourceResult?.cacheKeyFacts?.compileFingerprint ===
+      successResult.compilePlan?.compileFingerprint &&
+      successSourceResult?.cacheKeyFacts?.nodeFingerprint ===
+        successSourceResult?.nodeFingerprint &&
+      successSourceResult?.cacheKeyFacts?.inputFingerprint ===
+        successSourceResult?.inputFingerprint &&
+      successSourceResult.cacheKeyFacts?.scopeKey === "graph_test:src_text" &&
+      successSourceResult.cacheKeyFacts?.fingerprintVersion === 1,
+    `Expected source node to expose cacheKeyFacts on first run. Actual: ${JSON.stringify(successSourceResult?.cacheKeyFacts)}`,
+  );
+  assert(
+    successFilterResult?.cacheKeyFacts?.compileFingerprint ===
+      successResult.compilePlan?.compileFingerprint &&
+      successFilterResult?.cacheKeyFacts?.nodeFingerprint ===
+        successFilterResult?.nodeFingerprint &&
+      successFilterResult?.cacheKeyFacts?.inputFingerprint ===
+        successFilterResult?.inputFingerprint &&
+      successFilterResult.cacheKeyFacts?.scopeKey ===
+        "graph_test:filter_text" &&
+      successFilterResult.cacheKeyFacts?.fingerprintVersion === 1,
+    `Expected pure node to expose cacheKeyFacts on first run. Actual: ${JSON.stringify(successFilterResult?.cacheKeyFacts)}`,
+  );
+  assert(
+    successSourceResult?.reuseVerdict?.reason ===
+      "ineligible_missing_baseline" &&
+      successSourceResult.reuseVerdict?.canReuse === false &&
+      successFilterResult?.reuseVerdict?.reason ===
+        "ineligible_missing_baseline" &&
+      successFilterResult.reuseVerdict?.canReuse === false,
+    `Expected first run reuse verdicts to stay conservatively ineligible_missing_baseline. Actual: ${JSON.stringify(successResult.moduleResults.map((result) => ({ nodeId: result.nodeId, reuseVerdict: result.reuseVerdict })))}`,
+  );
+  assert(
+    successResult.reuseSummary?.eligibleNodeIds.length === 0 &&
+      successResult.reuseSummary?.ineligibleNodeIds.join(",") ===
+        "src_text,filter_text" &&
+      successResult.reuseSummary?.verdictCounts.eligible === 0 &&
+      successResult.reuseSummary?.verdictCounts.ineligible_missing_baseline ===
+        2,
+    `Expected first run reuseSummary to match missing-baseline verdicts. Actual: ${JSON.stringify(successResult.reuseSummary)}`,
+  );
+  assert(
+    successResult.trace?.reuseSummary?.verdictCounts
+      .ineligible_missing_baseline ===
+      successResult.reuseSummary?.verdictCounts.ineligible_missing_baseline,
+    `Expected trace reuseSummary to mirror top-level result on first run. Actual: ${JSON.stringify(successResult.trace?.reuseSummary)}`,
+  );
 
   const repeatedSuccessResult = await executeGraph(
     makeBaseGraph(),
@@ -1640,6 +1687,48 @@ async function runValidationSpec(): Promise<void> {
     repeatedSuccessResult.moduleResults.length ===
       repeatedSuccessResult.compilePlan?.nodeOrder.length,
     `Expected identical second run to remain full execution with no skip semantics. Actual: moduleResults=${repeatedSuccessResult.moduleResults.length}, planNodes=${repeatedSuccessResult.compilePlan?.nodeOrder.length}`,
+  );
+  assert(
+    repeatedSourceResult?.reuseVerdict?.reason === "ineligible_capability" &&
+      repeatedSourceResult.reuseVerdict?.canReuse === false &&
+      repeatedFilterResult?.reuseVerdict?.reason === "eligible" &&
+      repeatedFilterResult.reuseVerdict?.canReuse === true,
+    `Expected second identical run to mark only conservative pure nodes as eligible. Actual: ${JSON.stringify(repeatedSuccessResult.moduleResults.map((result) => ({ nodeId: result.nodeId, reuseVerdict: result.reuseVerdict })))}`,
+  );
+  assert(
+    repeatedFilterResult?.cacheKeyFacts?.compileFingerprint ===
+      repeatedSuccessResult.compilePlan?.compileFingerprint &&
+      repeatedFilterResult?.cacheKeyFacts?.nodeFingerprint ===
+        repeatedFilterResult?.nodeFingerprint &&
+      repeatedFilterResult?.cacheKeyFacts?.inputFingerprint ===
+        repeatedFilterResult?.inputFingerprint,
+    `Expected repeated pure node to retain aligned cacheKeyFacts. Actual: ${JSON.stringify(repeatedFilterResult?.cacheKeyFacts)}`,
+  );
+  assert(
+    repeatedSuccessResult.reuseSummary?.eligibleNodeIds.join(",") ===
+      "filter_text" &&
+      repeatedSuccessResult.reuseSummary?.ineligibleNodeIds.join(",") ===
+        "src_text" &&
+      repeatedSuccessResult.reuseSummary?.verdictCounts.eligible === 1 &&
+      repeatedSuccessResult.reuseSummary?.verdictCounts
+        .ineligible_capability === 1,
+    `Expected repeated run reuseSummary to align with per-node verdicts. Actual: ${JSON.stringify(repeatedSuccessResult.reuseSummary)}`,
+  );
+  assert(
+    repeatedSuccessResult.trace?.reuseSummary?.eligibleNodeIds.join(",") ===
+      repeatedSuccessResult.reuseSummary?.eligibleNodeIds.join(","),
+    `Expected repeated run trace reuseSummary to mirror top-level result. Actual: ${JSON.stringify(repeatedSuccessResult.trace?.reuseSummary)}`,
+  );
+  assert(
+    repeatedSuccessResult.trace?.nodeTraces
+      ?.filter((trace) => trace.stage === "execute")
+      .map(
+        (trace) =>
+          `${trace.nodeId}:${trace.reuseVerdict?.reason}:${trace.status}`,
+      )
+      .join(",") ===
+      "src_text:ineligible_capability:ok,filter_text:eligible:ok",
+    `Expected execute traces to expose reuse verdicts while still executing eligible nodes. Actual: ${JSON.stringify(repeatedSuccessResult.trace?.nodeTraces)}`,
   );
 
   const changedInputResult = await executeGraph(
@@ -1706,6 +1795,39 @@ async function runValidationSpec(): Promise<void> {
   assert(
     dirtyPropagationChanged.moduleResults.length === 3,
     `Expected dirty propagation graph to remain fully executed after dirty observation. Actual: ${dirtyPropagationChanged.moduleResults.length}`,
+  );
+  const dirtyPropagationRepeatFilter =
+    dirtyPropagationRepeat.moduleResults.find(
+      (result) => result.nodeId === "filter_text",
+    );
+  const dirtyPropagationRepeatOutReply =
+    dirtyPropagationRepeat.moduleResults.find(
+      (result) => result.nodeId === "out_reply",
+    );
+  assert(
+    dirtyPropagationRepeatFilter?.reuseVerdict?.reason === "eligible" &&
+      dirtyPropagationRepeatFilter.reuseVerdict?.canReuse === true &&
+      dirtyPropagationRepeatOutReply?.reuseVerdict?.reason ===
+        "ineligible_side_effect" &&
+      dirtyPropagationRepeatOutReply.reuseVerdict?.canReuse === false,
+    `Expected repeated dirty-propagation run to keep pure nodes eligible and side-effect nodes conservatively ineligible. Actual: ${JSON.stringify(dirtyPropagationRepeat.moduleResults.map((result) => ({ nodeId: result.nodeId, reuseVerdict: result.reuseVerdict })))}`,
+  );
+  assert(
+    dirtyPropagationChanged.moduleResults
+      .map((result) => `${result.nodeId}:${result.reuseVerdict?.reason}`)
+      .join(",") ===
+      "src_text:ineligible_dirty,filter_text:ineligible_dirty,out_reply:ineligible_side_effect",
+    `Expected dirty and side-effect boundaries to dominate reuse verdicts after input changes. Actual: ${JSON.stringify(dirtyPropagationChanged.moduleResults.map((result) => ({ nodeId: result.nodeId, reuseVerdict: result.reuseVerdict })))}`,
+  );
+  assert(
+    dirtyPropagationChanged.reuseSummary?.eligibleNodeIds.length === 0 &&
+      dirtyPropagationChanged.reuseSummary?.ineligibleNodeIds.join(",") ===
+        "src_text,filter_text,out_reply" &&
+      dirtyPropagationChanged.reuseSummary?.verdictCounts.ineligible_dirty ===
+        2 &&
+      dirtyPropagationChanged.reuseSummary?.verdictCounts
+        .ineligible_side_effect === 1,
+    `Expected dirty propagation reuseSummary to align with dirty and side-effect verdicts. Actual: ${JSON.stringify(dirtyPropagationChanged.reuseSummary)}`,
   );
 
   const validationFailureResult = await executeGraph(

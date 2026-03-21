@@ -21,8 +21,12 @@ import type {
   GraphDirtySetSummary,
   GraphExecutionResult,
   GraphExecutionStage,
+  GraphNodeCacheKeyFacts,
   GraphNodeDirtyReason,
   GraphNodeInputSource,
+  GraphNodeReuseReason,
+  GraphNodeReuseVerdict,
+  GraphReuseSummary,
   GraphStageTrace,
   GraphTraceStageStatus,
   HostCommitContract,
@@ -596,6 +600,8 @@ function normalizeHostCommitContracts(
 }
 
 const previousInputFingerprintByNode = new Map<string, string>();
+const REUSE_FINGERPRINT_VERSION = 1;
+const REUSE_ELIGIBLE_CAPABILITIES = new Set<WorkbenchCapability>(["pure"]);
 
 function collectStableContextInputFacts(
   node: WorkbenchNode,
@@ -641,6 +647,87 @@ function createDirtySetSummary(
   };
 }
 
+function createCacheKeyFacts(
+  graph: WorkbenchGraph,
+  plan: GraphCompilePlan,
+  planNode: GraphCompilePlanNode,
+  inputFingerprint: string,
+): GraphNodeCacheKeyFacts {
+  return {
+    compileFingerprint: plan.compileFingerprint,
+    nodeFingerprint: planNode.nodeFingerprint,
+    inputFingerprint,
+    scopeKey: `${graph.id}:${planNode.nodeId}`,
+    fingerprintVersion: REUSE_FINGERPRINT_VERSION,
+  };
+}
+
+function createReuseVerdict(params: {
+  capability?: WorkbenchCapability;
+  isSideEffectNode: boolean;
+  isDirty: boolean;
+  previousInputFingerprint?: string;
+  inputFingerprint: string;
+}): GraphNodeReuseVerdict {
+  const {
+    capability,
+    isSideEffectNode,
+    isDirty,
+    previousInputFingerprint,
+    inputFingerprint,
+  } = params;
+
+  let reason: GraphNodeReuseReason;
+  if (isSideEffectNode) {
+    reason = "ineligible_side_effect";
+  } else if (isDirty) {
+    reason =
+      previousInputFingerprint === undefined
+        ? "ineligible_missing_baseline"
+        : "ineligible_dirty";
+  } else if (!capability || !REUSE_ELIGIBLE_CAPABILITIES.has(capability)) {
+    reason = "ineligible_capability";
+  } else if (previousInputFingerprint === undefined) {
+    reason = "ineligible_missing_baseline";
+  } else {
+    reason = "eligible";
+  }
+
+  return {
+    canReuse: reason === "eligible",
+    reason,
+    baselineInputFingerprint: previousInputFingerprint,
+    currentInputFingerprint: inputFingerprint,
+  };
+}
+
+function createReuseSummary(
+  verdicts: Array<{ nodeId: string; reuseVerdict: GraphNodeReuseVerdict }>,
+): GraphReuseSummary {
+  const verdictCounts: Record<GraphNodeReuseReason, number> = {
+    eligible: 0,
+    ineligible_dirty: 0,
+    ineligible_side_effect: 0,
+    ineligible_capability: 0,
+    ineligible_missing_baseline: 0,
+  };
+
+  for (const { reuseVerdict } of verdicts) {
+    verdictCounts[reuseVerdict.reason] += 1;
+  }
+
+  return {
+    fingerprintVersion: REUSE_FINGERPRINT_VERSION,
+    eligibleNodeIds: verdicts
+      .filter(({ reuseVerdict }) => reuseVerdict.canReuse)
+      .map(({ nodeId }) => nodeId),
+    ineligibleNodeIds: verdicts
+      .filter(({ reuseVerdict }) => !reuseVerdict.canReuse)
+      .map(({ nodeId }) => nodeId),
+    verdictCounts,
+  };
+}
+
 export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
@@ -655,6 +742,7 @@ export async function executeCompiledGraph(
     | "dirtySetSummary"
   > & {
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
+    reuseSummary: GraphReuseSummary;
   }
 > {
   const moduleResults: ModuleExecutionResult[] = [];
@@ -674,6 +762,11 @@ export async function executeCompiledGraph(
       dirtyReason: GraphNodeDirtyReason;
     }
   >();
+
+  const reuseVerdicts: Array<{
+    nodeId: string;
+    reuseVerdict: GraphNodeReuseVerdict;
+  }> = [];
 
   const [
     sourceImpls,
@@ -761,6 +854,23 @@ export async function executeCompiledGraph(
       isDirty,
       dirtyReason,
     });
+    const cacheKeyFacts = createCacheKeyFacts(
+      graph,
+      plan,
+      planNode,
+      inputFingerprint,
+    );
+    const reuseVerdict = createReuseVerdict({
+      capability: planNode.capability,
+      isSideEffectNode: planNode.isSideEffectNode,
+      isDirty,
+      previousInputFingerprint,
+      inputFingerprint,
+    });
+    reuseVerdicts.push({
+      nodeId: node.id,
+      reuseVerdict,
+    });
     const inputKeys = Object.keys(inputs);
     const nodeTraceBase = {
       ...createNodeTraceBase(planNode, nodeStart, inputKeys),
@@ -768,6 +878,8 @@ export async function executeCompiledGraph(
       inputSources,
       isDirty,
       dirtyReason,
+      cacheKeyFacts,
+      reuseVerdict,
     };
 
     context.onProgress?.({
@@ -816,6 +928,8 @@ export async function executeCompiledGraph(
         status: "ok",
         capability: dispatchResult.capability ?? planNode.capability,
         isSideEffectNode: planNode.isSideEffectNode,
+        cacheKeyFacts,
+        reuseVerdict,
         hostWriteSummary: planNode.hostWriteSummary,
         hostCommitSummary: planNode.hostCommitSummary,
         hostWrites: nodeHostWrites,
@@ -859,6 +973,8 @@ export async function executeCompiledGraph(
         status: "error",
         capability: planNode.capability,
         isSideEffectNode: planNode.isSideEffectNode,
+        cacheKeyFacts,
+        reuseVerdict,
         hostWriteSummary: planNode.hostWriteSummary,
         hostCommitSummary: planNode.hostCommitSummary,
       });
@@ -933,6 +1049,7 @@ export async function executeCompiledGraph(
     hostWrites,
     hostCommitContracts,
     dirtySetSummary: createDirtySetSummary(dirtySetEntries),
+    reuseSummary: createReuseSummary(reuseVerdicts),
   };
 }
 
@@ -1060,6 +1177,7 @@ export async function executeGraph(
       hostWrites: execution.hostWrites,
       hostCommitContracts: execution.hostCommitContracts,
       dirtySetSummary: execution.dirtySetSummary,
+      reuseSummary: execution.reuseSummary,
       elapsedMs: Date.now() - startedAt,
       compilePlan,
       nodeTraces,
@@ -1069,6 +1187,7 @@ export async function executeGraph(
         nodeTraces,
         compilePlan,
         dirtySetSummary: execution.dirtySetSummary,
+        reuseSummary: execution.reuseSummary,
       },
     };
   } catch (error) {
