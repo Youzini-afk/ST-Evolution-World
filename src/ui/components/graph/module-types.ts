@@ -220,12 +220,18 @@ export interface GraphNodeTrace {
   sideEffect?: WorkbenchSideEffectLevel;
   isSideEffectNode?: boolean;
   elapsedMs?: number;
+  durationMs?: number;
+  handlerId?: string;
+  isFallback?: boolean;
+  inputKeys?: string[];
   error?: string;
+  failedAt?: "dispatch" | "handler";
 }
 
 export interface GraphExecutionTrace {
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
+  failedNodeId?: string;
   stages: GraphStageTrace[];
   nodeTraces?: GraphNodeTrace[];
   compilePlan?: GraphCompilePlan;

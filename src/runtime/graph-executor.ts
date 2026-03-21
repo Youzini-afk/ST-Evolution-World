@@ -56,6 +56,7 @@ interface NodeHandlerRequest {
 interface NodeHandlerResult {
   outputs: ModuleOutput;
   handlerId: string;
+  isFallback?: boolean;
 }
 
 type NodeExecutionHandler = (
@@ -183,7 +184,7 @@ function createFallbackNodeHandler(): NodeExecutionHandler {
     const blueprint = getModuleBlueprint(node.moduleId);
     const outPorts = blueprint.ports.filter((p) => p.direction === "out");
     if (outPorts.length === 0) {
-      return { outputs: {}, handlerId: "__fallback__" };
+      return { outputs: {}, handlerId: "__fallback__", isFallback: true };
     }
 
     const firstInValue = Object.values(inputs)[0];
@@ -192,7 +193,7 @@ function createFallbackNodeHandler(): NodeExecutionHandler {
       outputs[port.id] = firstInValue ?? null;
     }
 
-    return { outputs, handlerId: "__fallback__" };
+    return { outputs, handlerId: "__fallback__", isFallback: true };
   };
 }
 
@@ -587,13 +588,34 @@ function createNodeHandlerMap(modules: RuntimeImplModules): NodeHandlerMap {
   };
 }
 
+class NodeExecutionError extends Error {
+  readonly failedAt: "dispatch" | "handler";
+
+  constructor(message: string, failedAt: "dispatch" | "handler") {
+    super(message);
+    this.name = "NodeExecutionError";
+    this.failedAt = failedAt;
+  }
+}
+
 async function dispatchNodeExecution(
   request: NodeHandlerRequest,
 ): Promise<NodeHandlerResult> {
-  const handlers = createNodeHandlerMap(request.modules);
-  const handler =
-    handlers[request.node.moduleId] ?? createFallbackNodeHandler();
-  return handler(request);
+  let handler: NodeExecutionHandler;
+  try {
+    const handlers = createNodeHandlerMap(request.modules);
+    handler = handlers[request.node.moduleId] ?? createFallbackNodeHandler();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new NodeExecutionError(message, "dispatch");
+  }
+
+  try {
+    return await handler(request);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new NodeExecutionError(message, "handler");
+  }
 }
 
 // ── Main Executor ──
@@ -661,16 +683,22 @@ export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
 class GraphExecutionStageError extends Error {
   readonly stage: GraphExecutionStage;
   readonly moduleResults: ModuleExecutionResult[];
+  readonly nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
+  readonly failedNodeId?: string;
 
   constructor(
     stage: GraphExecutionStage,
     message: string,
     moduleResults: ModuleExecutionResult[],
+    nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"],
+    failedNodeId?: string,
   ) {
     super(message);
     this.name = "GraphExecutionStageError";
     this.stage = stage;
     this.moduleResults = moduleResults;
+    this.nodeTraces = nodeTraces;
+    this.failedNodeId = failedNodeId;
   }
 }
 
@@ -725,6 +753,7 @@ export async function executeCompiledGraph(
         "execute",
         "workflow cancelled by user",
         moduleResults,
+        nodeTraces,
       );
     }
 
@@ -735,6 +764,7 @@ export async function executeCompiledGraph(
 
     const nodeStart = Date.now();
     const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
+    const inputKeys = Object.keys(inputs);
 
     context.onProgress?.({
       phase: "module_executing",
@@ -774,10 +804,16 @@ export async function executeCompiledGraph(
         sideEffect: planNode.sideEffect,
         isSideEffectNode: planNode.isSideEffectNode,
         elapsedMs,
+        durationMs: elapsedMs,
+        handlerId: dispatchResult.handlerId,
+        isFallback: dispatchResult.isFallback === true,
+        inputKeys,
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const elapsedMs = Date.now() - nodeStart;
+      const failedAt =
+        error instanceof NodeExecutionError ? error.failedAt : "handler";
       moduleResults.push({
         nodeId: node.id,
         moduleId: node.moduleId,
@@ -796,13 +832,19 @@ export async function executeCompiledGraph(
         sideEffect: planNode.sideEffect,
         isSideEffectNode: planNode.isSideEffectNode,
         elapsedMs,
+        durationMs: elapsedMs,
+        inputKeys,
         error: errorMsg,
+        failedAt,
+        isFallback: false,
       });
 
       throw new GraphExecutionStageError(
         "execute",
         `模块「${getModuleBlueprint(node.moduleId).label}」执行失败（node=${node.id}, module=${node.moduleId}）: ${errorMsg}`,
         moduleResults,
+        nodeTraces,
+        node.id,
       );
     }
   }
@@ -948,8 +990,15 @@ export async function executeGraph(
       trace: {
         currentStage: "execute",
         failedStage: "execute",
+        failedNodeId:
+          error instanceof GraphExecutionStageError
+            ? error.failedNodeId
+            : undefined,
         stages: trace,
-        nodeTraces,
+        nodeTraces:
+          error instanceof GraphExecutionStageError
+            ? error.nodeTraces
+            : nodeTraces,
         compilePlan,
       },
     };

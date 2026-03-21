@@ -164,6 +164,13 @@ function makeDispatchSmokeGraph(): WorkbenchGraph {
         config: {},
         collapsed: false,
       },
+      {
+        id: "fallback_pkg",
+        moduleId: "pkg_prompt_assembly",
+        position: { x: 420, y: 0 },
+        config: {},
+        collapsed: false,
+      },
     ],
     edges: [
       {
@@ -172,6 +179,64 @@ function makeDispatchSmokeGraph(): WorkbenchGraph {
         sourcePort: "text",
         target: "concat_text",
         targetPort: "a",
+      },
+      {
+        id: "edge_concat_to_pkg",
+        source: "concat_text",
+        sourcePort: "msgs_out",
+        target: "fallback_pkg",
+        targetPort: "messages",
+      },
+    ],
+  };
+}
+
+function makeHandlerFailureGraph(): WorkbenchGraph {
+  return {
+    id: "graph_handler_failure",
+    name: "Handler Failure Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_messages",
+        moduleId: "src_chat_history",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "cfg_api",
+        moduleId: "cfg_api_preset",
+        position: { x: 0, y: 180 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "llm_call",
+        moduleId: "exe_llm_call",
+        position: { x: 260, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_messages_to_llm",
+        source: "src_messages",
+        sourcePort: "messages",
+        target: "llm_call",
+        targetPort: "messages",
+      },
+      {
+        id: "edge_cfg_to_llm",
+        source: "cfg_api",
+        sourcePort: "config",
+        target: "llm_call",
+        targetPort: "api_config",
       },
     ],
   };
@@ -526,15 +591,38 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     JSON.stringify(
-      dispatchSmokeExecution.finalOutputs.concat_text?.msgs_out,
+      dispatchSmokeExecution.finalOutputs.fallback_pkg?.messages,
     ) === JSON.stringify([]),
-    `Expected dispatch smoke output to preserve registered handler input normalization. Actual: ${JSON.stringify(dispatchSmokeExecution.finalOutputs.concat_text)}`,
+    `Expected dispatch smoke fallback output to preserve registered handler input normalization. Actual: ${JSON.stringify(dispatchSmokeExecution.finalOutputs.fallback_pkg)}`,
   );
   assert(
     dispatchSmokeExecution.moduleResults.every(
       (result) => result.status === "ok",
     ),
     `Expected dispatch smoke results to stay ok. Actual: ${dispatchSmokeExecution.moduleResults.map((result) => `${result.nodeId}:${result.status}`).join(",")}`,
+  );
+  assert(
+    dispatchSmokeExecution.nodeTraces?.every(
+      (trace) =>
+        trace.stage !== "execute" ||
+        (typeof trace.handlerId === "string" &&
+          typeof trace.durationMs === "number" &&
+          trace.durationMs >= 0 &&
+          typeof trace.isFallback === "boolean"),
+    ) === true,
+    `Expected execute traces to expose handlerId/durationMs/isFallback. Actual: ${JSON.stringify(dispatchSmokeExecution.nodeTraces)}`,
+  );
+  const fallbackTrace = dispatchSmokeExecution.nodeTraces?.find(
+    (trace) => trace.nodeId === "fallback_pkg" && trace.stage === "execute",
+  );
+  assert(
+    fallbackTrace?.isFallback === true &&
+      fallbackTrace.handlerId === "__fallback__",
+    `Expected fallback node trace to expose fallback observability. Actual: ${JSON.stringify(fallbackTrace)}`,
+  );
+  assert(
+    fallbackTrace?.inputKeys?.join(",") === "messages",
+    `Expected fallback node trace to expose collected input keys. Actual: ${JSON.stringify(fallbackTrace?.inputKeys)}`,
   );
 
   const successResult = await executeGraph(
@@ -592,6 +680,30 @@ async function runValidationSpec(): Promise<void> {
       "src_text:compile:ok,filter_text:compile:ok,src_text:execute:ok,filter_text:execute:ok",
     `Expected node traces to contain compile and execute status. Actual: ${successResult.trace?.nodeTraces?.map((trace) => `${trace.nodeId}:${trace.stage}:${trace.status}`).join(",")}`,
   );
+  const successExecuteTraces = successResult.trace?.nodeTraces?.filter(
+    (trace) => trace.stage === "execute",
+  );
+  assert(
+    successExecuteTraces?.every(
+      (trace) =>
+        typeof trace.handlerId === "string" &&
+        typeof trace.durationMs === "number" &&
+        trace.durationMs >= 0 &&
+        trace.isFallback === false,
+    ) === true,
+    `Expected successful execute traces to expose structured handler metadata. Actual: ${JSON.stringify(successExecuteTraces)}`,
+  );
+  const filterTrace = successExecuteTraces?.find(
+    (trace) => trace.nodeId === "filter_text",
+  );
+  assert(
+    filterTrace?.inputKeys?.join(",") === "text_in",
+    `Expected filter_text execute trace to expose input keys. Actual: ${JSON.stringify(filterTrace)}`,
+  );
+  assert(
+    filterTrace?.sideEffect === "pure",
+    `Expected filter_text execute trace to preserve sideEffect. Actual: ${JSON.stringify(filterTrace?.sideEffect)}`,
+  );
   assert(
     successResult.moduleResults.length === 2,
     `Expected 2 module results. Actual: ${successResult.moduleResults.length}`,
@@ -631,6 +743,34 @@ async function runValidationSpec(): Promise<void> {
     `Expected validation failure trace to skip compile/execute. Actual: ${validationFailureResult.trace?.stages.map((stage) => `${stage.stage}:${stage.status}`).join(",")}`,
   );
 
+  const handlerFailureResult = await executeGraph(
+    makeHandlerFailureGraph(),
+    makeExecutionContext(),
+  );
+  assert(
+    handlerFailureResult.ok === false &&
+      handlerFailureResult.failedStage === "execute",
+    `Expected handler failure to be attributed to execute stage. Actual: ok=${handlerFailureResult.ok}, failedStage=${handlerFailureResult.failedStage}`,
+  );
+  assert(
+    handlerFailureResult.trace?.failedStage === "execute" &&
+      handlerFailureResult.trace?.failedNodeId === "llm_call",
+    `Expected handler failure trace to expose failed node attribution. Actual: failedStage=${handlerFailureResult.trace?.failedStage}, failedNodeId=${handlerFailureResult.trace?.failedNodeId}`,
+  );
+  const handlerFailureTrace = handlerFailureResult.trace?.nodeTraces?.find(
+    (trace) => trace.nodeId === "llm_call" && trace.stage === "execute",
+  );
+  assert(
+    handlerFailureTrace?.status === "error" &&
+      typeof handlerFailureTrace.error === "string" &&
+      handlerFailureTrace.failedAt === "handler",
+    `Expected failed node trace to archive error and failedAt=handler. Actual: ${JSON.stringify(handlerFailureTrace)}`,
+  );
+  assert(
+    handlerFailureTrace?.sideEffect === "reads_host",
+    `Expected handler failure trace to preserve sideEffect metadata. Actual: ${JSON.stringify(handlerFailureTrace?.sideEffect)}`,
+  );
+
   const cancelledExecutionResult = await executeGraph(
     makeBaseGraph(),
     makeExecutionContext({ isCancelled: () => true }),
@@ -661,6 +801,10 @@ async function runValidationSpec(): Promise<void> {
   assert(
     cancelledExecutionResult.moduleResults.length === 0,
     `Expected cancellation before first node execution to keep moduleResults empty. Actual: ${cancelledExecutionResult.moduleResults.length}`,
+  );
+  assert(
+    cancelledExecutionResult.trace?.failedNodeId === undefined,
+    `Expected cancellation before execution to have no failedNodeId. Actual: ${cancelledExecutionResult.trace?.failedNodeId}`,
   );
 
   const migratedGraph = migrateFlowToGraph(makeLegacyFlowFixture());
