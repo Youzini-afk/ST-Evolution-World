@@ -140,6 +140,43 @@ function makePlanExecutionGraph(): WorkbenchGraph {
   };
 }
 
+function makeDispatchSmokeGraph(): WorkbenchGraph {
+  return {
+    id: "graph_dispatch_smoke",
+    name: "Dispatch Smoke Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "concat_text",
+        moduleId: "cmp_message_concat",
+        position: { x: 200, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_src_to_concat",
+        source: "src_text",
+        sourcePort: "text",
+        target: "concat_text",
+        targetPort: "a",
+      },
+    ],
+  };
+}
+
 function assertPlanMatchesGraph(
   plan: GraphCompilePlan,
   graph: WorkbenchGraph,
@@ -437,10 +474,15 @@ async function runValidationSpec(): Promise<void> {
     nodes: [...planExecutionGraph.nodes].reverse(),
   };
   const reversedPlan = compileGraphPlan(reversedGraph);
+  const progressEvents: Array<Record<string, any>> = [];
   const compiledExecution = await executeCompiledGraph(
     planExecutionGraph,
     reversedPlan,
-    makeExecutionContext(),
+    makeExecutionContext({
+      onProgress: (update) => {
+        progressEvents.push(update);
+      },
+    }),
   );
   assert(
     compiledExecution.moduleResults.map((result) => result.nodeId).join(",") ===
@@ -457,6 +499,42 @@ async function runValidationSpec(): Promise<void> {
     Object.keys(compiledExecution.finalOutputs).join(",") ===
       reversedPlan.terminalNodeIds.join(","),
     `Expected executeCompiledGraph final outputs to follow compile plan terminalNodeIds. Actual: ${Object.keys(compiledExecution.finalOutputs).join(",")}`,
+  );
+  assert(
+    progressEvents.map((event) => event.node_id).join(",") ===
+      reversedPlan.nodeOrder.join(","),
+    `Expected dispatch-backed progress events to follow compile plan order. Actual: ${progressEvents.map((event) => event.node_id).join(",")}`,
+  );
+  assert(
+    progressEvents.map((event) => event.module_id).join(",") ===
+      reversedPlan.nodes.map((node) => node.moduleId).join(","),
+    `Expected dispatch-backed progress events to preserve module ids. Actual: ${progressEvents.map((event) => event.module_id).join(",")}`,
+  );
+
+  const dispatchSmokeGraph = makeDispatchSmokeGraph();
+  const dispatchSmokePlan = compileGraphPlan(dispatchSmokeGraph);
+  const dispatchSmokeExecution = await executeCompiledGraph(
+    dispatchSmokeGraph,
+    dispatchSmokePlan,
+    makeExecutionContext({ userInput: "dispatch smoke" }),
+  );
+  assert(
+    dispatchSmokeExecution.moduleResults
+      .map((result) => result.nodeId)
+      .join(",") === dispatchSmokePlan.nodeOrder.join(","),
+    `Expected dispatch smoke execution to preserve plan order. Actual: ${dispatchSmokeExecution.moduleResults.map((result) => result.nodeId).join(",")}`,
+  );
+  assert(
+    JSON.stringify(
+      dispatchSmokeExecution.finalOutputs.concat_text?.msgs_out,
+    ) === JSON.stringify([]),
+    `Expected dispatch smoke output to preserve registered handler input normalization. Actual: ${JSON.stringify(dispatchSmokeExecution.finalOutputs.concat_text)}`,
+  );
+  assert(
+    dispatchSmokeExecution.moduleResults.every(
+      (result) => result.status === "ok",
+    ),
+    `Expected dispatch smoke results to stay ok. Actual: ${dispatchSmokeExecution.moduleResults.map((result) => `${result.nodeId}:${result.status}`).join(",")}`,
   );
 
   const successResult = await executeGraph(
