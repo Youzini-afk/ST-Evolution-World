@@ -15,6 +15,7 @@ import { getModuleBlueprint } from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
   GraphCompilePlanNode,
+  HostCommitContract,
   HostWriteDescriptor,
   ModuleOutput,
   WorkbenchCapability,
@@ -71,6 +72,7 @@ export interface NodeHandlerResult {
   capability?: WorkbenchCapability;
   isFallback?: boolean;
   hostWrites?: HostWriteDescriptor[];
+  hostCommitContracts?: HostCommitContract[];
 }
 
 /**
@@ -83,6 +85,10 @@ export type NodeExecutionHandler = (
 export type HostWriteDescriptorProducer = (
   request: HostWriteDescriptorRequest,
 ) => HostWriteDescriptor[];
+
+export type HostCommitContractProducer = (
+  hostWrites: HostWriteDescriptor[],
+) => HostCommitContract[];
 
 /**
  * **Plugin Contract v1 — NodeHandlerDescriptor**
@@ -106,6 +112,7 @@ export interface NodeHandlerDescriptor {
   sideEffect?: WorkbenchSideEffectLevel;
   kind: "builtin" | "fallback";
   produceHostWriteDescriptors?: HostWriteDescriptorProducer;
+  produceHostCommitContracts?: HostCommitContractProducer;
 }
 
 /**
@@ -176,6 +183,24 @@ function normalizeDescriptor(
       capability === "writes_host" && descriptor.kind !== "fallback"
         ? descriptor.produceHostWriteDescriptors
         : undefined,
+    produceHostCommitContracts:
+      capability === "writes_host" && descriptor.kind !== "fallback"
+        ? descriptor.produceHostCommitContracts
+        : undefined,
+  };
+}
+
+function createHostCommitContractFromDescriptor(
+  descriptor: HostWriteDescriptor,
+): HostCommitContract {
+  return {
+    kind: descriptor.kind,
+    mode: "immediate",
+    targetType: descriptor.targetType,
+    targetId: descriptor.targetId,
+    operation: descriptor.operation,
+    path: descriptor.path,
+    supportsRetry: descriptor.retryable,
   };
 }
 
@@ -988,6 +1013,8 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
         retryable: false,
       },
     ],
+    produceHostCommitContracts: (hostWrites) =>
+      hostWrites.map(createHostCommitContractFromDescriptor),
   });
 
   registerNodeHandler({

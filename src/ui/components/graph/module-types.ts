@@ -95,12 +95,33 @@ export interface HostWriteDescriptor {
   retryable: boolean;
 }
 
+export type HostCommitMode = "immediate";
+
+export interface HostCommitContract {
+  kind: HostWriteDescriptor["kind"];
+  mode: HostCommitMode;
+  targetType: HostWriteDescriptor["targetType"];
+  targetId?: HostWriteDescriptor["targetId"];
+  operation: HostWriteDescriptor["operation"];
+  path?: HostWriteDescriptor["path"];
+  supportsRetry: HostWriteDescriptor["retryable"];
+}
+
 export interface HostWriteSummary {
   kind: HostWriteDescriptor["kind"];
   targetType: HostWriteDescriptor["targetType"];
   targetId?: HostWriteDescriptor["targetId"];
   operation: HostWriteDescriptor["operation"];
   path?: HostWriteDescriptor["path"];
+}
+
+export interface HostCommitSummary {
+  kind: HostCommitContract["kind"];
+  mode: HostCommitContract["mode"];
+  targetType: HostCommitContract["targetType"];
+  targetId?: HostCommitContract["targetId"];
+  operation: HostCommitContract["operation"];
+  path?: HostCommitContract["path"];
 }
 
 /** Blueprint definition for a module type (registered in the registry) */
@@ -234,6 +255,7 @@ export interface GraphCompilePlanNode {
   status?: Extract<GraphTraceStageStatus, "ok" | "error">;
   isSideEffectNode: boolean;
   hostWriteSummary?: HostWriteSummary;
+  hostCommitSummary?: HostCommitSummary;
 }
 
 export interface GraphCompilePlan {
@@ -269,7 +291,9 @@ export interface GraphNodeTrace {
   failedAt?: "dispatch" | "handler";
   outputIncludedInFinalOutputs?: boolean;
   hostWriteSummary?: HostWriteSummary;
+  hostCommitSummary?: HostCommitSummary;
   hostWrites?: HostWriteDescriptor[];
+  hostCommitContracts?: HostCommitContract[];
 }
 
 export interface GraphExecutionTrace {
@@ -306,7 +330,9 @@ export interface ModuleExecutionResult {
   capability?: WorkbenchCapability;
   isSideEffectNode?: boolean;
   hostWriteSummary?: HostWriteSummary;
+  hostCommitSummary?: HostCommitSummary;
   hostWrites?: HostWriteDescriptor[];
+  hostCommitContracts?: HostCommitContract[];
 }
 
 /** Result of executing the entire graph */
@@ -322,6 +348,7 @@ export interface GraphExecutionResult {
   trace?: GraphExecutionTrace;
   nodeTraces?: GraphNodeTrace[];
   hostWrites?: HostWriteDescriptor[];
+  hostCommitContracts?: HostCommitContract[];
 }
 
 // ── Category Metadata ──

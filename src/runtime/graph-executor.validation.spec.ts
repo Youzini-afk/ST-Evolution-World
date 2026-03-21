@@ -1,6 +1,7 @@
 import type {
   ExecutionContext,
   GraphCompilePlan,
+  GraphExecutionStage,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
@@ -712,6 +713,30 @@ async function runValidationSpec(): Promise<void> {
       )
       .join(",")}`,
   );
+  assert(
+    compilePlanFixture.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.hostCommitSummary?.targetType ?? "none"}:${node.hostCommitSummary?.operation ?? "none"}:${node.hostCommitSummary?.mode ?? "none"}`,
+      )
+      .join(",") ===
+      "src_text:none:none:none,filter_text:none:none:none,out_reply:reply_instruction:inject_reply_instruction:immediate",
+    `Expected compile plan hostCommitSummary to be attached only for out_reply_inject. Actual: ${compilePlanFixture.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.hostCommitSummary?.targetType ?? "none"}:${node.hostCommitSummary?.operation ?? "none"}:${node.hostCommitSummary?.mode ?? "none"}`,
+      )
+      .join(",")}`,
+  );
+  const graphExecutionStages: GraphExecutionStage[] = [
+    "validate",
+    "compile",
+    "execute",
+  ];
+  assert(
+    graphExecutionStages.join(",") === "validate,compile,execute",
+    `Expected GraphExecutionStage to remain unchanged without commit stage. Actual: ${graphExecutionStages.join(",")}`,
+  );
 
   const networkTerminalPlan = compileGraphPlan(makeNetworkTerminalGraph());
   assert(
@@ -804,14 +829,45 @@ async function runValidationSpec(): Promise<void> {
       compiledExecution.hostWrites[0]?.operation === "inject_reply_instruction",
     `Expected executeCompiledGraph to aggregate graph-level hostWrites. Actual: ${JSON.stringify(compiledExecution.hostWrites)}`,
   );
+  assert(
+    compiledExecution.hostCommitContracts?.length === 1 &&
+      compiledExecution.hostCommitContracts[0]?.targetType ===
+        "reply_instruction" &&
+      compiledExecution.hostCommitContracts[0]?.operation ===
+        "inject_reply_instruction" &&
+      compiledExecution.hostCommitContracts[0]?.supportsRetry === false,
+    `Expected executeCompiledGraph to aggregate graph-level hostCommitContracts. Actual: ${JSON.stringify(compiledExecution.hostCommitContracts)}`,
+  );
+  assert(
+    compiledExecution.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.hostCommitContracts?.length ?? 0}:${result.hostCommitSummary?.targetType ?? "none"}`,
+      )
+      .join(",") ===
+      "src_text:0:none,filter_text:0:none,out_reply:1:reply_instruction",
+    `Expected executeCompiledGraph moduleResults to expose hostCommitContracts only for out_reply_inject. Actual: ${compiledExecution.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.hostCommitContracts?.length ?? 0}:${result.hostCommitSummary?.targetType ?? "none"}`,
+      )
+      .join(",")}`,
+  );
   const replyTrace = compiledExecution.nodeTraces?.find(
     (trace) => trace.nodeId === "out_reply" && trace.stage === "execute",
   );
   assert(
     replyTrace?.hostWrites?.length === 1 &&
       replyTrace.hostWrites[0]?.targetType === "reply_instruction" &&
-      replyTrace.hostWriteSummary?.targetType === "reply_instruction",
-    `Expected writes_host execute trace to expose hostWrites and hostWriteSummary. Actual: ${JSON.stringify(replyTrace)}`,
+      replyTrace.hostWriteSummary?.targetType === "reply_instruction" &&
+      replyTrace.hostCommitContracts?.length === 1 &&
+      replyTrace.hostCommitContracts[0]?.targetType === "reply_instruction" &&
+      replyTrace.hostCommitContracts[0]?.operation ===
+        "inject_reply_instruction" &&
+      replyTrace.hostCommitContracts[0]?.supportsRetry === false &&
+      replyTrace.hostCommitSummary?.targetType === "reply_instruction" &&
+      replyTrace.hostCommitSummary?.mode === "immediate",
+    `Expected writes_host execute trace to expose hostWrites/hostCommitContracts and summaries. Actual: ${JSON.stringify(replyTrace)}`,
   );
 
   const networkTerminalExecution = await executeCompiledGraph(
@@ -853,6 +909,16 @@ async function runValidationSpec(): Promise<void> {
         (trace) => (trace.hostWrites?.length ?? 0) === 0,
       ) === true,
     `Expected network execution not to expose host write descriptors. Actual: ${JSON.stringify(networkTerminalExecution)}`,
+  );
+  assert(
+    networkTerminalExecution.hostCommitContracts?.length === 0 &&
+      networkTerminalExecution.moduleResults.every(
+        (result) => (result.hostCommitContracts?.length ?? 0) === 0,
+      ) &&
+      networkTerminalExecution.nodeTraces?.every(
+        (trace) => (trace.hostCommitContracts?.length ?? 0) === 0,
+      ) === true,
+    `Expected network execution not to expose host commit contracts. Actual: ${JSON.stringify(networkTerminalExecution)}`,
   );
 
   const dispatchSmokeGraph = makeDispatchSmokeGraph();
@@ -981,14 +1047,26 @@ async function runValidationSpec(): Promise<void> {
       .join(",")}`,
   );
   assert(
+    dualHostExecution.hostCommitContracts?.length === 2 &&
+      dualHostExecution.hostCommitContracts.every(
+        (contract) =>
+          contract.targetType === "reply_instruction" &&
+          contract.operation === "inject_reply_instruction" &&
+          contract.supportsRetry === false,
+      ),
+    `Expected dual reply-inject graph to aggregate only reply commit contracts. Actual: ${JSON.stringify(dualHostExecution.hostCommitContracts)}`,
+  );
+  assert(
     dualHostExecution.moduleResults.some(
       (result) =>
         result.nodeId === "out_floor" &&
         (result.hostWrites?.length ?? 0) === 0 &&
+        (result.hostCommitContracts?.length ?? 0) === 0 &&
         result.capability === "writes_host" &&
-        result.hostWriteSummary === undefined,
+        result.hostWriteSummary === undefined &&
+        result.hostCommitSummary === undefined,
     ),
-    `Expected out_floor module result to keep writes_host capability while producing no descriptor. Actual: ${JSON.stringify(dualHostExecution.moduleResults.find((result) => result.nodeId === "out_floor"))}`,
+    `Expected out_floor module result to keep writes_host capability while producing no descriptor/contract. Actual: ${JSON.stringify(dualHostExecution.moduleResults.find((result) => result.nodeId === "out_floor"))}`,
   );
   assert(
     Object.keys(dualHostExecution.finalOutputs).length === 0,
@@ -1072,6 +1150,10 @@ async function runValidationSpec(): Promise<void> {
   assert(
     successResult.hostWrites?.length === 0,
     `Expected base graph executeGraph success path not to expose hostWrites. Actual: ${JSON.stringify(successResult.hostWrites)}`,
+  );
+  assert(
+    successResult.hostCommitContracts?.length === 0,
+    `Expected base graph executeGraph success path not to expose hostCommitContracts. Actual: ${JSON.stringify(successResult.hostCommitContracts)}`,
   );
   const filterTrace = successExecuteTraces?.find(
     (trace) => trace.nodeId === "filter_text",
@@ -1197,6 +1279,29 @@ async function runValidationSpec(): Promise<void> {
     floorDescriptor.capability === "writes_host" &&
       replyDescriptor.capability === "writes_host",
     `Expected host write descriptors to stay writes_host. Actual: floor=${JSON.stringify(floorDescriptor)}, reply=${JSON.stringify(replyDescriptor)}`,
+  );
+  assert(
+    floorDescriptor.produceHostCommitContracts === undefined &&
+      typeof replyDescriptor.produceHostCommitContracts === "function",
+    `Expected only out_reply_inject to expose host commit contract producer. Actual: floor=${JSON.stringify(floorDescriptor)}, reply=${JSON.stringify(replyDescriptor)}`,
+  );
+  const replyDescriptorContracts = replyDescriptor.produceHostCommitContracts?.(
+    replyDescriptor.produceHostWriteDescriptors?.({
+      planNode: compilePlanFixture.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )!,
+      node: makePlanExecutionGraph().nodes.find(
+        (node) => node.id === "out_reply",
+      )!,
+      inputs: { instruction: "hello" },
+    }) ?? [],
+  );
+  assert(
+    replyDescriptorContracts?.length === 1 &&
+      replyDescriptorContracts[0]?.targetType === "reply_instruction" &&
+      replyDescriptorContracts[0]?.operation === "inject_reply_instruction" &&
+      replyDescriptorContracts[0]?.supportsRetry === false,
+    `Expected out_reply_inject contract producer to map from host write descriptor fields. Actual: ${JSON.stringify(replyDescriptorContracts)}`,
   );
 
   const cancelledExecutionResult = await executeGraph(

@@ -21,6 +21,8 @@ import type {
   GraphExecutionStage,
   GraphStageTrace,
   GraphTraceStageStatus,
+  HostCommitContract,
+  HostCommitSummary,
   HostWriteDescriptor,
   HostWriteSummary,
   ModuleExecutionResult,
@@ -187,9 +189,13 @@ async function dispatchNodeExecution(
       node: request.node,
       inputs: request.inputs,
     });
+    const hostCommitContracts = hostWrites
+      ? resolved.descriptor.produceHostCommitContracts?.(hostWrites)
+      : undefined;
     return {
       ...executionResult,
       hostWrites,
+      hostCommitContracts,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -278,6 +284,23 @@ function getHostWriteSummary(
   return blueprint.runtimeMeta?.hostTargetHint;
 }
 
+function getHostCommitSummary(
+  node: WorkbenchNode,
+): HostCommitSummary | undefined {
+  const hostWriteSummary = getHostWriteSummary(node);
+  if (!hostWriteSummary || node.moduleId !== "out_reply_inject") {
+    return undefined;
+  }
+  return {
+    kind: hostWriteSummary.kind,
+    mode: "immediate",
+    targetType: hostWriteSummary.targetType,
+    targetId: hostWriteSummary.targetId,
+    operation: hostWriteSummary.operation,
+    path: hostWriteSummary.path,
+  };
+}
+
 export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
   const sorted = topologicalSort(graph.nodes, graph.edges);
   const nodesWithOutgoing = new Set(graph.edges.map((edge) => edge.source));
@@ -300,6 +323,7 @@ export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
         status: "ok",
         isSideEffectNode: isSideEffectNode(sideEffect),
         hostWriteSummary: getHostWriteSummary(node),
+        hostCommitSummary: getHostCommitSummary(node),
       };
     },
   );
@@ -355,6 +379,7 @@ function createNodeTraceBase(
     outputIncludedInFinalOutputs:
       planNode.isTerminal && !planNode.isSideEffectNode,
     hostWriteSummary: planNode.hostWriteSummary,
+    hostCommitSummary: planNode.hostCommitSummary,
   };
 }
 
@@ -367,6 +392,15 @@ function normalizeHostWrites(
   return hostWrites.map((descriptor) => ({ ...descriptor }));
 }
 
+function normalizeHostCommitContracts(
+  hostCommitContracts: HostCommitContract[] | undefined,
+): HostCommitContract[] | undefined {
+  if (!hostCommitContracts || hostCommitContracts.length === 0) {
+    return undefined;
+  }
+  return hostCommitContracts.map((contract) => ({ ...contract }));
+}
+
 export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
@@ -374,7 +408,7 @@ export async function executeCompiledGraph(
 ): Promise<
   Pick<
     GraphExecutionResult,
-    "moduleResults" | "finalOutputs" | "hostWrites"
+    "moduleResults" | "finalOutputs" | "hostWrites" | "hostCommitContracts"
   > & {
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
   }
@@ -383,6 +417,7 @@ export async function executeCompiledGraph(
   const nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"] =
     [];
   const hostWrites: HostWriteDescriptor[] = [];
+  const hostCommitContracts: HostCommitContract[] = [];
   const nodeOutputs = new Map<string, ModuleOutput>();
   const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
   const planNodeMap = new Map(plan.nodes.map((node) => [node.nodeId, node]));
@@ -460,6 +495,12 @@ export async function executeCompiledGraph(
       if (nodeHostWrites) {
         hostWrites.push(...nodeHostWrites);
       }
+      const nodeHostCommitContracts = normalizeHostCommitContracts(
+        dispatchResult.hostCommitContracts,
+      );
+      if (nodeHostCommitContracts) {
+        hostCommitContracts.push(...nodeHostCommitContracts);
+      }
 
       const elapsedMs = Date.now() - nodeStart;
       moduleResults.push({
@@ -472,7 +513,9 @@ export async function executeCompiledGraph(
         capability: dispatchResult.capability ?? planNode.capability,
         isSideEffectNode: planNode.isSideEffectNode,
         hostWriteSummary: planNode.hostWriteSummary,
+        hostCommitSummary: planNode.hostCommitSummary,
         hostWrites: nodeHostWrites,
+        hostCommitContracts: nodeHostCommitContracts,
       });
       const resultCapability = dispatchResult.capability ?? planNode.capability;
       nodeTraces.push({
@@ -490,6 +533,7 @@ export async function executeCompiledGraph(
         handlerId: dispatchResult.handlerId,
         isFallback: dispatchResult.isFallback === true,
         hostWrites: nodeHostWrites,
+        hostCommitContracts: nodeHostCommitContracts,
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -507,6 +551,7 @@ export async function executeCompiledGraph(
         capability: planNode.capability,
         isSideEffectNode: planNode.isSideEffectNode,
         hostWriteSummary: planNode.hostWriteSummary,
+        hostCommitSummary: planNode.hostCommitSummary,
       });
       nodeTraces.push({
         ...nodeTraceBase,
@@ -537,6 +582,7 @@ export async function executeCompiledGraph(
           durationMs: 0,
           elapsedMs: 0,
           hostWriteSummary: skippedPlanNode.hostWriteSummary,
+          hostCommitSummary: skippedPlanNode.hostCommitSummary,
         });
       }
 
@@ -567,6 +613,7 @@ export async function executeCompiledGraph(
     nodeTraces,
     finalOutputs: terminalOutputs,
     hostWrites,
+    hostCommitContracts,
   };
 }
 
@@ -624,6 +671,7 @@ export async function executeGraph(
         sideEffect: planNode.sideEffect,
         isSideEffectNode: planNode.isSideEffectNode,
         hostWriteSummary: planNode.hostWriteSummary,
+        hostCommitSummary: planNode.hostCommitSummary,
       })),
     );
     compilePlan = {
@@ -671,6 +719,7 @@ export async function executeGraph(
       moduleResults: execution.moduleResults,
       finalOutputs: execution.finalOutputs,
       hostWrites: execution.hostWrites,
+      hostCommitContracts: execution.hostCommitContracts,
       elapsedMs: Date.now() - startedAt,
       compilePlan,
       nodeTraces,
@@ -700,6 +749,7 @@ export async function executeGraph(
         error instanceof GraphExecutionStageError ? error.moduleResults : [],
       finalOutputs: {},
       hostWrites: [],
+      hostCommitContracts: [],
       elapsedMs: Date.now() - startedAt,
       failedStage: "execute",
       compilePlan,
