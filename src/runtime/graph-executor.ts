@@ -19,10 +19,13 @@ import type {
   GraphCompilePlanNode,
   GraphDirtySetEntry,
   GraphDirtySetSummary,
+  GraphExecutionDecisionSummary,
   GraphExecutionResult,
   GraphExecutionStage,
   GraphNodeCacheKeyFacts,
   GraphNodeDirtyReason,
+  GraphNodeExecutionDecision,
+  GraphNodeExecutionDecisionReason,
   GraphNodeInputSource,
   GraphNodeReuseReason,
   GraphNodeReuseVerdict,
@@ -600,8 +603,37 @@ function normalizeHostCommitContracts(
 }
 
 const previousInputFingerprintByNode = new Map<string, string>();
+const previousReusableOutputsByNode = new Map<string, ModuleOutput>();
 const REUSE_FINGERPRINT_VERSION = 1;
+
+export function resetGraphExecutorReuseStateForTesting(): void {
+  previousInputFingerprintByNode.clear();
+  previousReusableOutputsByNode.clear();
+}
+
+export function clearGraphExecutorReusableOutputsForTesting(): void {
+  previousReusableOutputsByNode.clear();
+}
 const REUSE_ELIGIBLE_CAPABILITIES = new Set<WorkbenchCapability>(["pure"]);
+const EXECUTION_DECISION_REASONS: GraphNodeExecutionDecisionReason[] = [
+  "feature_disabled",
+  "ineligible_reuse_verdict",
+  "ineligible_capability",
+  "ineligible_side_effect",
+  "ineligible_source",
+  "ineligible_terminal",
+  "ineligible_fallback",
+  "missing_baseline",
+  "missing_reusable_outputs",
+  "execute",
+  "skip_reuse_outputs",
+];
+const EXPERIMENTAL_REUSE_SKIP_SETTING_KEYS = [
+  "experimentalGraphReuseSkip",
+  "experimental_graph_reuse_skip",
+  "graphReuseSkipPilot",
+  "graph_reuse_skip_pilot",
+] as const;
 
 function collectStableContextInputFacts(
   node: WorkbenchNode,
@@ -728,6 +760,109 @@ function createReuseSummary(
   };
 }
 
+function cloneModuleOutput(outputs: ModuleOutput): ModuleOutput {
+  return { ...outputs };
+}
+
+function readExperimentalReuseSkipFlag(context: ExecutionContext): boolean {
+  const settings = context.settings as Record<string, unknown> | undefined;
+  if (!settings || typeof settings !== "object") {
+    return false;
+  }
+
+  for (const key of EXPERIMENTAL_REUSE_SKIP_SETTING_KEYS) {
+    if (typeof settings[key] === "boolean") {
+      return settings[key] as boolean;
+    }
+  }
+
+  return false;
+}
+
+function createExecutionDecision(params: {
+  featureEnabled: boolean;
+  capability?: WorkbenchCapability;
+  sideEffect?: WorkbenchSideEffectLevel;
+  isSideEffectNode: boolean;
+  isTerminal: boolean;
+  isFallbackNode: boolean;
+  dirtyReason: GraphNodeDirtyReason;
+  previousInputFingerprint?: string;
+  reuseVerdict: GraphNodeReuseVerdict;
+  reusableOutputs?: ModuleOutput;
+}): GraphNodeExecutionDecision {
+  const {
+    featureEnabled,
+    capability,
+    sideEffect,
+    isSideEffectNode,
+    isTerminal,
+    isFallbackNode,
+    dirtyReason,
+    previousInputFingerprint,
+    reuseVerdict,
+    reusableOutputs,
+  } = params;
+
+  let reason: GraphNodeExecutionDecisionReason = "execute";
+
+  if (!featureEnabled) {
+    reason = "feature_disabled";
+  } else if (isSideEffectNode || sideEffect === "writes_host") {
+    reason = "ineligible_side_effect";
+  } else if (capability === "source") {
+    reason = "ineligible_source";
+  } else if (isTerminal) {
+    reason = "ineligible_terminal";
+  } else if (isFallbackNode) {
+    reason = "ineligible_fallback";
+  } else if (previousInputFingerprint === undefined) {
+    reason = "missing_baseline";
+  } else if (!capability || capability !== "pure") {
+    reason = "ineligible_capability";
+  } else if (dirtyReason !== "clean" || !reuseVerdict.canReuse) {
+    reason = "ineligible_reuse_verdict";
+  } else if (!reusableOutputs) {
+    reason = "missing_reusable_outputs";
+  } else {
+    reason = "skip_reuse_outputs";
+  }
+
+  return {
+    shouldExecute: reason !== "skip_reuse_outputs",
+    shouldSkip: reason === "skip_reuse_outputs",
+    reason,
+    reusableOutputHit: reason === "skip_reuse_outputs",
+  };
+}
+
+function createExecutionDecisionSummary(
+  decisions: Array<{
+    nodeId: string;
+    executionDecision: GraphNodeExecutionDecision;
+  }>,
+  featureEnabled: boolean,
+): GraphExecutionDecisionSummary {
+  const decisionCounts = Object.fromEntries(
+    EXECUTION_DECISION_REASONS.map((reason) => [reason, 0]),
+  ) as Record<GraphNodeExecutionDecisionReason, number>;
+
+  for (const { executionDecision } of decisions) {
+    decisionCounts[executionDecision.reason] += 1;
+  }
+
+  return {
+    featureEnabled,
+    skippedNodeIds: decisions
+      .filter(({ executionDecision }) => executionDecision.shouldSkip)
+      .map(({ nodeId }) => nodeId),
+    executedNodeIds: decisions
+      .filter(({ executionDecision }) => executionDecision.shouldExecute)
+      .map(({ nodeId }) => nodeId),
+    decisionCounts,
+  };
+}
+
 export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
@@ -740,6 +875,7 @@ export async function executeCompiledGraph(
     | "hostWrites"
     | "hostCommitContracts"
     | "dirtySetSummary"
+    | "executionDecisionSummary"
   > & {
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
     reuseSummary: GraphReuseSummary;
@@ -767,6 +903,11 @@ export async function executeCompiledGraph(
     nodeId: string;
     reuseVerdict: GraphNodeReuseVerdict;
   }> = [];
+  const executionDecisions: Array<{
+    nodeId: string;
+    executionDecision: GraphNodeExecutionDecision;
+  }> = [];
+  const reuseSkipEnabled = readExperimentalReuseSkipFlag(context);
 
   const [
     sourceImpls,
@@ -872,6 +1013,26 @@ export async function executeCompiledGraph(
       reuseVerdict,
     });
     const inputKeys = Object.keys(inputs);
+    const reusableOutputs = previousReusableOutputsByNode.get(
+      `${graph.id}:${node.id}`,
+    );
+    const executionDecision = createExecutionDecision({
+      featureEnabled: reuseSkipEnabled,
+      capability: planNode.capability,
+      sideEffect: planNode.sideEffect,
+      isSideEffectNode: planNode.isSideEffectNode,
+      isTerminal: planNode.isTerminal,
+      isFallbackNode:
+        resolveNodeHandler(node.moduleId).resolvedVia === "fallback",
+      dirtyReason,
+      previousInputFingerprint,
+      reuseVerdict,
+      reusableOutputs,
+    });
+    executionDecisions.push({
+      nodeId: node.id,
+      executionDecision,
+    });
     const nodeTraceBase = {
       ...createNodeTraceBase(planNode, nodeStart, inputKeys),
       inputFingerprint,
@@ -880,7 +1041,43 @@ export async function executeCompiledGraph(
       dirtyReason,
       cacheKeyFacts,
       reuseVerdict,
+      executionDecision,
     };
+
+    if (executionDecision.shouldSkip && reusableOutputs) {
+      const reusedOutputs = cloneModuleOutput(reusableOutputs);
+      nodeOutputs.set(node.id, reusedOutputs);
+      moduleResults.push({
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeFingerprint: planNode.nodeFingerprint,
+        inputFingerprint,
+        inputSources,
+        isDirty,
+        dirtyReason,
+        outputs: reusedOutputs,
+        elapsedMs: 0,
+        stage: "execute",
+        status: "skipped",
+        capability: planNode.capability,
+        isSideEffectNode: planNode.isSideEffectNode,
+        cacheKeyFacts,
+        reuseVerdict,
+        executionDecision,
+        hostWriteSummary: planNode.hostWriteSummary,
+        hostCommitSummary: planNode.hostCommitSummary,
+      });
+      nodeTraces.push({
+        ...nodeTraceBase,
+        stage: "execute",
+        status: "skipped",
+        elapsedMs: 0,
+        durationMs: 0,
+        completedAt: nodeStart,
+        isFallback: false,
+      });
+      continue;
+    }
 
     context.onProgress?.({
       phase: "module_executing",
@@ -930,6 +1127,7 @@ export async function executeCompiledGraph(
         isSideEffectNode: planNode.isSideEffectNode,
         cacheKeyFacts,
         reuseVerdict,
+        executionDecision,
         hostWriteSummary: planNode.hostWriteSummary,
         hostCommitSummary: planNode.hostCommitSummary,
         hostWrites: nodeHostWrites,
@@ -975,6 +1173,7 @@ export async function executeCompiledGraph(
         isSideEffectNode: planNode.isSideEffectNode,
         cacheKeyFacts,
         reuseVerdict,
+        executionDecision,
         hostWriteSummary: planNode.hostWriteSummary,
         hostCommitSummary: planNode.hostCommitSummary,
       });
@@ -1042,6 +1241,15 @@ export async function executeCompiledGraph(
     );
   }
 
+  for (const result of moduleResults) {
+    if (result.status === "ok") {
+      previousReusableOutputsByNode.set(
+        `${graph.id}:${result.nodeId}`,
+        cloneModuleOutput(result.outputs),
+      );
+    }
+  }
+
   return {
     moduleResults,
     nodeTraces,
@@ -1050,6 +1258,10 @@ export async function executeCompiledGraph(
     hostCommitContracts,
     dirtySetSummary: createDirtySetSummary(dirtySetEntries),
     reuseSummary: createReuseSummary(reuseVerdicts),
+    executionDecisionSummary: createExecutionDecisionSummary(
+      executionDecisions,
+      reuseSkipEnabled,
+    ),
   };
 }
 
@@ -1178,6 +1390,7 @@ export async function executeGraph(
       hostCommitContracts: execution.hostCommitContracts,
       dirtySetSummary: execution.dirtySetSummary,
       reuseSummary: execution.reuseSummary,
+      executionDecisionSummary: execution.executionDecisionSummary,
       elapsedMs: Date.now() - startedAt,
       compilePlan,
       nodeTraces,
@@ -1188,6 +1401,7 @@ export async function executeGraph(
         compilePlan,
         dirtySetSummary: execution.dirtySetSummary,
         reuseSummary: execution.reuseSummary,
+        executionDecisionSummary: execution.executionDecisionSummary,
       },
     };
   } catch (error) {

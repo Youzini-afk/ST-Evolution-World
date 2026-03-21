@@ -233,7 +233,12 @@ export type ModuleOutput = Record<string, any>;
 
 export type GraphExecutionStage = "validate" | "compile" | "execute";
 export type GraphTraceStageStatus = "pending" | "ok" | "error" | "skipped";
-export type ModuleExecutionStatus = "pending" | "running" | "ok" | "error";
+export type ModuleExecutionStatus =
+  | "pending"
+  | "running"
+  | "ok"
+  | "error"
+  | "skipped";
 
 export interface GraphStageTrace {
   stage: GraphExecutionStage;
@@ -334,6 +339,33 @@ export interface GraphReuseSummary {
   verdictCounts: Record<GraphNodeReuseReason, number>;
 }
 
+export type GraphNodeExecutionDecisionReason =
+  | "feature_disabled"
+  | "ineligible_reuse_verdict"
+  | "ineligible_capability"
+  | "ineligible_side_effect"
+  | "ineligible_source"
+  | "ineligible_terminal"
+  | "ineligible_fallback"
+  | "missing_baseline"
+  | "missing_reusable_outputs"
+  | "execute"
+  | "skip_reuse_outputs";
+
+export interface GraphNodeExecutionDecision {
+  shouldExecute: boolean;
+  shouldSkip: boolean;
+  reason: GraphNodeExecutionDecisionReason;
+  reusableOutputHit: boolean;
+}
+
+export interface GraphExecutionDecisionSummary {
+  featureEnabled: boolean;
+  skippedNodeIds: string[];
+  executedNodeIds: string[];
+  decisionCounts: Record<GraphNodeExecutionDecisionReason, number>;
+}
+
 export interface GraphNodeTrace {
   nodeId: string;
   moduleId: string;
@@ -344,6 +376,7 @@ export interface GraphNodeTrace {
   dirtyReason?: GraphNodeDirtyReason;
   cacheKeyFacts?: GraphNodeCacheKeyFacts;
   reuseVerdict?: GraphNodeReuseVerdict;
+  executionDecision?: GraphNodeExecutionDecision;
   stage?: GraphExecutionStage;
   status?: ModuleExecutionStatus | GraphTraceStageStatus | "error" | "skipped";
   capability?: WorkbenchCapability;
@@ -374,6 +407,7 @@ export interface GraphExecutionTrace {
   compilePlan?: GraphCompilePlan;
   dirtySetSummary?: GraphDirtySetSummary;
   reuseSummary?: GraphReuseSummary;
+  executionDecisionSummary?: GraphExecutionDecisionSummary;
 }
 
 /** Context available to all modules during execution */
@@ -400,6 +434,7 @@ export interface ModuleExecutionResult {
   dirtyReason?: GraphNodeDirtyReason;
   cacheKeyFacts?: GraphNodeCacheKeyFacts;
   reuseVerdict?: GraphNodeReuseVerdict;
+  executionDecision?: GraphNodeExecutionDecision;
   outputs: Record<string, any>; // keyed by output port ID
   elapsedMs: number;
   error?: string;
@@ -438,6 +473,7 @@ export interface GraphExecutionResult {
   nodeTraces?: GraphNodeTrace[];
   dirtySetSummary?: GraphDirtySetSummary;
   reuseSummary?: GraphReuseSummary;
+  executionDecisionSummary?: GraphExecutionDecisionSummary;
   hostWrites?: HostWriteDescriptor[];
   hostCommitContracts?: HostCommitContract[];
 }

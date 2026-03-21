@@ -6,9 +6,11 @@ import type {
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
+  clearGraphExecutorReusableOutputsForTesting,
   compileGraphPlan,
   executeCompiledGraph,
   executeGraph,
+  resetGraphExecutorReuseStateForTesting,
   validateGraph,
 } from "./graph-executor";
 import {
@@ -873,6 +875,7 @@ function readPersistedScriptStorage(): Record<string, unknown> {
 
 async function runValidationSpec(): Promise<void> {
   ensureMemoryLocalStorage();
+  resetGraphExecutorReuseStateForTesting();
   const validGraphErrors = validateGraph(makeBaseGraph());
   assert(
     validGraphErrors.length === 0,
@@ -1580,6 +1583,8 @@ async function runValidationSpec(): Promise<void> {
   const successFilterResult = successResult.moduleResults.find(
     (result) => result.nodeId === "filter_text",
   );
+  assert(successSourceResult, "Expected src_text module result to exist");
+  assert(successFilterResult, "Expected filter_text module result to exist");
   assert(
     typeof successSourceResult?.inputFingerprint === "string" &&
       typeof successFilterResult?.inputFingerprint === "string",
@@ -1613,27 +1618,27 @@ async function runValidationSpec(): Promise<void> {
     `Expected filter_text inputSources to summarize upstream wiring. Actual: ${JSON.stringify(successFilterResult?.inputSources)}`,
   );
   assert(
-    successSourceResult?.cacheKeyFacts?.compileFingerprint ===
+    successSourceResult!.cacheKeyFacts?.compileFingerprint ===
       successResult.compilePlan?.compileFingerprint &&
-      successSourceResult?.cacheKeyFacts?.nodeFingerprint ===
-        successSourceResult?.nodeFingerprint &&
-      successSourceResult?.cacheKeyFacts?.inputFingerprint ===
-        successSourceResult?.inputFingerprint &&
-      successSourceResult.cacheKeyFacts?.scopeKey === "graph_test:src_text" &&
-      successSourceResult.cacheKeyFacts?.fingerprintVersion === 1,
-    `Expected source node to expose cacheKeyFacts on first run. Actual: ${JSON.stringify(successSourceResult?.cacheKeyFacts)}`,
+      successSourceResult!.cacheKeyFacts?.nodeFingerprint ===
+        successSourceResult!.nodeFingerprint &&
+      successSourceResult!.cacheKeyFacts?.inputFingerprint ===
+        successSourceResult!.inputFingerprint &&
+      successSourceResult!.cacheKeyFacts?.scopeKey === "graph_test:src_text" &&
+      successSourceResult!.cacheKeyFacts?.fingerprintVersion === 1,
+    `Expected source node to expose cacheKeyFacts on first run. Actual: ${JSON.stringify(successSourceResult!.cacheKeyFacts)}`,
   );
   assert(
-    successFilterResult?.cacheKeyFacts?.compileFingerprint ===
+    successFilterResult!.cacheKeyFacts?.compileFingerprint ===
       successResult.compilePlan?.compileFingerprint &&
-      successFilterResult?.cacheKeyFacts?.nodeFingerprint ===
-        successFilterResult?.nodeFingerprint &&
-      successFilterResult?.cacheKeyFacts?.inputFingerprint ===
-        successFilterResult?.inputFingerprint &&
-      successFilterResult.cacheKeyFacts?.scopeKey ===
+      successFilterResult!.cacheKeyFacts?.nodeFingerprint ===
+        successFilterResult!.nodeFingerprint &&
+      successFilterResult!.cacheKeyFacts?.inputFingerprint ===
+        successFilterResult!.inputFingerprint &&
+      successFilterResult!.cacheKeyFacts?.scopeKey ===
         "graph_test:filter_text" &&
-      successFilterResult.cacheKeyFacts?.fingerprintVersion === 1,
-    `Expected pure node to expose cacheKeyFacts on first run. Actual: ${JSON.stringify(successFilterResult?.cacheKeyFacts)}`,
+      successFilterResult!.cacheKeyFacts?.fingerprintVersion === 1,
+    `Expected pure node to expose cacheKeyFacts on first run. Actual: ${JSON.stringify(successFilterResult!.cacheKeyFacts)}`,
   );
   assert(
     successSourceResult?.reuseVerdict?.reason ===
@@ -1670,6 +1675,8 @@ async function runValidationSpec(): Promise<void> {
   const repeatedFilterResult = repeatedSuccessResult.moduleResults.find(
     (result) => result.nodeId === "filter_text",
   );
+  assert(repeatedSourceResult, "Expected repeated src_text result to exist");
+  assert(repeatedFilterResult, "Expected repeated filter_text result to exist");
   assert(
     repeatedSourceResult?.inputFingerprint ===
       successSourceResult?.inputFingerprint &&
@@ -1729,6 +1736,222 @@ async function runValidationSpec(): Promise<void> {
       .join(",") ===
       "src_text:ineligible_capability:ok,filter_text:eligible:ok",
     `Expected execute traces to expose reuse verdicts while still executing eligible nodes. Actual: ${JSON.stringify(repeatedSuccessResult.trace?.nodeTraces)}`,
+  );
+
+  const skipPilotInitial = await executeGraph(
+    makePlanExecutionGraph(),
+    makeExecutionContext({
+      userInput: "pilot-alpha",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const skipPilotRepeat = await executeGraph(
+    makePlanExecutionGraph(),
+    makeExecutionContext({
+      userInput: "pilot-alpha",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const skipPilotFilterResult = skipPilotRepeat.moduleResults.find(
+    (result) => result.nodeId === "filter_text",
+  );
+  const skipPilotSourceResult = skipPilotRepeat.moduleResults.find(
+    (result) => result.nodeId === "src_text",
+  );
+  const skipPilotOutReplyResult = skipPilotRepeat.moduleResults.find(
+    (result) => result.nodeId === "out_reply",
+  );
+  assert(skipPilotFilterResult, "Expected skip pilot filter result to exist");
+  assert(skipPilotSourceResult, "Expected skip pilot source result to exist");
+  assert(
+    skipPilotOutReplyResult,
+    "Expected skip pilot out_reply result to exist",
+  );
+  assert(
+    skipPilotInitial.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.status}:${result.executionDecision?.reason}`,
+      )
+      .join(",") ===
+      "src_text:ok:ineligible_source,filter_text:ok:ineligible_reuse_verdict,out_reply:ok:ineligible_side_effect",
+    `Expected first skip-pilot run to keep executing without baseline skips. Actual: ${JSON.stringify(skipPilotInitial.moduleResults.map((result) => ({ nodeId: result.nodeId, status: result.status, executionDecision: result.executionDecision })))}`,
+  );
+  assert(
+    skipPilotRepeat.moduleResults.length === 3,
+    `Expected skip pilot repeat to keep all module results visible. Actual: ${skipPilotRepeat.moduleResults.length}`,
+  );
+  assert(
+    skipPilotSourceResult!.status === "ok" &&
+      skipPilotSourceResult!.executionDecision?.shouldSkip === false &&
+      skipPilotSourceResult!.executionDecision?.reason === "ineligible_source",
+    `Expected source node never to skip in pilot mode. Actual: ${JSON.stringify(skipPilotSourceResult)}`,
+  );
+  assert(
+    skipPilotFilterResult!.status === "skipped" &&
+      skipPilotFilterResult!.executionDecision?.shouldSkip === true &&
+      skipPilotFilterResult!.executionDecision?.reason ===
+        "skip_reuse_outputs" &&
+      skipPilotFilterResult!.reuseVerdict?.canReuse === true &&
+      JSON.stringify(skipPilotFilterResult!.outputs) ===
+        JSON.stringify(
+          skipPilotInitial.moduleResults.find(
+            (result) => result.nodeId === "filter_text",
+          )?.outputs,
+        ),
+    `Expected pure clean baseline node to skip and reuse outputs when pilot enabled. Actual: ${JSON.stringify(skipPilotFilterResult)}`,
+  );
+  assert(
+    skipPilotOutReplyResult!.status === "ok" &&
+      skipPilotOutReplyResult!.executionDecision?.shouldSkip === false &&
+      skipPilotOutReplyResult!.executionDecision?.reason ===
+        "ineligible_side_effect",
+    `Expected side-effect node never to skip in pilot mode. Actual: ${JSON.stringify(skipPilotOutReplyResult)}`,
+  );
+  assert(
+    skipPilotRepeat.executionDecisionSummary?.featureEnabled === true &&
+      skipPilotRepeat.executionDecisionSummary?.skippedNodeIds.join(",") ===
+        "filter_text" &&
+      skipPilotRepeat.executionDecisionSummary?.executedNodeIds.join(",") ===
+        "src_text,out_reply" &&
+      skipPilotRepeat.executionDecisionSummary?.decisionCounts
+        .skip_reuse_outputs === 1 &&
+      skipPilotRepeat.executionDecisionSummary?.decisionCounts
+        .ineligible_source === 1 &&
+      skipPilotRepeat.executionDecisionSummary?.decisionCounts
+        .ineligible_side_effect === 1,
+    `Expected executionDecisionSummary to align with per-node decisions in pilot mode. Actual: ${JSON.stringify(skipPilotRepeat.executionDecisionSummary)}`,
+  );
+  assert(
+    skipPilotRepeat.trace?.executionDecisionSummary?.skippedNodeIds.join(
+      ",",
+    ) === skipPilotRepeat.executionDecisionSummary?.skippedNodeIds.join(","),
+    `Expected trace executionDecisionSummary to mirror top-level result in pilot mode. Actual: ${JSON.stringify(skipPilotRepeat.trace?.executionDecisionSummary)}`,
+  );
+  const skipPilotExecuteTraceSummary = skipPilotRepeat.trace?.nodeTraces
+    ?.filter((trace) => trace.stage === "execute")
+    .map(
+      (trace) =>
+        `${trace.nodeId}:${trace.status}:${trace.executionDecision?.reason}:${trace.reuseVerdict?.reason}`,
+    )
+    .join(",");
+  assert(
+    skipPilotExecuteTraceSummary ===
+      "src_text:ok:ineligible_source:ineligible_capability,filter_text:skipped:skip_reuse_outputs:eligible,out_reply:ok:ineligible_side_effect:ineligible_side_effect",
+    `Expected execute traces to record skip-vs-execute decisions consistently. Actual: ${JSON.stringify(skipPilotRepeat.trace?.nodeTraces)}`,
+  );
+  assert(
+    skipPilotRepeat.hostWrites?.length === 1 &&
+      skipPilotRepeat.hostWrites[0]?.targetType === "reply_instruction",
+    `Expected downstream side-effect node to still consume reused outputs and produce host writes. Actual: ${JSON.stringify(skipPilotRepeat.hostWrites)}`,
+  );
+
+  clearGraphExecutorReusableOutputsForTesting();
+  const missingReusableOutputsResult = await executeGraph(
+    makePlanExecutionGraph(),
+    makeExecutionContext({
+      userInput: "pilot-alpha",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const missingReusableFilterResult =
+    missingReusableOutputsResult.moduleResults.find(
+      (result) => result.nodeId === "filter_text",
+    );
+  assert(
+    missingReusableFilterResult?.status === "ok" &&
+      missingReusableFilterResult.executionDecision?.shouldSkip === false &&
+      missingReusableFilterResult.executionDecision?.reason ===
+        "missing_reusable_outputs",
+    `Expected pilot mode to execute when baseline exists but reusable outputs are missing. Actual: ${JSON.stringify(missingReusableFilterResult)}`,
+  );
+  assert(
+    missingReusableOutputsResult.executionDecisionSummary?.decisionCounts
+      .missing_reusable_outputs === 1,
+    `Expected executionDecisionSummary to count missing reusable outputs. Actual: ${JSON.stringify(missingReusableOutputsResult.executionDecisionSummary)}`,
+  );
+
+  resetGraphExecutorReuseStateForTesting();
+  const skipDisabledInitial = await executeGraph(
+    makePlanExecutionGraph(),
+    makeExecutionContext({ userInput: "pilot-disabled", settings: {} }),
+  );
+  const skipDisabledRepeat = await executeGraph(
+    makePlanExecutionGraph(),
+    makeExecutionContext({ userInput: "pilot-disabled", settings: {} }),
+  );
+  const skipDisabledFilterResult = skipDisabledRepeat.moduleResults.find(
+    (result) => result.nodeId === "filter_text",
+  );
+  assert(
+    skipDisabledRepeat.moduleResults.length ===
+      skipDisabledRepeat.compilePlan?.nodeOrder.length &&
+      skipDisabledFilterResult?.status === "ok" &&
+      skipDisabledFilterResult.executionDecision?.shouldSkip === false &&
+      skipDisabledFilterResult.executionDecision?.reason ===
+        "feature_disabled" &&
+      skipDisabledRepeat.executionDecisionSummary?.featureEnabled === false &&
+      skipDisabledRepeat.executionDecisionSummary?.skippedNodeIds.length ===
+        0 &&
+      skipDisabledRepeat.executionDecisionSummary?.decisionCounts
+        .feature_disabled === 3,
+    `Expected feature-disabled path to remain full execution with no skip nodes. Actual: ${JSON.stringify({ initial: skipDisabledInitial.moduleResults, repeat: skipDisabledRepeat.moduleResults, summary: skipDisabledRepeat.executionDecisionSummary })}`,
+  );
+
+  const terminalPilotInitial = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext({
+      userInput: "terminal-pilot",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const terminalPilotRepeat = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext({
+      userInput: "terminal-pilot",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const terminalPilotFilterResult = terminalPilotRepeat.moduleResults.find(
+    (result) => result.nodeId === "filter_text",
+  );
+  assert(
+    terminalPilotInitial.moduleResults.every(
+      (result) => result.status === "ok",
+    ) &&
+      terminalPilotFilterResult?.status === "ok" &&
+      terminalPilotFilterResult.executionDecision?.reason ===
+        "ineligible_terminal",
+    `Expected terminal pure node never to skip even when clean baseline exists. Actual: ${JSON.stringify(terminalPilotRepeat.moduleResults)}`,
+  );
+
+  const fallbackPilotInitial = await executeCompiledGraph(
+    makeDispatchSmokeGraph(),
+    compileGraphPlan(makeDispatchSmokeGraph()),
+    makeExecutionContext({
+      userInput: "fallback-pilot",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const fallbackPilotRepeat = await executeCompiledGraph(
+    makeDispatchSmokeGraph(),
+    compileGraphPlan(makeDispatchSmokeGraph()),
+    makeExecutionContext({
+      userInput: "fallback-pilot",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const fallbackPilotTrace = fallbackPilotRepeat.nodeTraces?.find(
+    (trace) => trace.nodeId === "fallback_pkg" && trace.stage === "execute",
+  );
+  assert(
+    fallbackPilotInitial.moduleResults.some(
+      (result) => result.nodeId === "fallback_pkg" && result.status === "ok",
+    ) &&
+      fallbackPilotTrace?.status === "ok" &&
+      fallbackPilotTrace.executionDecision?.shouldSkip === false &&
+      fallbackPilotTrace.executionDecision?.reason === "ineligible_terminal",
+    `Expected fallback/terminal node to remain non-skippable in pilot mode. Actual: ${JSON.stringify({ moduleResults: fallbackPilotRepeat.moduleResults, trace: fallbackPilotTrace })}`,
   );
 
   const changedInputResult = await executeGraph(
