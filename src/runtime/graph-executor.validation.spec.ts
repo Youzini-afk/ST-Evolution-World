@@ -1,5 +1,8 @@
-import type { WorkbenchGraph } from "../ui/components/graph/module-types";
-import { validateGraph } from "./graph-executor";
+import type {
+  ExecutionContext,
+  WorkbenchGraph,
+} from "../ui/components/graph/module-types";
+import { executeGraph, validateGraph } from "./graph-executor";
 
 function makeBaseGraph(): WorkbenchGraph {
   return {
@@ -65,7 +68,20 @@ function assertHasRef(
   );
 }
 
-function runValidationSpec(): void {
+function makeExecutionContext(
+  overrides: Partial<ExecutionContext> = {},
+): ExecutionContext {
+  return {
+    requestId: "req_test",
+    chatId: "chat_test",
+    messageId: 1,
+    userInput: "hello world",
+    settings: {},
+    ...overrides,
+  };
+}
+
+async function runValidationSpec(): Promise<void> {
   const validGraphErrors = validateGraph(makeBaseGraph());
   assert(
     validGraphErrors.length === 0,
@@ -191,7 +207,109 @@ function runValidationSpec(): void {
     (error) => error.nodeId === "src_text",
     "unknown module node ref",
   );
+  const successResult = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext(),
+  );
+  assert(successResult.ok, "Expected executeGraph to succeed for valid graph");
+  assert(
+    successResult.failedStage === undefined,
+    "Expected no failedStage on success",
+  );
+  assert(
+    successResult.compilePlan?.nodeOrder.join(",") === "src_text,filter_text",
+    `Expected compile plan node order to be src_text,filter_text. Actual: ${successResult.compilePlan?.nodeOrder.join(",")}`,
+  );
+  assert(
+    successResult.compilePlan?.terminalNodeIds.join(",") === "filter_text",
+    `Expected terminal node to be filter_text. Actual: ${successResult.compilePlan?.terminalNodeIds.join(",")}`,
+  );
+  assert(
+    successResult.compilePlan?.nodes
+      .map((node) => `${node.nodeId}:${node.stage}:${node.status}`)
+      .join(",") === "src_text:compile:ok,filter_text:compile:ok",
+    `Expected compile plan nodes to carry compile status. Actual: ${successResult.compilePlan?.nodes.map((node) => `${node.nodeId}:${node.stage}:${node.status}`).join(",")}`,
+  );
+  assert(
+    successResult.compilePlan?.stageTrace
+      ?.map((stage) => `${stage.stage}:${stage.status}`)
+      .join(",") === "validate:ok,compile:ok,execute:ok",
+    `Expected compile plan stage trace to mirror graph stage trace on success. Actual: ${successResult.compilePlan?.stageTrace?.map((stage) => `${stage.stage}:${stage.status}`).join(",")}`,
+  );
+  assert(
+    successResult.trace?.stages
+      .map((stage) => `${stage.stage}:${stage.status}`)
+      .join(",") === "validate:ok,compile:ok,execute:ok",
+    `Expected success trace to contain validate/compile/execute ok. Actual: ${successResult.trace?.stages.map((stage) => `${stage.stage}:${stage.status}`).join(",")}`,
+  );
+  assert(
+    successResult.trace?.nodeTraces
+      ?.map((trace) => `${trace.nodeId}:${trace.stage}:${trace.status}`)
+      .join(",") ===
+      "src_text:compile:ok,filter_text:compile:ok,src_text:execute:ok,filter_text:execute:ok",
+    `Expected node traces to contain compile and execute status. Actual: ${successResult.trace?.nodeTraces?.map((trace) => `${trace.nodeId}:${trace.stage}:${trace.status}`).join(",")}`,
+  );
+  assert(
+    successResult.moduleResults.length === 2,
+    `Expected 2 module results. Actual: ${successResult.moduleResults.length}`,
+  );
+  assert(
+    successResult.moduleResults.every(
+      (result) => result.stage === "execute" && result.status === "ok",
+    ),
+    `Expected all module results to be execute/ok. Actual: ${successResult.moduleResults.map((result) => `${result.nodeId}:${result.stage}:${result.status}`).join(",")}`,
+  );
+
+  const validationFailureResult = await executeGraph(
+    missingRequiredInputGraph,
+    makeExecutionContext(),
+  );
+  assert(
+    validationFailureResult.ok === false &&
+      validationFailureResult.failedStage === "validate",
+    `Expected validation failure to be attributed to validate stage. Actual: ok=${validationFailureResult.ok}, failedStage=${validationFailureResult.failedStage}`,
+  );
+  assert(
+    validationFailureResult.trace?.failedStage === "validate",
+    `Expected trace.failedStage to be validate. Actual: ${validationFailureResult.trace?.failedStage}`,
+  );
+  assert(
+    validationFailureResult.trace?.stages
+      .map((stage) => `${stage.stage}:${stage.status}`)
+      .join(",") === "validate:error,compile:skipped,execute:skipped",
+    `Expected validation failure trace to skip compile/execute. Actual: ${validationFailureResult.trace?.stages.map((stage) => `${stage.stage}:${stage.status}`).join(",")}`,
+  );
+
+  const cancelledExecutionResult = await executeGraph(
+    makeBaseGraph(),
+    makeExecutionContext({ isCancelled: () => true }),
+  );
+  assert(
+    cancelledExecutionResult.ok === false &&
+      cancelledExecutionResult.failedStage === "execute",
+    `Expected cancelled execution to be attributed to execute stage. Actual: ok=${cancelledExecutionResult.ok}, failedStage=${cancelledExecutionResult.failedStage}`,
+  );
+  assert(
+    cancelledExecutionResult.compilePlan?.failedStage === "execute",
+    `Expected compilePlan.failedStage to be execute on execution failure. Actual: ${cancelledExecutionResult.compilePlan?.failedStage}`,
+  );
+  assert(
+    cancelledExecutionResult.trace?.failedStage === "execute",
+    `Expected trace.failedStage to be execute. Actual: ${cancelledExecutionResult.trace?.failedStage}`,
+  );
+  assert(
+    cancelledExecutionResult.trace?.stages
+      .map((stage) => `${stage.stage}:${stage.status}`)
+      .join(",") === "validate:ok,compile:ok,execute:error",
+    `Expected cancelled execution trace to end with execute:error. Actual: ${cancelledExecutionResult.trace?.stages.map((stage) => `${stage.stage}:${stage.status}`).join(",")}`,
+  );
 }
 
-runValidationSpec();
-console.info("[graph-executor.validation.spec] validation checks passed");
+runValidationSpec()
+  .then(() => {
+    console.info("[graph-executor.validation.spec] validation checks passed");
+  })
+  .catch((error) => {
+    console.error(error);
+    throw error;
+  });

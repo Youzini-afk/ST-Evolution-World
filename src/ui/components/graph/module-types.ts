@@ -179,6 +179,56 @@ export interface WorkbenchGraph {
 /** The data packet flowing between modules during execution */
 export type ModuleOutput = Record<string, any>;
 
+export type GraphExecutionStage = "validate" | "compile" | "execute";
+export type GraphTraceStageStatus = "pending" | "ok" | "error" | "skipped";
+export type ModuleExecutionStatus = "pending" | "running" | "ok" | "error";
+
+export interface GraphStageTrace {
+  stage: GraphExecutionStage;
+  status: GraphTraceStageStatus;
+  elapsedMs: number;
+  error?: string;
+}
+
+export interface GraphCompilePlanNode {
+  nodeId: string;
+  moduleId: string;
+  order: number;
+  dependsOn: string[];
+  isTerminal: boolean;
+  sideEffect?: WorkbenchSideEffectLevel;
+  stage?: "compile";
+  status?: Extract<GraphTraceStageStatus, "ok" | "error">;
+  isSideEffectNode?: boolean;
+}
+
+export interface GraphCompilePlan {
+  nodeOrder: string[];
+  terminalNodeIds: string[];
+  nodes: GraphCompilePlanNode[];
+  failedStage?: GraphExecutionStage;
+  stageTrace?: GraphStageTrace[];
+}
+
+export interface GraphNodeTrace {
+  nodeId: string;
+  moduleId: string;
+  stage?: GraphExecutionStage;
+  status?: ModuleExecutionStatus | GraphTraceStageStatus;
+  sideEffect?: WorkbenchSideEffectLevel;
+  isSideEffectNode?: boolean;
+  elapsedMs?: number;
+  error?: string;
+}
+
+export interface GraphExecutionTrace {
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  stages: GraphStageTrace[];
+  nodeTraces?: GraphNodeTrace[];
+  compilePlan?: GraphCompilePlan;
+}
+
 /** Context available to all modules during execution */
 export interface ExecutionContext {
   requestId: string;
@@ -199,6 +249,9 @@ export interface ModuleExecutionResult {
   outputs: Record<string, any>; // keyed by output port ID
   elapsedMs: number;
   error?: string;
+  stage?: GraphExecutionStage;
+  status?: ModuleExecutionStatus;
+  isSideEffectNode?: boolean;
 }
 
 /** Result of executing the entire graph */
@@ -209,6 +262,9 @@ export interface GraphExecutionResult {
   moduleResults: ModuleExecutionResult[];
   finalOutputs: Record<string, any>;
   elapsedMs: number;
+  failedStage?: GraphExecutionStage;
+  compilePlan?: GraphCompilePlan;
+  trace?: GraphExecutionTrace;
 }
 
 // ── Category Metadata ──

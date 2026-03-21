@@ -11,7 +11,12 @@
 import { getModuleBlueprint } from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
+  GraphCompilePlan,
+  GraphCompilePlanNode,
   GraphExecutionResult,
+  GraphExecutionStage,
+  GraphStageTrace,
+  GraphTraceStageStatus,
   ModuleExecutionResult,
   ModuleOutput,
   ModulePortDef,
@@ -19,6 +24,7 @@ import type {
   WorkbenchEdge,
   WorkbenchGraph,
   WorkbenchNode,
+  WorkbenchSideEffectLevel,
 } from "../ui/components/graph/module-types";
 
 type SourceImpls = typeof import("./module-impls/source-impls");
@@ -441,125 +447,342 @@ async function executeModule(
 
 // ── Main Executor ──
 
+interface StageTimer {
+  finish: (status: GraphTraceStageStatus, error?: string) => GraphStageTrace;
+}
+
+function startStage(stage: GraphExecutionStage): StageTimer {
+  const startedAt = Date.now();
+  return {
+    finish: (status, error) => ({
+      stage,
+      status,
+      elapsedMs: Date.now() - startedAt,
+      ...(error ? { error } : {}),
+    }),
+  };
+}
+
+function getNodeSideEffectLevel(node: WorkbenchNode): WorkbenchSideEffectLevel {
+  const blueprint = getModuleBlueprint(node.moduleId);
+  return (
+    node.runtimeMeta?.sideEffect ??
+    blueprint.runtimeMeta?.sideEffect ??
+    "unknown"
+  );
+}
+
+function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
+  const sorted = topologicalSort(graph.nodes, graph.edges);
+  const nodesWithOutgoing = new Set(graph.edges.map((edge) => edge.source));
+  const nodes: GraphCompilePlanNode[] = sorted.map(
+    ({ node, dependsOn }, order) => {
+      const sideEffect = getNodeSideEffectLevel(node);
+      return {
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        order,
+        dependsOn: dependsOn
+          .map((index) => graph.nodes[index]?.id)
+          .filter(Boolean),
+        isTerminal: !nodesWithOutgoing.has(node.id),
+        sideEffect,
+        stage: "compile",
+        status: "ok",
+        isSideEffectNode: sideEffect === "writes_host",
+      };
+    },
+  );
+
+  return {
+    nodeOrder: nodes.map((node) => node.nodeId),
+    terminalNodeIds: nodes
+      .filter((node) => node.isTerminal)
+      .map((node) => node.nodeId),
+    nodes,
+  };
+}
+
+class GraphExecutionStageError extends Error {
+  readonly stage: GraphExecutionStage;
+  readonly moduleResults: ModuleExecutionResult[];
+
+  constructor(
+    stage: GraphExecutionStage,
+    message: string,
+    moduleResults: ModuleExecutionResult[],
+  ) {
+    super(message);
+    this.name = "GraphExecutionStageError";
+    this.stage = stage;
+    this.moduleResults = moduleResults;
+  }
+}
+
+async function executeCompiledGraph(
+  graph: WorkbenchGraph,
+  plan: GraphCompilePlan,
+  context: ExecutionContext,
+): Promise<
+  Pick<GraphExecutionResult, "moduleResults" | "finalOutputs"> & {
+    nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
+  }
+> {
+  const moduleResults: ModuleExecutionResult[] = [];
+  const nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"] =
+    [];
+  const nodeOutputs = new Map<string, ModuleOutput>();
+  const nodeMap = new Map(graph.nodes.map((node) => [node.id, node]));
+
+  const [
+    sourceImpls,
+    filterImpls,
+    transformImpls,
+    composeImpls,
+    executeImpls,
+    outputImpls,
+  ] = await Promise.all([
+    import("./module-impls/source-impls"),
+    import("./module-impls/filter-impls"),
+    import("./module-impls/transform-impls"),
+    import("./module-impls/compose-impls"),
+    import("./module-impls/execute-impls"),
+    import("./module-impls/output-impls"),
+  ]);
+
+  for (const planNode of plan.nodes) {
+    if (context.abortSignal?.aborted || context.isCancelled?.()) {
+      throw new GraphExecutionStageError(
+        "execute",
+        "workflow cancelled by user",
+        moduleResults,
+      );
+    }
+
+    const node = nodeMap.get(planNode.nodeId);
+    if (!node) {
+      throw new Error(`compile plan 引用了不存在的节点: ${planNode.nodeId}`);
+    }
+
+    const nodeStart = Date.now();
+    const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
+
+    context.onProgress?.({
+      phase: "module_executing",
+      request_id: context.requestId,
+      module_id: node.moduleId,
+      node_id: node.id,
+      stage: "execute",
+      message: `正在执行模块「${getModuleBlueprint(node.moduleId).label}」…`,
+    });
+
+    try {
+      const outputs = await executeModule(node, inputs, context, {
+        sourceImpls,
+        filterImpls,
+        transformImpls,
+        composeImpls,
+        executeImpls,
+        outputImpls,
+      });
+      nodeOutputs.set(node.id, outputs);
+
+      const elapsedMs = Date.now() - nodeStart;
+      moduleResults.push({
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        outputs,
+        elapsedMs,
+        stage: "execute",
+        status: "ok",
+        isSideEffectNode: planNode.sideEffect === "writes_host",
+      });
+      nodeTraces.push({
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        stage: "execute",
+        status: "ok",
+        sideEffect: planNode.sideEffect,
+        isSideEffectNode: planNode.sideEffect === "writes_host",
+        elapsedMs,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const elapsedMs = Date.now() - nodeStart;
+      moduleResults.push({
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        outputs: {},
+        elapsedMs,
+        error: errorMsg,
+        stage: "execute",
+        status: "error",
+        isSideEffectNode: planNode.sideEffect === "writes_host",
+      });
+      nodeTraces.push({
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        stage: "execute",
+        status: "error",
+        sideEffect: planNode.sideEffect,
+        isSideEffectNode: planNode.sideEffect === "writes_host",
+        elapsedMs,
+        error: errorMsg,
+      });
+
+      throw new GraphExecutionStageError(
+        "execute",
+        `模块「${getModuleBlueprint(node.moduleId).label}」执行失败: ${errorMsg}`,
+        moduleResults,
+      );
+    }
+  }
+
+  const terminalOutputs: Record<string, any> = {};
+  for (const terminalNodeId of plan.terminalNodeIds) {
+    const outputs = nodeOutputs.get(terminalNodeId);
+    if (outputs) {
+      terminalOutputs[terminalNodeId] = outputs;
+    }
+  }
+
+  return {
+    moduleResults,
+    nodeTraces,
+    finalOutputs: terminalOutputs,
+  };
+}
+
 export async function executeGraph(
   graph: WorkbenchGraph,
   context: ExecutionContext,
 ): Promise<GraphExecutionResult> {
   const startedAt = Date.now();
-  const moduleResults: ModuleExecutionResult[] = [];
-  const nodeOutputs = new Map<string, ModuleOutput>();
-  const validationErrors = validateGraph(graph);
+  const trace: GraphStageTrace[] = [];
+  const nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"] =
+    [];
 
+  const validateTimer = startStage("validate");
+  const validationErrors = validateGraph(graph);
   if (validationErrors.length > 0) {
+    trace.push(
+      validateTimer.finish(
+        "error",
+        formatGraphValidationErrors(validationErrors),
+      ),
+    );
+    trace.push({ stage: "compile", status: "skipped", elapsedMs: 0 });
+    trace.push({ stage: "execute", status: "skipped", elapsedMs: 0 });
     return {
       ok: false,
       reason: formatGraphValidationErrors(validationErrors),
       requestId: context.requestId,
-      moduleResults,
+      moduleResults: [],
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
+      failedStage: "validate",
+      trace: {
+        currentStage: "validate",
+        failedStage: "validate",
+        stages: trace,
+        nodeTraces,
+      },
+    };
+  }
+  trace.push(validateTimer.finish("ok"));
+
+  const compileTimer = startStage("compile");
+  let compilePlan: GraphCompilePlan;
+  try {
+    compilePlan = compileGraphPlan(graph);
+    trace.push(compileTimer.finish("ok"));
+    nodeTraces.push(
+      ...compilePlan.nodes.map((planNode) => ({
+        nodeId: planNode.nodeId,
+        moduleId: planNode.moduleId,
+        stage: "compile" as const,
+        status: planNode.status ?? "ok",
+        sideEffect: planNode.sideEffect,
+        isSideEffectNode: planNode.isSideEffectNode,
+      })),
+    );
+    compilePlan = {
+      ...compilePlan,
+      failedStage: undefined,
+      stageTrace: [...trace],
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    trace.push(compileTimer.finish("error", reason));
+    trace.push({ stage: "execute", status: "skipped", elapsedMs: 0 });
+    return {
+      ok: false,
+      reason,
+      requestId: context.requestId,
+      moduleResults: [],
+      finalOutputs: {},
+      elapsedMs: Date.now() - startedAt,
+      failedStage: "compile",
+      trace: {
+        currentStage: "compile",
+        failedStage: "compile",
+        stages: trace,
+        nodeTraces,
+      },
     };
   }
 
+  const executeTimer = startStage("execute");
   try {
-    // 1. Topological sort
-    const sorted = topologicalSort(graph.nodes, graph.edges);
-
-    const [
-      sourceImpls,
-      filterImpls,
-      transformImpls,
-      composeImpls,
-      executeImpls,
-      outputImpls,
-    ] = await Promise.all([
-      import("./module-impls/source-impls"),
-      import("./module-impls/filter-impls"),
-      import("./module-impls/transform-impls"),
-      import("./module-impls/compose-impls"),
-      import("./module-impls/execute-impls"),
-      import("./module-impls/output-impls"),
-    ]);
-
-    // 2. Execute each node in order
-    for (const { node } of sorted) {
-      if (context.abortSignal?.aborted || context.isCancelled?.()) {
-        throw new Error("workflow cancelled by user");
-      }
-
-      const nodeStart = Date.now();
-      const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
-
-      context.onProgress?.({
-        phase: "module_executing",
-        request_id: context.requestId,
-        module_id: node.moduleId,
-        node_id: node.id,
-        message: `正在执行模块「${getModuleBlueprint(node.moduleId).label}」…`,
-      });
-
-      try {
-        const outputs = await executeModule(node, inputs, context, {
-          sourceImpls,
-          filterImpls,
-          transformImpls,
-          composeImpls,
-          executeImpls,
-          outputImpls,
-        });
-        nodeOutputs.set(node.id, outputs);
-
-        moduleResults.push({
-          nodeId: node.id,
-          moduleId: node.moduleId,
-          outputs,
-          elapsedMs: Date.now() - nodeStart,
-        });
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        moduleResults.push({
-          nodeId: node.id,
-          moduleId: node.moduleId,
-          outputs: {},
-          elapsedMs: Date.now() - nodeStart,
-          error: errorMsg,
-        });
-
-        // For now, fail fast. In the future, we could support
-        // error handling strategies per-node.
-        throw new Error(
-          `模块「${getModuleBlueprint(node.moduleId).label}」执行失败: ${errorMsg}`,
-        );
-      }
+    const execution = await executeCompiledGraph(graph, compilePlan, context);
+    if (execution.nodeTraces) {
+      nodeTraces.push(...execution.nodeTraces);
     }
-
-    // 3. Collect final outputs (from all terminal nodes = no outgoing edges)
-    const nodesWithOutgoing = new Set(graph.edges.map((e) => e.source));
-    const terminalOutputs: Record<string, any> = {};
-    for (const node of graph.nodes) {
-      if (!nodesWithOutgoing.has(node.id)) {
-        const outputs = nodeOutputs.get(node.id);
-        if (outputs) {
-          terminalOutputs[node.id] = outputs;
-        }
-      }
-    }
-
+    trace.push(executeTimer.finish("ok"));
+    compilePlan = {
+      ...compilePlan,
+      failedStage: undefined,
+      stageTrace: [...trace],
+    };
     return {
       ok: true,
       requestId: context.requestId,
-      moduleResults,
-      finalOutputs: terminalOutputs,
+      moduleResults: execution.moduleResults,
+      finalOutputs: execution.finalOutputs,
       elapsedMs: Date.now() - startedAt,
+      compilePlan,
+      trace: {
+        currentStage: "execute",
+        stages: trace,
+        nodeTraces,
+        compilePlan,
+      },
     };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    trace.push(executeTimer.finish("error", reason));
+    compilePlan = {
+      ...compilePlan,
+      failedStage: "execute",
+      stageTrace: [...trace],
+    };
     return {
       ok: false,
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
       requestId: context.requestId,
-      moduleResults,
+      moduleResults:
+        error instanceof GraphExecutionStageError ? error.moduleResults : [],
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
+      failedStage: "execute",
+      compilePlan,
+      trace: {
+        currentStage: "execute",
+        failedStage: "execute",
+        stages: trace,
+        nodeTraces,
+        compilePlan,
+      },
     };
   }
 }
