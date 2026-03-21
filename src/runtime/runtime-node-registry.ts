@@ -16,6 +16,7 @@ import type {
   ExecutionContext,
   GraphCompilePlanNode,
   ModuleOutput,
+  WorkbenchCapability,
   WorkbenchNode,
   WorkbenchSideEffectLevel,
 } from "../ui/components/graph/module-types";
@@ -60,6 +61,7 @@ export interface NodeHandlerRequest {
 export interface NodeHandlerResult {
   outputs: ModuleOutput;
   handlerId: string;
+  capability?: WorkbenchCapability;
   isFallback?: boolean;
 }
 
@@ -80,13 +82,15 @@ export type NodeExecutionHandler = (
  *   - `moduleId`  — unique node type identifier (matches ModuleBlueprint.moduleId)
  *   - `handlerId` — stable handler identifier used in traces
  *   - `execute`   — the async execution entry point
- *   - `sideEffect` — optional capability marker
+ *   - `capability` — explicit runtime capability marker
+ *   - `sideEffect` — compatibility alias for legacy side-effect consumers
  *   - `kind`      — 'builtin' for now (reserved for future 'external' plugins)
  */
 export interface NodeHandlerDescriptor {
   moduleId: string;
   handlerId: string;
   execute: NodeExecutionHandler;
+  capability?: WorkbenchCapability;
   sideEffect?: WorkbenchSideEffectLevel;
   kind: "builtin" | "fallback";
 }
@@ -105,12 +109,62 @@ export interface RegistryResolveResult {
 const _descriptors = new Map<string, NodeHandlerDescriptor>();
 let _initialized = false;
 
+function normalizeCapability(
+  capability?: WorkbenchCapability,
+  sideEffect?: WorkbenchSideEffectLevel,
+  kind?: NodeHandlerDescriptor["kind"],
+  moduleId?: string,
+): WorkbenchCapability {
+  if (capability) return capability;
+  if (kind === "fallback") return "fallback";
+  if (moduleId?.startsWith("src_")) return "source";
+  if (sideEffect) return sideEffect;
+  return "unknown";
+}
+
+function normalizeLegacySideEffect(
+  sideEffect?: WorkbenchSideEffectLevel,
+  capability?: WorkbenchCapability,
+): WorkbenchSideEffectLevel {
+  const legacySemantic = sideEffect ?? capability ?? "unknown";
+  switch (legacySemantic) {
+    case "pure":
+    case "reads_host":
+    case "writes_host":
+    case "unknown":
+      return legacySemantic;
+    case "source":
+      return "reads_host";
+    case "network":
+    case "fallback":
+    default:
+      return "unknown";
+  }
+}
+
+function normalizeDescriptor(
+  descriptor: NodeHandlerDescriptor,
+): NodeHandlerDescriptor {
+  const capability = normalizeCapability(
+    descriptor.capability,
+    descriptor.sideEffect,
+    descriptor.kind,
+    descriptor.moduleId,
+  );
+  return {
+    ...descriptor,
+    capability,
+    sideEffect: normalizeLegacySideEffect(descriptor.sideEffect, capability),
+  };
+}
+
 /**
  * Register a node handler descriptor.
  * Overwrites if moduleId is already registered.
  */
 export function registerNodeHandler(descriptor: NodeHandlerDescriptor): void {
-  _descriptors.set(descriptor.moduleId, descriptor);
+  const normalized = normalizeDescriptor(descriptor);
+  _descriptors.set(normalized.moduleId, normalized);
 }
 
 /**
@@ -127,7 +181,8 @@ export function hasRegisteredHandler(moduleId: string): boolean {
 export function getRegisteredHandler(
   moduleId: string,
 ): NodeHandlerDescriptor | undefined {
-  return _descriptors.get(moduleId);
+  const descriptor = _descriptors.get(moduleId);
+  return descriptor ? normalizeDescriptor(descriptor) : undefined;
 }
 
 /**
@@ -143,7 +198,10 @@ export function getRegisteredHandler(
 export function resolveNodeHandler(moduleId: string): RegistryResolveResult {
   const registered = _descriptors.get(moduleId);
   if (registered) {
-    return { descriptor: registered, resolvedVia: "registered" };
+    return {
+      descriptor: normalizeDescriptor(registered),
+      resolvedVia: "registered",
+    };
   }
   return {
     descriptor: createFallbackDescriptor(moduleId),
@@ -175,12 +233,19 @@ function createFallbackDescriptor(moduleId: string): NodeHandlerDescriptor {
   return {
     moduleId,
     handlerId: "__fallback__",
+    capability: "fallback",
+    sideEffect: "unknown",
     kind: "fallback",
     execute: async ({ node, inputs }) => {
       const blueprint = getModuleBlueprint(node.moduleId);
       const outPorts = blueprint.ports.filter((p) => p.direction === "out");
       if (outPorts.length === 0) {
-        return { outputs: {}, handlerId: "__fallback__", isFallback: true };
+        return {
+          outputs: {},
+          handlerId: "__fallback__",
+          capability: "fallback",
+          isFallback: true,
+        };
       }
 
       const firstInValue = Object.values(inputs)[0];
@@ -189,7 +254,12 @@ function createFallbackDescriptor(moduleId: string): NodeHandlerDescriptor {
         outputs[port.id] = firstInValue ?? null;
       }
 
-      return { outputs, handlerId: "__fallback__", isFallback: true };
+      return {
+        outputs,
+        handlerId: "__fallback__",
+        capability: "fallback",
+        isFallback: true,
+      };
     },
   };
 }
@@ -719,7 +789,8 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
     moduleId: "exe_llm_call",
     handlerId: "exe_llm_call",
     kind: "builtin",
-    sideEffect: "writes_host",
+    capability: "network",
+    sideEffect: "unknown",
     execute: async ({ node, inputs, context }) => {
       const msgs = Array.isArray(inputs.messages) ? inputs.messages : [];
       const apiCfg = inputs.api_config ?? node.config;
@@ -736,6 +807,7 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
           ),
         },
         handlerId: "exe_llm_call",
+        capability: "network",
       };
     },
   });

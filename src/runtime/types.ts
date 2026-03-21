@@ -399,8 +399,27 @@ const RuntimeMigrationMetaSchema = z
 const RuntimeMetadataShape = {
   schemaVersion: z.coerce.number().int().positive().optional(),
   runtimeKind: z.enum(["dataflow", "control", "hybrid"]).optional(),
+  capability: z
+    .enum([
+      "unknown",
+      "pure",
+      "reads_host",
+      "writes_host",
+      "network",
+      "source",
+      "fallback",
+    ])
+    .optional(),
   sideEffect: z
-    .enum(["unknown", "pure", "reads_host", "writes_host"])
+    .enum([
+      "unknown",
+      "pure",
+      "reads_host",
+      "writes_host",
+      "network",
+      "source",
+      "fallback",
+    ])
     .optional(),
   migration: z.object(RuntimeMigrationMetaShape).optional(),
 };

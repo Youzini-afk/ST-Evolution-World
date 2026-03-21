@@ -64,11 +64,20 @@ export interface ConfigFieldSchema {
 }
 
 export type WorkbenchRuntimeKind = "dataflow" | "control" | "hybrid";
-export type WorkbenchSideEffectLevel =
+export type WorkbenchCapability =
   | "unknown"
   | "pure"
   | "reads_host"
-  | "writes_host";
+  | "writes_host"
+  | "network"
+  | "source"
+  | "fallback";
+/**
+ * Backward-compatible alias kept for existing side-effect-oriented call sites.
+ * P2.2 introduces the more accurate `capability` terminology while preserving
+ * the previous field name where needed.
+ */
+export type WorkbenchSideEffectLevel = WorkbenchCapability;
 
 export interface RuntimeMigrationMeta {
   from?: string;
@@ -107,6 +116,7 @@ export interface ModuleBlueprint {
   runtimeMeta?: {
     schemaVersion?: number;
     runtimeKind?: WorkbenchRuntimeKind;
+    capability?: WorkbenchCapability;
     sideEffect?: WorkbenchSideEffectLevel;
     migration?: RuntimeMigrationMeta;
   };
@@ -127,6 +137,7 @@ export interface WorkbenchNode {
   runtimeMeta?: {
     schemaVersion?: number;
     runtimeKind?: WorkbenchRuntimeKind;
+    capability?: WorkbenchCapability;
     sideEffect?: WorkbenchSideEffectLevel;
     migration?: RuntimeMigrationMeta;
     disabled?: boolean;
@@ -169,6 +180,7 @@ export interface WorkbenchGraph {
   runtimeMeta?: {
     schemaVersion?: number;
     runtimeKind?: WorkbenchRuntimeKind;
+    capability?: WorkbenchCapability;
     sideEffect?: WorkbenchSideEffectLevel;
     migration?: RuntimeMigrationMeta;
   };
@@ -197,6 +209,7 @@ export interface GraphCompilePlanNode {
   sequence: number;
   dependsOn: string[];
   isTerminal: boolean;
+  capability?: WorkbenchCapability;
   sideEffect?: WorkbenchSideEffectLevel;
   stage?: "compile";
   status?: Extract<GraphTraceStageStatus, "ok" | "error">;
@@ -222,6 +235,7 @@ export interface GraphNodeTrace {
   moduleId: string;
   stage?: GraphExecutionStage;
   status?: ModuleExecutionStatus | GraphTraceStageStatus | "error" | "skipped";
+  capability?: WorkbenchCapability;
   sideEffect?: WorkbenchSideEffectLevel;
   isSideEffectNode?: boolean;
   elapsedMs?: number;
@@ -267,6 +281,7 @@ export interface ModuleExecutionResult {
   error?: string;
   stage?: GraphExecutionStage;
   status?: ModuleExecutionStatus;
+  capability?: WorkbenchCapability;
   isSideEffectNode?: boolean;
 }
 

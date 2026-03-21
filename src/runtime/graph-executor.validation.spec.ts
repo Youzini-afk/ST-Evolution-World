@@ -197,6 +197,47 @@ function makeDispatchSmokeGraph(): WorkbenchGraph {
   };
 }
 
+function makeNetworkTerminalGraph(): WorkbenchGraph {
+  return {
+    id: "graph_network_terminal",
+    name: "Network Terminal Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "network_terminal",
+        moduleId: "flt_mvu_strip",
+        position: { x: 240, y: 0 },
+        config: {},
+        collapsed: false,
+        runtimeMeta: {
+          capability: "network",
+          sideEffect: "unknown",
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "edge_src_to_network_terminal",
+        source: "src_text",
+        sourcePort: "text",
+        target: "network_terminal",
+        targetPort: "text_in",
+      },
+    ],
+  };
+}
+
 function makeHandlerFailureGraph(): WorkbenchGraph {
   return {
     id: "graph_handler_failure",
@@ -645,14 +686,39 @@ async function runValidationSpec(): Promise<void> {
     compilePlanFixture.nodes
       .map(
         (node) =>
-          `${node.nodeId}:${node.isTerminal}:${node.isSideEffectNode}:${node.sideEffect}`,
+          `${node.nodeId}:${node.isTerminal}:${node.isSideEffectNode}:${node.capability}:${node.sideEffect}`,
       )
       .join(",") ===
-      "src_text:false:false:reads_host,filter_text:false:false:pure,out_reply:true:true:writes_host",
+      "src_text:false:false:source:reads_host,filter_text:false:false:pure:pure,out_reply:true:true:writes_host:writes_host",
     `Expected terminal/side-effect smoke flags to be stable in compile plan. Actual: ${compilePlanFixture.nodes
       .map(
         (node) =>
-          `${node.nodeId}:${node.isTerminal}:${node.isSideEffectNode}:${node.sideEffect}`,
+          `${node.nodeId}:${node.isTerminal}:${node.isSideEffectNode}:${node.capability}:${node.sideEffect}`,
+      )
+      .join(",")}`,
+  );
+
+  const networkTerminalPlan = compileGraphPlan(makeNetworkTerminalGraph());
+  assert(
+    networkTerminalPlan.terminalNodeIds.join(",") === "network_terminal",
+    `Expected terminal network plan to mark network_terminal as terminal. Actual: ${networkTerminalPlan.terminalNodeIds.join(",")}`,
+  );
+  assert(
+    networkTerminalPlan.sideEffectNodeIds.length === 0,
+    `Expected network capability not to enter sideEffectNodeIds. Actual: ${networkTerminalPlan.sideEffectNodeIds.join(",")}`,
+  );
+  assert(
+    networkTerminalPlan.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.isSideEffectNode}:${node.capability}:${node.sideEffect}`,
+      )
+      .join(",") ===
+      "src_text:false:source:reads_host,network_terminal:false:network:unknown",
+    `Expected network terminal compile plan to preserve capability while keeping legacy sideEffect conservative. Actual: ${networkTerminalPlan.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.isSideEffectNode}:${node.capability}:${node.sideEffect}`,
       )
       .join(",")}`,
   );
@@ -680,9 +746,13 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     compiledExecution.moduleResults
-      .map((result) => `${result.nodeId}:${result.isSideEffectNode}`)
-      .join(",") === "src_text:false,filter_text:false,out_reply:true",
-    `Expected executeCompiledGraph side-effect markers to come from compile plan. Actual: ${compiledExecution.moduleResults.map((result) => `${result.nodeId}:${result.isSideEffectNode}`).join(",")}`,
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.isSideEffectNode}:${result.capability}`,
+      )
+      .join(",") ===
+      "src_text:false:source,filter_text:false:pure,out_reply:true:writes_host",
+    `Expected executeCompiledGraph capability markers to come from compile plan. Actual: ${compiledExecution.moduleResults.map((result) => `${result.nodeId}:${result.isSideEffectNode}:${result.capability}`).join(",")}`,
   );
   assert(
     Object.keys(compiledExecution.finalOutputs).length === 0,
@@ -697,6 +767,31 @@ async function runValidationSpec(): Promise<void> {
     progressEvents.map((event) => event.module_id).join(",") ===
       reversedPlan.nodes.map((node) => node.moduleId).join(","),
     `Expected dispatch-backed progress events to preserve module ids. Actual: ${progressEvents.map((event) => event.module_id).join(",")}`,
+  );
+
+  const networkTerminalExecution = await executeCompiledGraph(
+    makeNetworkTerminalGraph(),
+    networkTerminalPlan,
+    makeExecutionContext(),
+  );
+  assert(
+    Object.keys(networkTerminalExecution.finalOutputs).join(",") ===
+      "network_terminal",
+    `Expected terminal network node to remain in finalOutputs. Actual keys: ${Object.keys(networkTerminalExecution.finalOutputs).join(",")}`,
+  );
+  assert(
+    networkTerminalExecution.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.isSideEffectNode}:${result.capability}`,
+      )
+      .join(",") === "src_text:false:source,network_terminal:false:network",
+    `Expected terminal network execution to keep network out of side-effect execution set. Actual: ${networkTerminalExecution.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.isSideEffectNode}:${result.capability}`,
+      )
+      .join(",")}`,
   );
 
   const dispatchSmokeGraph = makeDispatchSmokeGraph();
@@ -766,6 +861,12 @@ async function runValidationSpec(): Promise<void> {
     `Expected base graph compile plan to have no side-effect nodes. Actual: ${successResult.compilePlan?.sideEffectNodeIds.join(",")}`,
   );
   assert(
+    successResult.compilePlan?.nodes
+      .map((node) => `${node.nodeId}:${node.capability}`)
+      .join(",") === "src_text:source,filter_text:pure",
+    `Expected base graph compile plan capability view to stay stable. Actual: ${successResult.compilePlan?.nodes.map((node) => `${node.nodeId}:${node.capability}`).join(",")}`,
+  );
+  assert(
     successResult.compilePlan?.terminalNodeIds.join(",") === "filter_text",
     `Expected terminal node to be filter_text. Actual: ${successResult.compilePlan?.terminalNodeIds.join(",")}`,
   );
@@ -824,8 +925,8 @@ async function runValidationSpec(): Promise<void> {
     `Expected filter_text execute trace to expose input keys. Actual: ${JSON.stringify(filterTrace)}`,
   );
   assert(
-    filterTrace?.sideEffect === "pure",
-    `Expected filter_text execute trace to preserve sideEffect. Actual: ${JSON.stringify(filterTrace?.sideEffect)}`,
+    filterTrace?.capability === "pure" && filterTrace?.sideEffect === "pure",
+    `Expected filter_text execute trace to preserve capability/sideEffect. Actual: ${JSON.stringify({ capability: filterTrace?.capability, sideEffect: filterTrace?.sideEffect })}`,
   );
   assert(
     successResult.moduleResults.length === 2,
@@ -890,8 +991,9 @@ async function runValidationSpec(): Promise<void> {
     `Expected failed node trace to archive error and failedAt=handler. Actual: ${JSON.stringify(handlerFailureTrace)}`,
   );
   assert(
-    handlerFailureTrace?.sideEffect === "reads_host",
-    `Expected handler failure trace to preserve sideEffect metadata. Actual: ${JSON.stringify(handlerFailureTrace?.sideEffect)}`,
+    handlerFailureTrace?.capability === "network" &&
+      handlerFailureTrace?.sideEffect === "unknown",
+    `Expected handler failure trace to preserve network capability while keeping legacy sideEffect conservative. Actual: ${JSON.stringify({ capability: handlerFailureTrace?.capability, sideEffect: handlerFailureTrace?.sideEffect })}`,
   );
 
   assert(
@@ -923,8 +1025,22 @@ async function runValidationSpec(): Promise<void> {
   assert(
     sideEffectFailureTrace?.status === "error" &&
       sideEffectFailureTrace.isSideEffectNode === true &&
+      sideEffectFailureTrace.capability === "writes_host" &&
       sideEffectFailureTrace.sideEffect === "writes_host",
-    `Expected side-effect failed node trace to stay error and preserve writes_host metadata. Actual: ${JSON.stringify(sideEffectFailureTrace)}`,
+    `Expected side-effect failed node trace to stay error and preserve writes_host capability metadata. Actual: ${JSON.stringify(sideEffectFailureTrace)}`,
+  );
+  const llmDescriptor = resolveNodeHandler("exe_llm_call").descriptor;
+  assert(
+    llmDescriptor.capability === "network" &&
+      llmDescriptor.sideEffect === "unknown",
+    `Expected exe_llm_call registry descriptor to preserve network capability and conservative legacy sideEffect. Actual: ${JSON.stringify(llmDescriptor)}`,
+  );
+  const floorDescriptor = resolveNodeHandler("out_floor_bind").descriptor;
+  const replyDescriptor = resolveNodeHandler("out_reply_inject").descriptor;
+  assert(
+    floorDescriptor.capability === "writes_host" &&
+      replyDescriptor.capability === "writes_host",
+    `Expected host write descriptors to stay writes_host. Actual: floor=${JSON.stringify(floorDescriptor)}, reply=${JSON.stringify(replyDescriptor)}`,
   );
 
   const cancelledExecutionResult = await executeGraph(
@@ -1021,8 +1137,9 @@ async function runValidationSpec(): Promise<void> {
     `Expected out_reply execute trace to have isSideEffectNode=true. Actual: ${JSON.stringify(outReplyTrace?.isSideEffectNode)}`,
   );
   assert(
-    outReplyTrace?.sideEffect === "writes_host",
-    `Expected out_reply execute trace to have sideEffect=writes_host. Actual: ${JSON.stringify(outReplyTrace?.sideEffect)}`,
+    outReplyTrace?.capability === "writes_host" &&
+      outReplyTrace?.sideEffect === "writes_host",
+    `Expected out_reply execute trace to have writes_host capability. Actual: ${JSON.stringify({ capability: outReplyTrace?.capability, sideEffect: outReplyTrace?.sideEffect })}`,
   );
 
   // 5. handlerId is consistently recorded in all execute traces
@@ -1145,6 +1262,11 @@ async function runValidationSpec(): Promise<void> {
     srcUserResolve.descriptor.handlerId === "src_user_input",
     `Expected src_user_input descriptor handlerId to be 'src_user_input'. Actual: ${srcUserResolve.descriptor.handlerId}`,
   );
+  assert(
+    srcUserResolve.descriptor.capability === "source" &&
+      srcUserResolve.descriptor.sideEffect === "reads_host",
+    `Expected src_user_input descriptor capability to stay source while legacy sideEffect maps to reads_host. Actual: ${JSON.stringify(srcUserResolve.descriptor)}`,
+  );
 
   // 3. Registry resolves unregistered moduleId with explicit fallback
   const unknownResolve = resolveNodeHandler("__totally_unknown_module__");
@@ -1159,6 +1281,11 @@ async function runValidationSpec(): Promise<void> {
   assert(
     unknownResolve.descriptor.handlerId === "__fallback__",
     `Expected unknown module fallback handlerId to be '__fallback__'. Actual: ${unknownResolve.descriptor.handlerId}`,
+  );
+  assert(
+    unknownResolve.descriptor.capability === "fallback" &&
+      unknownResolve.descriptor.sideEffect === "unknown",
+    `Expected unknown module fallback capability to stay 'fallback' while legacy sideEffect remains conservative. Actual: ${JSON.stringify(unknownResolve.descriptor)}`,
   );
 
   // 4. Executor success path without static handler map
@@ -1204,8 +1331,10 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     registryFallbackTrace?.isFallback === true &&
-      registryFallbackTrace.handlerId === "__fallback__",
-    `Expected fallback trace to show isFallback=true and handlerId='__fallback__'. Actual: ${JSON.stringify(registryFallbackTrace)}`,
+      registryFallbackTrace.handlerId === "__fallback__" &&
+      registryFallbackTrace.capability === "fallback" &&
+      registryFallbackTrace.sideEffect === "unknown",
+    `Expected fallback trace to show isFallback=true, handlerId='__fallback__', fallback capability, and conservative legacy sideEffect. Actual: ${JSON.stringify(registryFallbackTrace)}`,
   );
 
   // 6. Registry reset + re-initialize test (ensures idempotency)

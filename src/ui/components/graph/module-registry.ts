@@ -928,6 +928,7 @@ const ALL_MODULES: ModuleBlueprint[] = [
   ...withRuntimeMeta(SOURCE_MODULES, {
     schemaVersion: 1,
     runtimeKind: "dataflow",
+    capability: "source",
     sideEffect: "reads_host",
     migration: { strategy: "compatible" },
   }),
@@ -952,7 +953,8 @@ const ALL_MODULES: ModuleBlueprint[] = [
   ...withRuntimeMeta(EXECUTE_MODULES, {
     schemaVersion: 1,
     runtimeKind: "hybrid",
-    sideEffect: "reads_host",
+    capability: "network",
+    sideEffect: "unknown",
     migration: { strategy: "compatible" },
   }),
   ...withRuntimeMeta(OUTPUT_MODULES, {

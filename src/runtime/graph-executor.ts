@@ -25,6 +25,7 @@ import type {
   ModuleOutput,
   ModulePortDef,
   PortDataType,
+  WorkbenchCapability,
   WorkbenchEdge,
   WorkbenchGraph,
   WorkbenchNode,
@@ -203,12 +204,55 @@ function startStage(stage: GraphExecutionStage): StageTimer {
   };
 }
 
-function getNodeSideEffectLevel(node: WorkbenchNode): WorkbenchSideEffectLevel {
+function normalizeCapability(
+  capability?: WorkbenchCapability,
+  sideEffect?: WorkbenchSideEffectLevel,
+): WorkbenchCapability {
+  return capability ?? sideEffect ?? "unknown";
+}
+
+function normalizeLegacySideEffect(
+  sideEffect?: WorkbenchSideEffectLevel,
+  capability?: WorkbenchCapability,
+): WorkbenchSideEffectLevel {
+  const legacySemantic = sideEffect ?? capability ?? "unknown";
+  switch (legacySemantic) {
+    case "pure":
+    case "reads_host":
+    case "writes_host":
+    case "unknown":
+      return legacySemantic;
+    case "source":
+      return "reads_host";
+    case "network":
+    case "fallback":
+    default:
+      return "unknown";
+  }
+}
+
+function isSideEffectNode(sideEffect: WorkbenchSideEffectLevel): boolean {
+  return sideEffect === "writes_host";
+}
+
+function getNodeCapability(node: WorkbenchNode): WorkbenchCapability {
   const blueprint = getModuleBlueprint(node.moduleId);
-  return (
-    node.runtimeMeta?.sideEffect ??
-    blueprint.runtimeMeta?.sideEffect ??
-    "unknown"
+  return normalizeCapability(
+    node.runtimeMeta?.capability ??
+      node.runtimeMeta?.sideEffect ??
+      blueprint.runtimeMeta?.capability,
+    blueprint.runtimeMeta?.sideEffect,
+  );
+}
+
+function getNodeLegacySideEffect(
+  node: WorkbenchNode,
+  capability: WorkbenchCapability,
+): WorkbenchSideEffectLevel {
+  const blueprint = getModuleBlueprint(node.moduleId);
+  return normalizeLegacySideEffect(
+    node.runtimeMeta?.sideEffect ?? blueprint.runtimeMeta?.sideEffect,
+    capability,
   );
 }
 
@@ -217,7 +261,8 @@ export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
   const nodesWithOutgoing = new Set(graph.edges.map((edge) => edge.source));
   const nodes: GraphCompilePlanNode[] = sorted.map(
     ({ node, dependsOn }, order) => {
-      const sideEffect = getNodeSideEffectLevel(node);
+      const capability = getNodeCapability(node);
+      const sideEffect = getNodeLegacySideEffect(node, capability);
       return {
         nodeId: node.id,
         moduleId: node.moduleId,
@@ -227,10 +272,11 @@ export function compileGraphPlan(graph: WorkbenchGraph): GraphCompilePlan {
           .map((index) => graph.nodes[index]?.id)
           .filter((nodeId): nodeId is string => Boolean(nodeId)),
         isTerminal: !nodesWithOutgoing.has(node.id),
+        capability,
         sideEffect,
         stage: "compile",
         status: "ok",
-        isSideEffectNode: sideEffect === "writes_host",
+        isSideEffectNode: isSideEffectNode(sideEffect),
       };
     },
   );
@@ -278,6 +324,7 @@ function createNodeTraceBase(
     nodeId: planNode.nodeId,
     moduleId: planNode.moduleId,
     stage: planNode.stage ?? "execute",
+    capability: planNode.capability ?? planNode.sideEffect,
     sideEffect: planNode.sideEffect,
     isSideEffectNode: planNode.isSideEffectNode,
     startedAt,
@@ -380,12 +427,19 @@ export async function executeCompiledGraph(
         elapsedMs,
         stage: "execute",
         status: "ok",
+        capability: dispatchResult.capability ?? planNode.capability,
         isSideEffectNode: planNode.isSideEffectNode,
       });
+      const resultCapability = dispatchResult.capability ?? planNode.capability;
       nodeTraces.push({
         ...nodeTraceBase,
         stage: "execute",
         status: "ok",
+        capability: resultCapability,
+        sideEffect: normalizeLegacySideEffect(
+          planNode.sideEffect,
+          resultCapability,
+        ),
         elapsedMs,
         durationMs: elapsedMs,
         completedAt: nodeStart + elapsedMs,
@@ -405,6 +459,7 @@ export async function executeCompiledGraph(
         error: errorMsg,
         stage: "execute",
         status: "error",
+        capability: planNode.capability,
         isSideEffectNode: planNode.isSideEffectNode,
       });
       nodeTraces.push({
@@ -430,6 +485,7 @@ export async function executeCompiledGraph(
           moduleId: skippedPlanNode.moduleId,
           stage: "execute",
           status: "skipped",
+          capability: skippedPlanNode.capability,
           sideEffect: skippedPlanNode.sideEffect,
           isSideEffectNode: skippedPlanNode.isSideEffectNode,
           durationMs: 0,
@@ -516,6 +572,7 @@ export async function executeGraph(
         moduleId: planNode.moduleId,
         stage: "compile" as const,
         status: planNode.status ?? "ok",
+        capability: planNode.capability,
         sideEffect: planNode.sideEffect,
         isSideEffectNode: planNode.isSideEffectNode,
       })),
