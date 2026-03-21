@@ -212,20 +212,33 @@ export interface GraphCompilePlan {
   stageTrace?: GraphStageTrace[];
 }
 
+export interface GraphNodeTraceError {
+  message: string;
+  stack?: string;
+}
+
 export interface GraphNodeTrace {
   nodeId: string;
   moduleId: string;
   stage?: GraphExecutionStage;
-  status?: ModuleExecutionStatus | GraphTraceStageStatus;
+  status?:
+    | ModuleExecutionStatus
+    | GraphTraceStageStatus
+    | "success"
+    | "error"
+    | "skipped";
   sideEffect?: WorkbenchSideEffectLevel;
   isSideEffectNode?: boolean;
   elapsedMs?: number;
   durationMs?: number;
+  startedAt?: number;
+  completedAt?: number;
   handlerId?: string;
   isFallback?: boolean;
   inputKeys?: string[];
-  error?: string;
+  error?: string | GraphNodeTraceError;
   failedAt?: "dispatch" | "handler";
+  outputIncludedInFinalOutputs?: boolean;
 }
 
 export interface GraphExecutionTrace {
@@ -273,6 +286,7 @@ export interface GraphExecutionResult {
   failedStage?: GraphExecutionStage;
   compilePlan?: GraphCompilePlan;
   trace?: GraphExecutionTrace;
+  nodeTraces?: GraphNodeTrace[];
 }
 
 // ── Category Metadata ──

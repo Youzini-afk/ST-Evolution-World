@@ -702,6 +702,37 @@ class GraphExecutionStageError extends Error {
   }
 }
 
+function createNodeTraceBase(
+  planNode: GraphCompilePlanNode,
+  startedAt: number,
+  inputKeys: string[],
+) {
+  return {
+    nodeId: planNode.nodeId,
+    moduleId: planNode.moduleId,
+    stage: planNode.stage ?? "execute",
+    sideEffect: planNode.sideEffect,
+    isSideEffectNode: planNode.isSideEffectNode,
+    startedAt,
+    inputKeys,
+    outputIncludedInFinalOutputs:
+      planNode.isTerminal && !planNode.isSideEffectNode,
+  };
+}
+
+function createNodeTraceError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
+    };
+  }
+
+  return {
+    message: String(error),
+  };
+}
+
 export async function executeCompiledGraph(
   graph: WorkbenchGraph,
   plan: GraphCompilePlan,
@@ -765,6 +796,7 @@ export async function executeCompiledGraph(
     const nodeStart = Date.now();
     const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
     const inputKeys = Object.keys(inputs);
+    const nodeTraceBase = createNodeTraceBase(planNode, nodeStart, inputKeys);
 
     context.onProgress?.({
       phase: "module_executing",
@@ -797,17 +829,14 @@ export async function executeCompiledGraph(
         isSideEffectNode: planNode.isSideEffectNode,
       });
       nodeTraces.push({
-        nodeId: node.id,
-        moduleId: node.moduleId,
+        ...nodeTraceBase,
         stage: "execute",
         status: "ok",
-        sideEffect: planNode.sideEffect,
-        isSideEffectNode: planNode.isSideEffectNode,
         elapsedMs,
         durationMs: elapsedMs,
+        completedAt: nodeStart + elapsedMs,
         handlerId: dispatchResult.handlerId,
         isFallback: dispatchResult.isFallback === true,
-        inputKeys,
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -825,19 +854,38 @@ export async function executeCompiledGraph(
         isSideEffectNode: planNode.isSideEffectNode,
       });
       nodeTraces.push({
-        nodeId: node.id,
-        moduleId: node.moduleId,
+        ...nodeTraceBase,
         stage: "execute",
         status: "error",
-        sideEffect: planNode.sideEffect,
-        isSideEffectNode: planNode.isSideEffectNode,
         elapsedMs,
         durationMs: elapsedMs,
-        inputKeys,
+        completedAt: nodeStart + elapsedMs,
         error: errorMsg,
         failedAt,
         isFallback: false,
       });
+
+      if (planNode.isSideEffectNode) {
+        continue;
+      }
+
+      // Append 'skipped' traces for remaining nodes in plan order (fail-fast)
+      const failedIndex = plan.nodeOrder.indexOf(node.id);
+      for (let i = failedIndex + 1; i < plan.nodeOrder.length; i++) {
+        const skippedId = plan.nodeOrder[i];
+        const skippedPlanNode = planNodeMap.get(skippedId);
+        if (!skippedPlanNode) continue;
+        nodeTraces.push({
+          nodeId: skippedId,
+          moduleId: skippedPlanNode.moduleId,
+          stage: "execute",
+          status: "skipped",
+          sideEffect: skippedPlanNode.sideEffect,
+          isSideEffectNode: skippedPlanNode.isSideEffectNode,
+          durationMs: 0,
+          elapsedMs: 0,
+        });
+      }
 
       throw new GraphExecutionStageError(
         "execute",
@@ -851,6 +899,10 @@ export async function executeCompiledGraph(
 
   const terminalOutputs: Record<string, any> = {};
   for (const terminalNodeId of plan.terminalNodeIds) {
+    if (plan.sideEffectNodeIds.includes(terminalNodeId)) {
+      continue;
+    }
+
     const outputs = nodeOutputs.get(terminalNodeId);
     if (outputs) {
       terminalOutputs[terminalNodeId] = outputs;
@@ -892,6 +944,7 @@ export async function executeGraph(
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
       failedStage: "validate",
+      nodeTraces,
       trace: {
         currentStage: "validate",
         failedStage: "validate",
@@ -934,6 +987,7 @@ export async function executeGraph(
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
       failedStage: "compile",
+      nodeTraces,
       trace: {
         currentStage: "compile",
         failedStage: "compile",
@@ -962,6 +1016,7 @@ export async function executeGraph(
       finalOutputs: execution.finalOutputs,
       elapsedMs: Date.now() - startedAt,
       compilePlan,
+      nodeTraces,
       trace: {
         currentStage: "execute",
         stages: trace,
@@ -977,6 +1032,8 @@ export async function executeGraph(
       failedStage: "execute",
       stageTrace: [...trace],
     };
+    const errorNodeTraces =
+      error instanceof GraphExecutionStageError ? error.nodeTraces : nodeTraces;
     return {
       ok: false,
       reason,
@@ -987,6 +1044,7 @@ export async function executeGraph(
       elapsedMs: Date.now() - startedAt,
       failedStage: "execute",
       compilePlan,
+      nodeTraces: errorNodeTraces,
       trace: {
         currentStage: "execute",
         failedStage: "execute",
@@ -995,10 +1053,7 @@ export async function executeGraph(
             ? error.failedNodeId
             : undefined,
         stages: trace,
-        nodeTraces:
-          error instanceof GraphExecutionStageError
-            ? error.nodeTraces
-            : nodeTraces,
+        nodeTraces: errorNodeTraces,
         compilePlan,
       },
     };

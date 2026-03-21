@@ -242,6 +242,106 @@ function makeHandlerFailureGraph(): WorkbenchGraph {
   };
 }
 
+function makeIntegratedSmokeGraph(): WorkbenchGraph {
+  return {
+    id: "graph_integrated_smoke",
+    name: "Integrated Smoke Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "filter_text",
+        moduleId: "flt_mvu_strip",
+        position: { x: 220, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "src_flow",
+        moduleId: "src_flow_context",
+        position: { x: 0, y: 180 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "compose_body",
+        moduleId: "cmp_json_body_build",
+        position: { x: 440, y: 180 },
+        config: { staticValue: "from_compose_config" },
+        collapsed: false,
+      },
+      {
+        id: "execute_normalize",
+        moduleId: "exe_response_normalize",
+        position: { x: 660, y: 180 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "out_floor",
+        moduleId: "out_floor_bind",
+        position: { x: 880, y: 180 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "out_reply",
+        moduleId: "out_reply_inject",
+        position: { x: 660, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_src_to_filter",
+        source: "src_text",
+        sourcePort: "text",
+        target: "filter_text",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_filter_to_reply",
+        source: "filter_text",
+        sourcePort: "text_out",
+        target: "out_reply",
+        targetPort: "instruction",
+      },
+      {
+        id: "edge_flow_to_compose",
+        source: "src_flow",
+        sourcePort: "context",
+        target: "compose_body",
+        targetPort: "context",
+      },
+      {
+        id: "edge_compose_to_execute",
+        source: "compose_body",
+        sourcePort: "body",
+        target: "execute_normalize",
+        targetPort: "raw",
+      },
+      {
+        id: "edge_execute_to_floor",
+        source: "execute_normalize",
+        sourcePort: "normalized",
+        target: "out_floor",
+        targetPort: "result",
+      },
+    ],
+  };
+}
+
 function assertPlanMatchesGraph(
   plan: GraphCompilePlan,
   graph: WorkbenchGraph,
@@ -561,9 +661,8 @@ async function runValidationSpec(): Promise<void> {
     `Expected executeCompiledGraph side-effect markers to come from compile plan. Actual: ${compiledExecution.moduleResults.map((result) => `${result.nodeId}:${result.isSideEffectNode}`).join(",")}`,
   );
   assert(
-    Object.keys(compiledExecution.finalOutputs).join(",") ===
-      reversedPlan.terminalNodeIds.join(","),
-    `Expected executeCompiledGraph final outputs to follow compile plan terminalNodeIds. Actual: ${Object.keys(compiledExecution.finalOutputs).join(",")}`,
+    Object.keys(compiledExecution.finalOutputs).length === 0,
+    `Expected executeCompiledGraph to exclude side-effect terminal nodes from finalOutputs. Actual keys: ${Object.keys(compiledExecution.finalOutputs).join(",")}`,
   );
   assert(
     progressEvents.map((event) => event.node_id).join(",") ===
@@ -805,6 +904,102 @@ async function runValidationSpec(): Promise<void> {
   assert(
     cancelledExecutionResult.trace?.failedNodeId === undefined,
     `Expected cancellation before execution to have no failedNodeId. Actual: ${cancelledExecutionResult.trace?.failedNodeId}`,
+  );
+
+  // ── P1.3 Trace Semantics ──
+
+  // 1. Top-level nodeTraces on successful result
+  assert(
+    Array.isArray(successResult.nodeTraces) &&
+      successResult.nodeTraces.length > 0,
+    `Expected successful result to expose top-level nodeTraces. Actual: ${JSON.stringify(successResult.nodeTraces)}`,
+  );
+  assert(
+    successResult
+      .nodeTraces!.map((t) => `${t.nodeId}:${t.stage}:${t.status}`)
+      .join(",") ===
+      "src_text:compile:ok,filter_text:compile:ok,src_text:execute:ok,filter_text:execute:ok",
+    `Expected top-level nodeTraces to match trace.nodeTraces. Actual: ${successResult.nodeTraces!.map((t) => `${t.nodeId}:${t.stage}:${t.status}`).join(",")}`,
+  );
+
+  // 2. Top-level nodeTraces on handler failure result
+  assert(
+    Array.isArray(handlerFailureResult.nodeTraces) &&
+      handlerFailureResult.nodeTraces.length > 0,
+    `Expected handler failure result to expose top-level nodeTraces. Actual: ${JSON.stringify(handlerFailureResult.nodeTraces)}`,
+  );
+
+  // 3. Fail-fast skipped trace: after llm_call fails, verify error/ok counts
+  //    in a multi-node graph with upstream nodes that succeed.
+  const failSkipResult = await executeGraph(
+    makeHandlerFailureGraph(),
+    makeExecutionContext(),
+  );
+  const failSkipExecuteTraces = failSkipResult.trace?.nodeTraces?.filter(
+    (t) => t.stage === "execute",
+  );
+  // src_messages and cfg_api execute ok, llm_call fails, no downstream to skip
+  const failSkipOkCount =
+    failSkipExecuteTraces?.filter((t) => t.status === "ok").length ?? 0;
+  const failSkipErrorCount =
+    failSkipExecuteTraces?.filter((t) => t.status === "error").length ?? 0;
+  assert(
+    failSkipOkCount >= 1 && failSkipErrorCount === 1,
+    `Expected at least 1 ok trace and exactly 1 error trace in fail-fast scenario. Actual ok=${failSkipOkCount}, error=${failSkipErrorCount}`,
+  );
+
+  // 4. Side-effect node trace: out_reply in planExecutionGraph is isSideEffectNode=true
+  const sideEffectResult = await executeGraph(
+    makePlanExecutionGraph(),
+    makeExecutionContext(),
+  );
+  const sideEffectExecuteTraces = sideEffectResult.trace?.nodeTraces?.filter(
+    (t) => t.stage === "execute",
+  );
+  const outReplyTrace = sideEffectExecuteTraces?.find(
+    (t) => t.nodeId === "out_reply",
+  );
+  assert(
+    outReplyTrace?.isSideEffectNode === true,
+    `Expected out_reply execute trace to have isSideEffectNode=true. Actual: ${JSON.stringify(outReplyTrace?.isSideEffectNode)}`,
+  );
+  assert(
+    outReplyTrace?.sideEffect === "writes_host",
+    `Expected out_reply execute trace to have sideEffect=writes_host. Actual: ${JSON.stringify(outReplyTrace?.sideEffect)}`,
+  );
+
+  // 5. handlerId is consistently recorded in all execute traces
+  assert(
+    sideEffectExecuteTraces?.every(
+      (t) => typeof t.handlerId === "string" && t.handlerId.length > 0,
+    ) === true,
+    `Expected all execute traces to have non-empty handlerId. Actual: ${JSON.stringify(sideEffectExecuteTraces?.map((t) => t.handlerId))}`,
+  );
+
+  // 6. durationMs non-negative for all execute traces
+  assert(
+    sideEffectExecuteTraces?.every(
+      (t) => typeof t.durationMs === "number" && t.durationMs >= 0,
+    ) === true,
+    `Expected all execute traces to have non-negative durationMs. Actual: ${JSON.stringify(sideEffectExecuteTraces?.map((t) => t.durationMs))}`,
+  );
+
+  // 7. error field is string in handler failure trace
+  const failedNodeTrace = failSkipResult.trace?.nodeTraces?.find(
+    (t) => t.stage === "execute" && t.status === "error",
+  );
+  assert(
+    typeof failedNodeTrace?.error === "string" &&
+      failedNodeTrace.error.length > 0,
+    `Expected failed node trace error to be a non-empty string. Actual: ${JSON.stringify(failedNodeTrace?.error)}`,
+  );
+
+  // 8. failedStage and node-level error trace consistency
+  assert(
+    failSkipResult.failedStage === "execute" &&
+      failSkipResult.trace?.failedStage === "execute" &&
+      failedNodeTrace?.status === "error",
+    `Expected failedStage and node-level error trace to be consistent. failedStage=${failSkipResult.failedStage}, trace.failedStage=${failSkipResult.trace?.failedStage}, nodeStatus=${failedNodeTrace?.status}`,
   );
 
   const migratedGraph = migrateFlowToGraph(makeLegacyFlowFixture());
