@@ -276,19 +276,31 @@ function getNodeLegacySideEffect(
 function getHostWriteSummary(
   node: WorkbenchNode,
 ): HostWriteSummary | undefined {
+  if (node.moduleId !== "out_reply_inject") {
+    return undefined;
+  }
   const blueprint = getModuleBlueprint(node.moduleId);
   const capability = getNodeCapability(node);
   if (capability !== "writes_host") {
     return undefined;
   }
-  return blueprint.runtimeMeta?.hostTargetHint;
+  const hostTargetHint = blueprint.runtimeMeta?.hostTargetHint;
+  if (
+    !hostTargetHint ||
+    hostTargetHint.targetType !== "reply_instruction" ||
+    hostTargetHint.operation !== "inject_reply_instruction" ||
+    hostTargetHint.path !== "reply.instruction"
+  ) {
+    return undefined;
+  }
+  return hostTargetHint;
 }
 
 function getHostCommitSummary(
   node: WorkbenchNode,
 ): HostCommitSummary | undefined {
   const hostWriteSummary = getHostWriteSummary(node);
-  if (!hostWriteSummary || node.moduleId !== "out_reply_inject") {
+  if (!hostWriteSummary) {
     return undefined;
   }
   return {

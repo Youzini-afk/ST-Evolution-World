@@ -706,7 +706,7 @@ async function runValidationSpec(): Promise<void> {
       )
       .join(",") ===
       "src_text:none:none,filter_text:none:none,out_reply:reply_instruction:inject_reply_instruction",
-    `Expected compile plan hostWriteSummary to be attached only for writes_host nodes. Actual: ${compilePlanFixture.nodes
+    `Expected compile plan hostWriteSummary to stay limited to out_reply_inject. Actual: ${compilePlanFixture.nodes
       .map(
         (node) =>
           `${node.nodeId}:${node.hostWriteSummary?.targetType ?? "none"}:${node.hostWriteSummary?.operation ?? "none"}`,
@@ -721,7 +721,7 @@ async function runValidationSpec(): Promise<void> {
       )
       .join(",") ===
       "src_text:none:none:none,filter_text:none:none:none,out_reply:reply_instruction:inject_reply_instruction:immediate",
-    `Expected compile plan hostCommitSummary to be attached only for out_reply_inject. Actual: ${compilePlanFixture.nodes
+    `Expected compile plan hostCommitSummary to stay limited to out_reply_inject. Actual: ${compilePlanFixture.nodes
       .map(
         (node) =>
           `${node.nodeId}:${node.hostCommitSummary?.targetType ?? "none"}:${node.hostCommitSummary?.operation ?? "none"}:${node.hostCommitSummary?.mode ?? "none"}`,
@@ -816,7 +816,7 @@ async function runValidationSpec(): Promise<void> {
       )
       .join(",") ===
       "src_text:0:none,filter_text:0:none,out_reply:1:reply_instruction",
-    `Expected executeCompiledGraph moduleResults to expose host write descriptors only for writes_host nodes. Actual: ${compiledExecution.moduleResults
+    `Expected executeCompiledGraph moduleResults to expose host write descriptors only for out_reply_inject. Actual: ${compiledExecution.moduleResults
       .map(
         (result) =>
           `${result.nodeId}:${result.hostWrites?.length ?? 0}:${result.hostWriteSummary?.targetType ?? "none"}`,
@@ -1241,6 +1241,11 @@ async function runValidationSpec(): Promise<void> {
       "src_messages:compile:ok,cfg_api:compile:ok,llm_call:compile:ok,src_messages:execute:ok,cfg_api:execute:ok,llm_call:execute:error",
     `Expected execute failure top-level nodeTraces to retain compile+execute traces. Actual: ${handlerFailureResult.nodeTraces?.map((trace) => `${trace.nodeId}:${trace.stage}:${trace.status}`).join(",")}`,
   );
+  assert(
+    handlerFailureResult.hostWrites?.length === 0 &&
+      handlerFailureResult.hostCommitContracts?.length === 0,
+    `Expected non-target handler failure not to expose host descriptors/contracts. Actual: ${JSON.stringify({ hostWrites: handlerFailureResult.hostWrites, hostCommitContracts: handlerFailureResult.hostCommitContracts })}`,
+  );
 
   const sideEffectFailureResult = await executeGraph(
     makeSideEffectHandlerFailureGraph(),
@@ -1266,6 +1271,13 @@ async function runValidationSpec(): Promise<void> {
       sideEffectFailureTrace.capability === "writes_host" &&
       sideEffectFailureTrace.sideEffect === "writes_host",
     `Expected side-effect failed node trace to stay error and preserve writes_host capability metadata. Actual: ${JSON.stringify(sideEffectFailureTrace)}`,
+  );
+  assert(
+    sideEffectFailureResult.hostWrites?.length === 0 &&
+      sideEffectFailureResult.hostCommitContracts?.length === 0 &&
+      (sideEffectFailureTrace?.hostWrites?.length ?? 0) === 0 &&
+      (sideEffectFailureTrace?.hostCommitContracts?.length ?? 0) === 0,
+    `Expected failed non-out_reply writes_host path not to misreport host descriptors/contracts. Actual: ${JSON.stringify({ graph: { hostWrites: sideEffectFailureResult.hostWrites, hostCommitContracts: sideEffectFailureResult.hostCommitContracts }, trace: sideEffectFailureTrace })}`,
   );
   const llmDescriptor = resolveNodeHandler("exe_llm_call").descriptor;
   assert(
@@ -1300,8 +1312,26 @@ async function runValidationSpec(): Promise<void> {
     replyDescriptorContracts?.length === 1 &&
       replyDescriptorContracts[0]?.targetType === "reply_instruction" &&
       replyDescriptorContracts[0]?.operation === "inject_reply_instruction" &&
+      replyDescriptorContracts[0]?.path === "reply.instruction" &&
       replyDescriptorContracts[0]?.supportsRetry === false,
     `Expected out_reply_inject contract producer to map from host write descriptor fields. Actual: ${JSON.stringify(replyDescriptorContracts)}`,
+  );
+
+  const replyDescriptorWrites = replyDescriptor.produceHostWriteDescriptors?.({
+    planNode: compilePlanFixture.nodes.find(
+      (node) => node.nodeId === "out_reply",
+    )!,
+    node: makePlanExecutionGraph().nodes.find(
+      (node) => node.id === "out_reply",
+    )!,
+    inputs: { instruction: "hello" },
+  });
+  assert(
+    replyDescriptorWrites?.length === 1 &&
+      replyDescriptorWrites[0]?.targetType === "reply_instruction" &&
+      replyDescriptorWrites[0]?.operation === "inject_reply_instruction" &&
+      replyDescriptorWrites[0]?.path === "reply.instruction",
+    `Expected out_reply_inject host write producer to stay aligned with reply instruction contract. Actual: ${JSON.stringify(replyDescriptorWrites)}`,
   );
 
   const cancelledExecutionResult = await executeGraph(
