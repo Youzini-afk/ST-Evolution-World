@@ -586,6 +586,49 @@ function extractStructuredWriteback(
   };
 }
 
+export type WorkflowBridgeRoute = "graph" | "legacy";
+
+export type WorkflowBridgeRouteSelection = {
+  route: WorkflowBridgeRoute;
+  enabledGraphs: WorkbenchGraph[];
+  hasExplicitLegacyFlowSelection: boolean;
+  reason: "graph_first" | "legacy_flow_selection" | "no_enabled_graph";
+};
+
+export function selectWorkflowBridgeRoute(params: {
+  input: Pick<RunWorkflowInput, "flow_ids">;
+  settings: {
+    workbench_graphs?: WorkbenchGraph[];
+  };
+}): WorkflowBridgeRouteSelection {
+  const workbenchGraphs = Array.isArray(params.settings.workbench_graphs)
+    ? params.settings.workbench_graphs.filter(
+        (graph): graph is WorkbenchGraph => Boolean(graph),
+      )
+    : [];
+  const enabledGraphs = workbenchGraphs.filter((graph) => graph.enabled);
+  const hasExplicitLegacyFlowSelection = (params.input.flow_ids ?? []).some(
+    (flowId) => typeof flowId === "string" && flowId.trim().length > 0,
+  );
+
+  if (enabledGraphs.length > 0 && !hasExplicitLegacyFlowSelection) {
+    return {
+      route: "graph",
+      enabledGraphs,
+      hasExplicitLegacyFlowSelection,
+      reason: "graph_first",
+    };
+  }
+
+  return {
+    route: "legacy",
+    enabledGraphs,
+    hasExplicitLegacyFlowSelection,
+    reason:
+      enabledGraphs.length > 0 ? "legacy_flow_selection" : "no_enabled_graph",
+  };
+}
+
 // ── Graph Execution Path (Module Workbench) ──
 
 async function runGraphWorkflow(
@@ -713,14 +756,17 @@ export async function runWorkflow(
   try {
     throwIfWorkflowCancelled(input);
 
-    const workbenchGraphs: WorkbenchGraph[] =
-      (settings as any).workbench_graphs ?? [];
-    const enabledGraphs = workbenchGraphs.filter((g) => g.enabled);
-    if (enabledGraphs.length > 0 && !input.flow_ids?.length) {
+    const bridgeRoute = selectWorkflowBridgeRoute({
+      input,
+      settings: {
+        workbench_graphs: (settings as any).workbench_graphs,
+      },
+    });
+    if (bridgeRoute.route === "graph") {
       return await runGraphWorkflow(
         input,
         settings,
-        enabledGraphs,
+        bridgeRoute.enabledGraphs,
         requestId,
         startedAt,
       );

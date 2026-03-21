@@ -12,6 +12,10 @@ import {
   validateGraph,
 } from "./graph-executor";
 import {
+  selectWorkflowBridgeRoute,
+  type WorkflowBridgeRouteSelection,
+} from "./pipeline";
+import {
   _resetRegistryForTesting,
   getRegisteredModuleIds,
   hasRegisteredHandler,
@@ -545,6 +549,35 @@ function makeLegacyFlowFixture(): EwFlowConfig {
     system_prompt: "System {{char}}",
     headers_json: "",
   };
+}
+
+function assertBridgeRoute(
+  actual: WorkflowBridgeRouteSelection,
+  expected: {
+    route: WorkflowBridgeRouteSelection["route"];
+    reason: WorkflowBridgeRouteSelection["reason"];
+    enabledGraphIds: string[];
+    hasExplicitLegacyFlowSelection: boolean;
+  },
+): void {
+  assert(
+    actual.route === expected.route,
+    `Expected bridge route to be ${expected.route}. Actual: ${actual.route}`,
+  );
+  assert(
+    actual.reason === expected.reason,
+    `Expected bridge route reason to be ${expected.reason}. Actual: ${actual.reason}`,
+  );
+  assert(
+    actual.hasExplicitLegacyFlowSelection ===
+      expected.hasExplicitLegacyFlowSelection,
+    `Expected hasExplicitLegacyFlowSelection to be ${expected.hasExplicitLegacyFlowSelection}. Actual: ${actual.hasExplicitLegacyFlowSelection}`,
+  );
+  assert(
+    actual.enabledGraphs.map((graph) => graph.id).join(",") ===
+      expected.enabledGraphIds.join(","),
+    `Expected enabled graph ids to be ${expected.enabledGraphIds.join(",")}. Actual: ${actual.enabledGraphs.map((graph) => graph.id).join(",")}`,
+  );
 }
 
 async function runValidationSpec(): Promise<void> {
@@ -1512,6 +1545,77 @@ async function runValidationSpec(): Promise<void> {
     `Expected auto migration to produce migrated legacy graph. Actual: ${autoMigratedGraphs.map((graph) => graph.id).join(",")}`,
   );
 
+  const graphFirstRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: undefined,
+    },
+    settings: {
+      workbench_graphs: [
+        makeBaseGraph(),
+        {
+          ...makeDispatchSmokeGraph(),
+          id: "graph_disabled",
+          enabled: false,
+        },
+      ],
+    },
+  });
+  assertBridgeRoute(graphFirstRoute, {
+    route: "graph",
+    reason: "graph_first",
+    enabledGraphIds: ["graph_test"],
+    hasExplicitLegacyFlowSelection: false,
+  });
+
+  const legacyFallbackRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: undefined,
+    },
+    settings: {
+      workbench_graphs: [],
+    },
+  });
+  assertBridgeRoute(legacyFallbackRoute, {
+    route: "legacy",
+    reason: "no_enabled_graph",
+    enabledGraphIds: [],
+    hasExplicitLegacyFlowSelection: false,
+  });
+
+  const explicitLegacySelectionRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: ["legacy_flow_1"],
+    },
+    settings: {
+      workbench_graphs: [makeBaseGraph()],
+    },
+  });
+  assertBridgeRoute(explicitLegacySelectionRoute, {
+    route: "legacy",
+    reason: "legacy_flow_selection",
+    enabledGraphIds: ["graph_test"],
+    hasExplicitLegacyFlowSelection: true,
+  });
+
+  const singlePathRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: ["", "   "],
+    },
+    settings: {
+      workbench_graphs: [makeBaseGraph(), makeDispatchSmokeGraph()],
+    },
+  });
+  assertBridgeRoute(singlePathRoute, {
+    route: "graph",
+    reason: "graph_first",
+    enabledGraphIds: ["graph_test", "graph_dispatch_smoke"],
+    hasExplicitLegacyFlowSelection: false,
+  });
+  assert(
+    ["graph", "legacy"].filter((route) => route === singlePathRoute.route)
+      .length === 1,
+    `Expected one request to resolve to a single bridge route. Actual route: ${singlePathRoute.route}`,
+  );
   // ══════════════════════════════════════════════════════════════════
   // P2.1 — Runtime Node Registry Tests
   // ══════════════════════════════════════════════════════════════════
