@@ -468,6 +468,106 @@ function normalizeSettings(raw: unknown): EwSettings {
   return result;
 }
 
+type WorkflowBridgeFacts = {
+  route: "graph" | "legacy";
+  reason: string;
+  has_explicit_legacy_flow_selection?: boolean;
+  enabled_graph_count?: number;
+  selected_graph_ids?: string[];
+  failure_origin?: string;
+};
+
+function normalizeWorkflowBridgeDiagnostics(
+  bridge: unknown,
+): WorkflowBridgeFacts | undefined {
+  if (!_.isPlainObject(bridge)) {
+    return undefined;
+  }
+
+  const bridgeRecord = bridge as Record<string, unknown>;
+  const route = bridgeRecord.route;
+  const reason = bridgeRecord.reason;
+  if ((route !== "graph" && route !== "legacy") || typeof reason !== "string") {
+    return undefined;
+  }
+
+  const normalizedReason = reason.trim();
+  if (!normalizedReason) {
+    return undefined;
+  }
+
+  const normalized: WorkflowBridgeFacts = {
+    route,
+    reason: normalizedReason,
+  };
+
+  if (typeof bridgeRecord.has_explicit_legacy_flow_selection === "boolean") {
+    normalized.has_explicit_legacy_flow_selection =
+      bridgeRecord.has_explicit_legacy_flow_selection;
+  }
+
+  const enabledGraphCount = bridgeRecord.enabled_graph_count;
+  if (
+    typeof enabledGraphCount === "number" &&
+    Number.isInteger(enabledGraphCount) &&
+    enabledGraphCount >= 0
+  ) {
+    normalized.enabled_graph_count = enabledGraphCount;
+  }
+
+  const graphContext = _.isPlainObject(bridgeRecord.graph_context)
+    ? (bridgeRecord.graph_context as Record<string, unknown>)
+    : null;
+  const selectedGraphIds = Array.isArray(bridgeRecord.selected_graph_ids)
+    ? bridgeRecord.selected_graph_ids
+    : graphContext?.selected_graph_ids;
+  if (
+    Array.isArray(selectedGraphIds) &&
+    selectedGraphIds.every((entry: unknown) => typeof entry === "string")
+  ) {
+    normalized.selected_graph_ids = [...selectedGraphIds];
+  }
+
+  const failureOrigin = bridgeRecord.failure_origin;
+  if (typeof failureOrigin === "string") {
+    const normalizedFailureOrigin = failureOrigin.trim();
+    if (normalizedFailureOrigin) {
+      normalized.failure_origin = normalizedFailureOrigin;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeRunSummaryBridge(summary: unknown): unknown {
+  if (!_.isPlainObject(summary)) {
+    return summary;
+  }
+
+  const summaryRecord = summary as Record<string, unknown>;
+  if (!_.isPlainObject(summaryRecord.diagnostics)) {
+    return summary;
+  }
+
+  const diagnostics = {
+    ...(summaryRecord.diagnostics as Record<string, unknown>),
+  };
+  const normalizedBridge = normalizeWorkflowBridgeDiagnostics(
+    diagnostics.bridge,
+  );
+
+  if (normalizedBridge) {
+    diagnostics.bridge = normalizedBridge;
+  } else {
+    delete diagnostics.bridge;
+  }
+
+  return {
+    ...summaryRecord,
+    diagnostics,
+  };
+}
+
 function normalizeRunRecordMap(
   storage: ScriptStorageShape,
 ): Record<string, RunSummary> {
@@ -478,7 +578,9 @@ function normalizeRunRecordMap(
 
   const next: Record<string, RunSummary> = {};
   for (const [chatId, summary] of Object.entries(raw)) {
-    const parsed = RunSummarySchema.safeParse(summary);
+    const parsed = RunSummarySchema.safeParse(
+      normalizeRunSummaryBridge(summary),
+    );
     if (parsed.success) {
       next[chatId] = parsed.data;
     }
@@ -656,7 +758,9 @@ function persistNormalizedLastRunRecord(
 
 export function loadLastRun(): RunSummary | null {
   const storage = readScriptStorage();
-  const parsed = RunSummarySchema.safeParse(storage.last_run);
+  const parsed = RunSummarySchema.safeParse(
+    normalizeRunSummaryBridge(storage.last_run),
+  );
   cachedLastRun = parsed.success ? parsed.data : null;
   if (cachedLastRun) {
     persistNormalizedLastRunRecord(storage, cachedLastRun);
@@ -672,7 +776,7 @@ export function getLastRun(): RunSummary | null {
 }
 
 export function setLastRun(summary: RunSummary) {
-  const normalized = RunSummarySchema.parse(summary);
+  const normalized = RunSummarySchema.parse(normalizeRunSummaryBridge(summary));
   cachedLastRun = normalized;
   persistNormalizedLastRunRecord(readScriptStorage(), normalized);
   emitRun(klona(normalized));
@@ -734,7 +838,9 @@ export function loadLastRunForChat(chatId: string): RunSummary | null {
     return klona(summary);
   }
 
-  const globalSummary = RunSummarySchema.safeParse(storage.last_run);
+  const globalSummary = RunSummarySchema.safeParse(
+    normalizeRunSummaryBridge(storage.last_run),
+  );
   if (
     globalSummary.success &&
     globalSummary.data.chat_id.trim() === normalizedChatId
