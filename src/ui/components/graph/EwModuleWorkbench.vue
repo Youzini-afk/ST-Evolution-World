@@ -88,6 +88,9 @@
               {{ activeRunSummary.hasBlockingContract ? "存在" : "无" }}
             </span>
             <span class="ew-workbench__diagnostics-item">
+              控制前提解释 {{ activeRunSummary.constraintSummaryLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
               handling policy {{ activeRunSummary.handlingPolicyLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
@@ -136,6 +139,9 @@
             </span>
             <span class="ew-workbench__diagnostics-reason">
               输入需求 {{ activeRunSummary.inputRequirementTypeLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              控制前提解释项 {{ activeRunSummary.controlPreconditionsLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
               heartbeat

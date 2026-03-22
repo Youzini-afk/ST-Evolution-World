@@ -558,6 +558,57 @@ export interface GraphRunContinuationContract {
   manualInputSlots: GraphRunManualInputSlotSchema[];
 }
 
+export type GraphRunConstraintSourceKind =
+  | "observed"
+  | "inferred"
+  | "host_limited";
+
+export type GraphRunControlPreconditionStatus =
+  | "satisfied"
+  | "unsatisfied"
+  | "unknown";
+
+export type GraphRunControlPreconditionKind =
+  | "external_input_observed"
+  | "checkpoint_candidate_observed"
+  | "run_not_terminal"
+  | "continuation_capability_inference"
+  | "control_action_surface_inference"
+  | "unknown";
+
+export interface GraphRunControlPreconditionItem {
+  kind: GraphRunControlPreconditionKind;
+  status: GraphRunControlPreconditionStatus;
+  label: string;
+  detail?: string;
+  sourceKind: GraphRunConstraintSourceKind;
+  conservativeSourceKind: GraphRunConstraintSourceKind;
+}
+
+export type GraphRunNonContinuableReasonKind =
+  | "terminal_completed"
+  | "terminal_failed"
+  | "terminal_cancelled"
+  | "continuation_capability_not_inferred"
+  | "control_action_surface_not_inferred"
+  | "external_input_still_required"
+  | "checkpoint_not_observed"
+  | "insufficient_evidence"
+  | "unknown";
+
+export interface GraphRunControlPreconditionsContract {
+  items: GraphRunControlPreconditionItem[];
+  nonContinuableReasonKind?: GraphRunNonContinuableReasonKind;
+  explanation: string;
+}
+
+export interface GraphRunConstraintSummaryViewModel {
+  heading: string;
+  explanation: string;
+  disclaimer: string;
+  capabilityBoundary: string;
+}
+
 export type GraphRunRecoveryEligibility = "eligible" | "ineligible" | "unknown";
 
 export interface GraphRunRecoveryEligibilityFact {
@@ -634,6 +685,8 @@ export interface GraphRunArtifact {
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
   continuationContract?: GraphRunContinuationContract;
+  controlPreconditionsContract?: GraphRunControlPreconditionsContract;
+  constraintSummary?: GraphRunConstraintSummaryViewModel;
   recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
@@ -661,6 +714,8 @@ export interface GraphRunEvent {
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
   continuationContract?: GraphRunContinuationContract;
+  controlPreconditionsContract?: GraphRunControlPreconditionsContract;
+  constraintSummary?: GraphRunConstraintSummaryViewModel;
   recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   stage?: GraphExecutionStage;
@@ -736,6 +791,8 @@ export interface GraphRunState {
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
   continuationContract?: GraphRunContinuationContract;
+  controlPreconditionsContract: GraphRunControlPreconditionsContract;
+  constraintSummary: GraphRunConstraintSummaryViewModel;
   recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
@@ -802,6 +859,10 @@ export interface GraphActiveRunSummaryViewModel {
   inputRequirementType: GraphRunBlockingInputRequirementType;
   inputRequirementTypeLabel: string;
   continuationContract: GraphRunContinuationContract | null;
+  controlPreconditionsContract: GraphRunControlPreconditionsContract | null;
+  constraintSummary: GraphRunConstraintSummaryViewModel | null;
+  controlPreconditionsLabel: string;
+  constraintSummaryLabel: string;
   handlingPolicyLabel: string;
   continuationVerdictLabel: string;
   recoveryEvidenceLabel: string;

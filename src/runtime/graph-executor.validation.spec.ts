@@ -36,6 +36,22 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
     recoveryEvidence?: { source?: string; trust?: string };
     manualInputSlots?: Array<{ key?: string; valueType?: string }>;
   };
+  controlPreconditionsContract?: {
+    nonContinuableReasonKind?: string;
+    explanation?: string;
+    items?: Array<{
+      kind?: string;
+      status?: string;
+      sourceKind?: string;
+      conservativeSourceKind?: string;
+    }>;
+  };
+  constraintSummary?: {
+    heading?: string;
+    explanation?: string;
+    disclaimer?: string;
+    capabilityBoundary?: string;
+  };
 } | null {
   const artifact = diagnostics?.bridge?.graph_run_overview;
   if (!artifact || typeof artifact !== "object") {
@@ -46,6 +62,15 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
     artifact.continuationContract &&
     typeof artifact.continuationContract === "object"
       ? artifact.continuationContract
+      : null;
+  const controlPreconditions =
+    artifact.controlPreconditionsContract &&
+    typeof artifact.controlPreconditionsContract === "object"
+      ? artifact.controlPreconditionsContract
+      : null;
+  const constraintSummary =
+    artifact.constraintSummary && typeof artifact.constraintSummary === "object"
+      ? artifact.constraintSummary
       : null;
   return {
     recoveryEligibility:
@@ -100,6 +125,87 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
           verdict: { status: "unknown" },
           recoveryEvidence: { source: "unknown", trust: "unknown" },
           manualInputSlots: [],
+        },
+    controlPreconditionsContract: controlPreconditions
+      ? {
+          nonContinuableReasonKind:
+            controlPreconditions.nonContinuableReasonKind ===
+              "terminal_completed" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "terminal_failed" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "terminal_cancelled" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "continuation_capability_not_inferred" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "control_action_surface_not_inferred" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "external_input_still_required" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "checkpoint_not_observed" ||
+            controlPreconditions.nonContinuableReasonKind ===
+              "insufficient_evidence" ||
+            controlPreconditions.nonContinuableReasonKind === "unknown"
+              ? String(controlPreconditions.nonContinuableReasonKind)
+              : "unknown",
+          explanation: String(controlPreconditions.explanation ?? ""),
+          items: Array.isArray(controlPreconditions.items)
+            ? controlPreconditions.items.map((item: unknown) => {
+                const record =
+                  item && typeof item === "object"
+                    ? (item as Record<string, unknown>)
+                    : null;
+                return {
+                  kind:
+                    record?.kind === "external_input_observed" ||
+                    record?.kind === "checkpoint_candidate_observed" ||
+                    record?.kind === "run_not_terminal" ||
+                    record?.kind === "continuation_capability_inference" ||
+                    record?.kind === "control_action_surface_inference" ||
+                    record?.kind === "unknown"
+                      ? String(record.kind)
+                      : "unknown",
+                  status:
+                    record?.status === "satisfied" ||
+                    record?.status === "unsatisfied" ||
+                    record?.status === "unknown"
+                      ? String(record.status)
+                      : "unknown",
+                  sourceKind:
+                    record?.sourceKind === "observed" ||
+                    record?.sourceKind === "inferred" ||
+                    record?.sourceKind === "host_limited"
+                      ? String(record.sourceKind)
+                      : "unknown",
+                  conservativeSourceKind:
+                    record?.conservativeSourceKind === "observed" ||
+                    record?.conservativeSourceKind === "inferred" ||
+                    record?.conservativeSourceKind === "host_limited"
+                      ? String(record.conservativeSourceKind)
+                      : "unknown",
+                };
+              })
+            : [],
+        }
+      : {
+          nonContinuableReasonKind: "unknown",
+          explanation: "",
+          items: [],
+        },
+    constraintSummary: constraintSummary
+      ? {
+          heading: String(constraintSummary.heading ?? ""),
+          explanation: String(constraintSummary.explanation ?? ""),
+          disclaimer: String(constraintSummary.disclaimer ?? ""),
+          capabilityBoundary: String(
+            constraintSummary.capabilityBoundary ?? "",
+          ),
+        }
+      : {
+          heading: "",
+          explanation: "",
+          disclaimer: "",
+          capabilityBoundary: "",
         },
   };
 }
@@ -1620,13 +1726,138 @@ async function runValidationSpec(): Promise<void> {
         "checkpoint_candidate" &&
       waitingUserEvent.continuationContract?.recoveryEvidence.trust ===
         "limited" &&
+      waitingUserEvent.controlPreconditionsContract?.items?.length === 5 &&
+      waitingUserEvent.controlPreconditionsContract?.items?.some(
+        (item) =>
+          item.kind === "checkpoint_candidate_observed" &&
+          item.status === "satisfied" &&
+          item.sourceKind === "observed" &&
+          item.conservativeSourceKind === "observed",
+      ) &&
+      waitingUserEvent.controlPreconditionsContract?.items?.some(
+        (item) =>
+          item.kind === "continuation_capability_inference" &&
+          item.status === "unknown" &&
+          item.sourceKind === "host_limited",
+      ) &&
+      waitingUserEvent.controlPreconditionsContract
+        ?.nonContinuableReasonKind === "continuation_capability_not_inferred" &&
+      waitingUserEvent.constraintSummary?.disclaimer?.includes(
+        "不是恢复承诺",
+      ) &&
       waitingUserEvent.artifact?.blockingContract?.kind === "waiting_user" &&
       waitingUserEvent.artifact?.continuationContract?.manualInputSlots?.[0]
         ?.key === "observed_waiting_user_input" &&
       waitingUserEvent.artifact?.continuationContract?.manualInputSlots?.[0]
         ?.valueType === "confirmation" &&
+      waitingUserEvent.artifact?.controlPreconditionsContract?.items?.some(
+        (item) =>
+          item.kind === "control_action_surface_inference" &&
+          item.status === "unknown" &&
+          item.sourceKind === "host_limited",
+      ) &&
+      waitingUserEvent.artifact?.constraintSummary?.capabilityBoundary?.includes(
+        "control edge",
+      ) &&
       waitingUserEvent.artifact?.recoveryEligibility?.status === "eligible",
-    `Expected waiting_user event to expose blocking contract plus conservative recovery eligibility. Actual: ${JSON.stringify(waitingUserEvent)}`,
+    `Expected waiting_user event to expose blocking contract plus conservative control-precondition explanation. Actual: ${JSON.stringify(waitingUserEvent)}`,
+  );
+  const waitingUserNoCheckpointArtifact = toActiveGraphRunArtifactForTest({
+    bridge: {
+      graph_run_overview: {
+        runId: "req_waiting_no_checkpoint",
+        graphId: "graph_test",
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "阻塞中",
+        waitingUser: {
+          timestamp: Date.now(),
+          reason: "需要用户输入补充描述",
+        },
+        controlPreconditionsContract: {
+          items: [
+            {
+              kind: "external_input_observed",
+              status: "satisfied",
+              sourceKind: "observed",
+              conservativeSourceKind: "observed",
+            },
+            {
+              kind: "checkpoint_candidate_observed",
+              status: "unknown",
+              sourceKind: "inferred",
+              conservativeSourceKind: "inferred",
+            },
+            {
+              kind: "continuation_capability_inference",
+              status: "unknown",
+              sourceKind: "host_limited",
+              conservativeSourceKind: "host_limited",
+            },
+          ],
+          nonContinuableReasonKind: "checkpoint_not_observed",
+          explanation:
+            "当前未观察到 checkpoint candidate，且只读解释层无法从现有事实推出 continuation / resume 能力。",
+        },
+        constraintSummary: {
+          heading: "控制前提说明（只读）",
+          explanation: "仅为约束说明。",
+          disclaimer: "不是恢复承诺。",
+          capabilityBoundary: "不是控制动作能力。",
+        },
+        recoveryEligibility: {
+          status: "unknown",
+          source: "waiting_user",
+          label: "恢复资格未知",
+        },
+      },
+    },
+  });
+  assert(
+    waitingUserNoCheckpointArtifact?.recoveryEligibility?.status ===
+      "unknown" &&
+      waitingUserNoCheckpointArtifact.controlPreconditionsContract
+        ?.nonContinuableReasonKind === "checkpoint_not_observed" &&
+      waitingUserNoCheckpointArtifact.controlPreconditionsContract?.items?.some(
+        (item) =>
+          item.kind === "checkpoint_candidate_observed" &&
+          item.status === "unknown",
+      ) &&
+      waitingUserNoCheckpointArtifact.constraintSummary?.disclaimer?.includes(
+        "不是恢复承诺",
+      ),
+    `Expected waiting_user without checkpoint to stay unknown/incomplete and not imply resumable. Actual: ${JSON.stringify(waitingUserNoCheckpointArtifact)}`,
+  );
+  const degradedConstraintArtifact = toActiveGraphRunArtifactForTest({
+    bridge: {
+      graph_run_overview: {
+        runId: "req_degraded_constraint",
+        graphId: "graph_test",
+        status: "running",
+        phase: "executing",
+        phaseLabel: "执行中",
+        controlPreconditionsContract: {
+          items: [
+            {
+              kind: "broken_kind",
+              status: "broken_status",
+              sourceKind: "broken_source",
+              conservativeSourceKind: "broken_source",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedConstraintArtifact?.controlPreconditionsContract?.items?.[0]
+      ?.kind === "unknown" &&
+      degradedConstraintArtifact.controlPreconditionsContract?.items?.[0]
+        ?.status === "unknown" &&
+      degradedConstraintArtifact.controlPreconditionsContract
+        ?.nonContinuableReasonKind === "unknown" &&
+      degradedConstraintArtifact.constraintSummary?.heading === "",
+    `Expected degraded control-preconditions payload to fall back to conservative unknown parsing without crashing. Actual: ${JSON.stringify(degradedConstraintArtifact)}`,
   );
   assert(
     successResult.checkpointCandidate?.resumable === false &&
@@ -1651,8 +1882,17 @@ async function runValidationSpec(): Promise<void> {
     `Expected checkpoint candidate to retain terminal summary only without turning waiting_user observation into a recovery promise. Actual: ${JSON.stringify({ checkpoint: successResult.checkpointCandidate, waitingUserEvent })}`,
   );
   assert(
-    successResult.runState.failedStage === undefined,
-    `Expected success runState.failedStage to be undefined. Actual: ${successResult.runState.failedStage}`,
+    successResult.runState.controlPreconditionsContract.items.some(
+      (item) =>
+        item.kind === "control_action_surface_inference" &&
+        item.status === "unknown" &&
+        item.sourceKind === "host_limited",
+    ) &&
+      successResult.runState.constraintSummary.capabilityBoundary.includes(
+        "resume API",
+      ) &&
+      successResult.runState.failedStage === undefined,
+    `Expected success runState to keep control-precondition explanation while staying within read-only boundary. Actual: ${JSON.stringify(successResult.runState)}`,
   );
   assert(
     successResult.runState.compileFingerprint ===

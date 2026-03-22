@@ -35,12 +35,16 @@ import type {
   GraphRunBlockingInputRequirementType,
   GraphRunBlockingReason,
   GraphRunCheckpointSummary,
+  GraphRunConstraintSummaryViewModel,
   GraphRunContinuationContract,
   GraphRunContinuationHandlingPolicy,
   GraphRunContinuationVerdict,
+  GraphRunControlPreconditionItem,
+  GraphRunControlPreconditionsContract,
   GraphRunDiagnosticsOverview,
   GraphRunEvent,
   GraphRunManualInputSlotSchema,
+  GraphRunNonContinuableReasonKind,
   GraphRunPhase,
   GraphRunRecoveryEligibilityFact,
   GraphRunRecoveryEvidenceFact,
@@ -703,6 +707,146 @@ function deriveContinuationContract(params: {
   };
 }
 
+function deriveControlPreconditionsContract(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunControlPreconditionsContract {
+  const items: GraphRunControlPreconditionItem[] = [];
+  const pushItem = (
+    item: GraphRunControlPreconditionItem,
+  ): GraphRunControlPreconditionItem => {
+    items.push(item);
+    return item;
+  };
+
+  pushItem({
+    kind: "external_input_observed",
+    status:
+      params.status === "waiting_user" || params.waitingUser
+        ? "satisfied"
+        : params.status === "completed" ||
+            params.status === "failed" ||
+            params.status === "cancelled"
+          ? "unsatisfied"
+          : "unknown",
+    label: "外部输入阻塞事实",
+    detail:
+      params.status === "waiting_user" || params.waitingUser
+        ? params.waitingUser?.reason?.trim() ||
+          "已观察到 waiting_user，只能说明当前存在外部输入需求。"
+        : params.status === "completed" ||
+            params.status === "failed" ||
+            params.status === "cancelled"
+          ? "终局状态下不存在待处理的 waiting_user 外部输入阻塞事实。"
+          : "当前缺少稳定 waiting_user 事实，已保守降级为未知。",
+    sourceKind:
+      params.status === "waiting_user" || params.waitingUser
+        ? "observed"
+        : params.status === "completed" ||
+            params.status === "failed" ||
+            params.status === "cancelled"
+          ? "observed"
+          : "inferred",
+    conservativeSourceKind:
+      params.status === "waiting_user" || params.waitingUser
+        ? "observed"
+        : "inferred",
+  });
+
+  pushItem({
+    kind: "checkpoint_candidate_observed",
+    status: params.checkpointCandidate ? "satisfied" : "unknown",
+    label: "checkpoint candidate 事实",
+    detail: params.checkpointCandidate
+      ? "已观察到 checkpoint candidate；该事实仅用于约束说明，不构成恢复承诺。"
+      : "当前未观察到 checkpoint candidate，不能据此暗示存在恢复能力。",
+    sourceKind: params.checkpointCandidate ? "observed" : "inferred",
+    conservativeSourceKind: params.checkpointCandidate
+      ? "observed"
+      : "inferred",
+  });
+
+  pushItem({
+    kind: "run_not_terminal",
+    status:
+      params.status === "completed" ||
+      params.status === "failed" ||
+      params.status === "cancelled"
+        ? "unsatisfied"
+        : params.status === "waiting_user" ||
+            params.status === "running" ||
+            params.status === "streaming" ||
+            params.status === "queued" ||
+            params.status === "cancelling"
+          ? "satisfied"
+          : "unknown",
+    label: "运行未终局",
+    detail:
+      params.status === "completed" ||
+      params.status === "failed" ||
+      params.status === "cancelled"
+        ? "当前运行已终局，不能再把未终局视为控制动作前提。"
+        : "当前运行仍处于终局前阶段，该事实只说明状态位置，不代表已有继续动作。",
+    sourceKind: "observed",
+    conservativeSourceKind: "observed",
+  });
+
+  pushItem({
+    kind: "continuation_capability_inference",
+    status: "unknown",
+    label: "继续能力可推断性",
+    detail:
+      "当前仓库仅建模只读解释层，无法从现有事实推出宿主已具备 continuation / resume 能力。",
+    sourceKind: "host_limited",
+    conservativeSourceKind: "host_limited",
+  });
+
+  pushItem({
+    kind: "control_action_surface_inference",
+    status: "unknown",
+    label: "控制动作入口可推断性",
+    detail: "当前工作台只展示约束解释，无法从现有事实推出已存在控制动作入口。",
+    sourceKind: "host_limited",
+    conservativeSourceKind: "host_limited",
+  });
+
+  let nonContinuableReasonKind: GraphRunNonContinuableReasonKind | undefined;
+  if (params.status === "completed") {
+    nonContinuableReasonKind = "terminal_completed";
+  } else if (params.status === "failed") {
+    nonContinuableReasonKind = "terminal_failed";
+  } else if (params.status === "cancelled") {
+    nonContinuableReasonKind = "terminal_cancelled";
+  } else if (params.status === "waiting_user" || params.waitingUser) {
+    nonContinuableReasonKind = params.checkpointCandidate
+      ? "continuation_capability_not_inferred"
+      : "checkpoint_not_observed";
+  } else if (params.checkpointCandidate) {
+    nonContinuableReasonKind = "control_action_surface_not_inferred";
+  } else {
+    nonContinuableReasonKind = "insufficient_evidence";
+  }
+
+  return {
+    items,
+    nonContinuableReasonKind,
+    explanation:
+      "当前仅输出控制前提解释与只读事实边界；这些原因只表示无法从当前观测推出 continuation / resume 能力，不构成恢复承诺，也不表示控制动作系统已经存在。",
+  };
+}
+
+function deriveConstraintSummary(): GraphRunConstraintSummaryViewModel {
+  return {
+    heading: "控制前提说明（只读）",
+    explanation:
+      "当前工作台展示的是 control preconditions contract / constraint explanation 的只读解释层，用于说明为何仍无法从当前事实推出 continuation / resume 能力。",
+    disclaimer: "它不是恢复承诺，也不是 waiting_user 交互恢复协议。",
+    capabilityBoundary:
+      "它不表示 control edge、control node、resume API 或任务中心已经存在。",
+  };
+}
+
 function deriveRunReadModel(params: {
   status: GraphRunStatus;
   currentStage?: GraphExecutionStage;
@@ -715,6 +859,8 @@ function deriveRunReadModel(params: {
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
   continuationContract: GraphRunContinuationContract;
+  controlPreconditionsContract: GraphRunControlPreconditionsContract;
+  constraintSummary: GraphRunConstraintSummaryViewModel;
   recoveryEligibility: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
 } {
@@ -747,6 +893,12 @@ function deriveRunReadModel(params: {
         waitingUser: params.waitingUser,
         checkpointCandidate: params.checkpointCandidate,
       }),
+      controlPreconditionsContract: deriveControlPreconditionsContract({
+        status: params.status,
+        waitingUser: params.waitingUser,
+        checkpointCandidate: params.checkpointCandidate,
+      }),
+      constraintSummary: deriveConstraintSummary(),
       recoveryEligibility: deriveRecoveryEligibilityFact({
         status: params.status,
         waitingUser: params.waitingUser,
@@ -879,6 +1031,8 @@ function createRunState(params: {
       ? { blockingContract: readModel.blockingContract }
       : {}),
     continuationContract: readModel.continuationContract,
+    controlPreconditionsContract: readModel.controlPreconditionsContract,
+    constraintSummary: readModel.constraintSummary,
     recoveryEligibility: readModel.recoveryEligibility,
     ...(readModel.terminalOutcome
       ? { terminalOutcome: readModel.terminalOutcome }
@@ -956,6 +1110,8 @@ function createGraphRunArtifact(params: {
       ? { blockingContract: readModel.blockingContract }
       : {}),
     continuationContract: readModel.continuationContract,
+    controlPreconditionsContract: readModel.controlPreconditionsContract,
+    constraintSummary: readModel.constraintSummary,
     recoveryEligibility: readModel.recoveryEligibility,
     ...(readModel.terminalOutcome
       ? { terminalOutcome: readModel.terminalOutcome }
@@ -1690,6 +1846,14 @@ export async function executeCompiledGraph(
       ...(artifact.continuationContract
         ? { continuationContract: artifact.continuationContract }
         : {}),
+      ...(artifact.controlPreconditionsContract
+        ? {
+            controlPreconditionsContract: artifact.controlPreconditionsContract,
+          }
+        : {}),
+      ...(artifact.constraintSummary
+        ? { constraintSummary: artifact.constraintSummary }
+        : {}),
       ...(artifact.recoveryEligibility
         ? { recoveryEligibility: artifact.recoveryEligibility }
         : {}),
@@ -2290,6 +2454,15 @@ export async function executeGraph(
         : {}),
       ...(runArtifact.continuationContract
         ? { continuationContract: runArtifact.continuationContract }
+        : {}),
+      ...(runArtifact.controlPreconditionsContract
+        ? {
+            controlPreconditionsContract:
+              runArtifact.controlPreconditionsContract,
+          }
+        : {}),
+      ...(runArtifact.constraintSummary
+        ? { constraintSummary: runArtifact.constraintSummary }
         : {}),
       ...(runArtifact.recoveryEligibility
         ? { recoveryEligibility: runArtifact.recoveryEligibility }

@@ -56,9 +56,13 @@ import type {
   GraphRunBlockingContract,
   GraphRunBlockingInputRequirementType,
   GraphRunBlockingReason,
+  GraphRunConstraintSummaryViewModel,
+  GraphRunControlPreconditionItem,
+  GraphRunControlPreconditionsContract,
   GraphRunDiagnosticsOverview,
   GraphRunDiagnosticsSummaryViewModel,
   GraphRunHeartbeatSummary,
+  GraphRunNonContinuableReasonKind,
   GraphRunPartialOutputSummary,
   GraphRunPhase,
   GraphRunRecoveryEligibilityFact,
@@ -612,6 +616,17 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         phase,
         phaseLabel,
         ...(blockingReason ? { blockingReason } : {}),
+        controlPreconditionsContract: {
+          items: [],
+          nonContinuableReasonKind: "unknown",
+          explanation: "读侧缺少控制前提契约字段，已降级为空的只读约束解释。",
+        },
+        constraintSummary: {
+          heading: "控制前提说明（只读）",
+          explanation: "当前工作台展示的是只读约束解释层。",
+          disclaimer: "它不是恢复承诺。",
+          capabilityBoundary: "它不表示控制动作能力已经存在。",
+        },
         ...(terminalOutcome ? { terminalOutcome } : {}),
         ...(failedStage ? { failedStage } : {}),
         startedAt: normalizeCount(run.startedAt),
@@ -700,6 +715,110 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       dirtyNodeCount: overview.dirty.dirtyNodeCount,
       cleanNodeCount: overview.dirty.cleanNodeCount,
       primaryDirtyReasons,
+    };
+  }
+
+  function toControlPreconditionsContract(
+    value: unknown,
+  ): GraphRunControlPreconditionsContract | undefined {
+    if (!_.isPlainObject(value)) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const items = Array.isArray(record.items)
+      ? record.items
+          .filter((item): item is Record<string, unknown> =>
+            _.isPlainObject(item),
+          )
+          .map(
+            (item): GraphRunControlPreconditionItem => ({
+              kind:
+                item.kind === "external_input_observed" ||
+                item.kind === "checkpoint_candidate_observed" ||
+                item.kind === "run_not_terminal" ||
+                item.kind === "continuation_capability_inference" ||
+                item.kind === "control_action_surface_inference" ||
+                item.kind === "unknown"
+                  ? item.kind
+                  : "unknown",
+              status:
+                item.status === "satisfied" ||
+                item.status === "unsatisfied" ||
+                item.status === "unknown"
+                  ? item.status
+                  : "unknown",
+              label:
+                typeof item.label === "string" && item.label.trim()
+                  ? item.label.trim()
+                  : "控制前提未知",
+              detail:
+                typeof item.detail === "string" && item.detail.trim()
+                  ? item.detail.trim()
+                  : undefined,
+              sourceKind:
+                item.sourceKind === "observed" ||
+                item.sourceKind === "inferred" ||
+                item.sourceKind === "host_limited"
+                  ? item.sourceKind
+                  : "inferred",
+              conservativeSourceKind:
+                item.conservativeSourceKind === "observed" ||
+                item.conservativeSourceKind === "inferred" ||
+                item.conservativeSourceKind === "host_limited"
+                  ? item.conservativeSourceKind
+                  : "inferred",
+            }),
+          )
+      : [];
+    const nonContinuableReasonKind: GraphRunNonContinuableReasonKind =
+      record.nonContinuableReasonKind === "terminal_completed" ||
+      record.nonContinuableReasonKind === "terminal_failed" ||
+      record.nonContinuableReasonKind === "terminal_cancelled" ||
+      record.nonContinuableReasonKind ===
+        "continuation_capability_not_inferred" ||
+      record.nonContinuableReasonKind ===
+        "control_action_surface_not_inferred" ||
+      record.nonContinuableReasonKind === "external_input_still_required" ||
+      record.nonContinuableReasonKind === "checkpoint_not_observed" ||
+      record.nonContinuableReasonKind === "insufficient_evidence" ||
+      record.nonContinuableReasonKind === "unknown"
+        ? record.nonContinuableReasonKind
+        : "unknown";
+    return {
+      items,
+      nonContinuableReasonKind,
+      explanation:
+        typeof record.explanation === "string" && record.explanation.trim()
+          ? record.explanation.trim()
+          : "当前仅提供控制前提的只读解释，缺少稳定字段时已保守降级。",
+    };
+  }
+
+  function toConstraintSummary(
+    value: unknown,
+  ): GraphRunConstraintSummaryViewModel | undefined {
+    if (!_.isPlainObject(value)) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    return {
+      heading:
+        typeof record.heading === "string" && record.heading.trim()
+          ? record.heading.trim()
+          : "控制前提说明（只读）",
+      explanation:
+        typeof record.explanation === "string" && record.explanation.trim()
+          ? record.explanation.trim()
+          : "当前工作台展示的是只读约束解释层。",
+      disclaimer:
+        typeof record.disclaimer === "string" && record.disclaimer.trim()
+          ? record.disclaimer.trim()
+          : "它不是恢复承诺。",
+      capabilityBoundary:
+        typeof record.capabilityBoundary === "string" &&
+        record.capabilityBoundary.trim()
+          ? record.capabilityBoundary.trim()
+          : "它不表示控制动作能力已经存在。",
     };
   }
 
@@ -830,6 +949,21 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     const continuationContract = _.isPlainObject(artifact.continuationContract)
       ? (artifact.continuationContract as GraphRunArtifact["continuationContract"])
       : undefined;
+    const controlPreconditionsContract = toControlPreconditionsContract(
+      artifact.controlPreconditionsContract,
+    ) ?? {
+      items: [],
+      nonContinuableReasonKind: "unknown",
+      explanation: "读侧缺少控制前提契约字段，已回退到保守 unknown。",
+    };
+    const constraintSummary = toConstraintSummary(
+      artifact.constraintSummary,
+    ) ?? {
+      heading: "控制前提说明（只读）",
+      explanation: "当前工作台展示的是只读约束解释层。",
+      disclaimer: "它不是恢复承诺。",
+      capabilityBoundary: "它不表示控制动作能力已经存在。",
+    };
     const recoveryEligibility = toRecoveryEligibility(
       artifact.recoveryEligibility,
     ) ?? {
@@ -851,6 +985,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       ...(blockingReason ? { blockingReason } : {}),
       ...(blockingContract ? { blockingContract } : {}),
       ...(continuationContract ? { continuationContract } : {}),
+      controlPreconditionsContract,
+      constraintSummary,
       recoveryEligibility,
       ...(terminalOutcome ? { terminalOutcome } : {}),
       currentStage:
@@ -978,6 +1114,9 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
     const blockingContract = artifact.blockingContract ?? null;
     const continuationContract = artifact.continuationContract ?? null;
+    const controlPreconditionsContract =
+      artifact.controlPreconditionsContract ?? null;
+    const constraintSummary = artifact.constraintSummary ?? null;
     const inputType = blockingContract?.inputRequirement.type ?? "unknown";
     const inputRequirementTypeLabels: Record<
       GraphRunBlockingInputRequirementType,
@@ -1023,6 +1162,33 @@ export const useEwStore = defineStore("evolution-world-store", () => {
             .join("；")
         : "未观察到人工输入槽位声明";
 
+    const preconditionStatusLabel = (
+      status: GraphRunControlPreconditionItem["status"],
+    ) =>
+      status === "satisfied"
+        ? "满足"
+        : status === "unsatisfied"
+          ? "不满足"
+          : "未知";
+    const controlPreconditionsLabel = controlPreconditionsContract
+      ? controlPreconditionsContract.items.length > 0
+        ? controlPreconditionsContract.items
+            .map(
+              (item) =>
+                `${item.label}（${preconditionStatusLabel(item.status)} / ${item.sourceKind} / ${item.conservativeSourceKind}）`,
+            )
+            .join("；")
+        : "当前没有可消费的控制前提条目，已保守降级。"
+      : "当前没有可消费的控制前提条目，已保守降级。";
+    const constraintSummaryLabel = constraintSummary
+      ? [
+          constraintSummary.heading,
+          constraintSummary.explanation,
+          constraintSummary.disclaimer,
+          constraintSummary.capabilityBoundary,
+        ].join(" · ")
+      : "控制前提说明（只读） · 当前仅提供保守解释，只表示无法从现有事实推出 continuation / resume 或控制动作能力。";
+
     return {
       runId: artifact.runId,
       graphId: artifact.graphId,
@@ -1050,6 +1216,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       inputRequirementType: inputType,
       inputRequirementTypeLabel: inputRequirementTypeLabels[inputType],
       continuationContract,
+      controlPreconditionsContract,
+      constraintSummary,
       handlingPolicyLabel: continuationContract?.handlingPolicy
         ? `${continuationContract.handlingPolicy.label}${continuationContract.handlingPolicy.detail?.trim() ? ` · ${continuationContract.handlingPolicy.detail.trim()}` : ""}`
         : "unknown · 仅保留只读观察",
@@ -1109,6 +1277,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         : "无 partial output",
       waitingUser: artifact.waitingUser ?? null,
       waitingUserLabel: artifact.waitingUser?.reason ?? "未进入 waiting_user",
+      controlPreconditionsLabel,
+      constraintSummaryLabel,
       diagnosticsSummary,
     };
   }
