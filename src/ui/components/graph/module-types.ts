@@ -388,6 +388,37 @@ export interface GraphCompilePlan {
   stageTrace?: GraphStageTrace[];
 }
 
+export interface GraphCompileArtifactNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  order: number;
+  dependsOn: string[];
+  isTerminal: boolean;
+  capability?: WorkbenchCapability;
+  sideEffect?: WorkbenchSideEffectLevel;
+  hostWriteSummary?: HostWriteSummary;
+  hostCommitSummary?: HostCommitSummary;
+}
+
+export interface GraphCompileArtifactV1 {
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  graphId: string;
+  nodeCount: number;
+  edgeCount: number;
+  nodeOrder: string[];
+  terminalNodeIds: string[];
+  sideEffectNodeIds: string[];
+  nodes: GraphCompileArtifactNodeRecordV1[];
+}
+
+export interface GraphCompileArtifactEnvelope {
+  kind: "graph_compile_artifact";
+  version: "v1";
+  artifact: GraphCompileArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;
@@ -1179,6 +1210,7 @@ export interface GraphExecutionResult {
   elapsedMs: number;
   failedStage?: GraphExecutionStage;
   compilePlan?: GraphCompilePlan;
+  compileArtifact?: GraphCompileArtifactV1;
   trace?: GraphExecutionTrace;
   nodeTraces?: GraphNodeTrace[];
   dirtySetSummary?: GraphDirtySetSummary;

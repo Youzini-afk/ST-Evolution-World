@@ -22,6 +22,7 @@ import {
   rollbackToFloor,
   type FloorSnapshot,
 } from "../runtime/floor-binding";
+import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artifact-codec";
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
 import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
 import { runWorkflow } from "../runtime/pipeline";
@@ -58,6 +59,7 @@ import { getModuleExplainContract } from "./components/graph/module-registry";
 import type {
   GraphActiveRunSummaryViewModel,
   GraphCheckpointCandidateViewModel,
+  GraphCompileArtifactV1,
   GraphExecutionStage,
   GraphNodeDiagnosticsView,
   GraphNodeDiagnosticsViewModel,
@@ -1182,6 +1184,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     };
   }
 
+  function toActiveGraphCompileArtifact(
+    diagnostics: unknown,
+  ): GraphCompileArtifactV1 | null {
+    return readGraphCompileArtifactEnvelope(diagnostics)?.artifact ?? null;
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1744,6 +1752,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeWorkbenchDiagnosticsSummary = computed(() =>
     toDiagnosticsSummaryViewModel(activeWorkbenchDiagnosticsOverview.value),
+  );
+
+  const activeGraphCompileArtifact = computed(() =>
+    toActiveGraphCompileArtifact(lastRun.value?.diagnostics),
   );
 
   const activeGraphRunArtifact = computed(() =>
@@ -2680,6 +2692,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeWorkbenchDiagnosticsOverview,
     activeWorkbenchDiagnosticsSummary,
     activeWorkbenchNodeDiagnostics,
+    activeGraphCompileArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,

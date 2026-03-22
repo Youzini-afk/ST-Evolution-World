@@ -1,4 +1,5 @@
 import type {
+  GraphCompilePlan,
   GraphRunArtifact,
   GraphRunEvent,
   GraphRunSnapshotEnvelope,
@@ -9,6 +10,7 @@ import { getChatId, getChatMessages } from "./compat/character";
 import { FlowTriggerV1 } from "./contracts";
 import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
+import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
 import { uuidv4 } from "./helpers";
@@ -45,6 +47,9 @@ export type WorkflowBridgeDiagnostics = {
   graph_context?: {
     selected_graph_ids: string[];
   };
+  graph_compile_artifact?: ReturnType<
+    typeof createGraphCompileArtifactEnvelope
+  >;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
   graph_run_overview?: GraphRunArtifact;
   graph_run_events?: GraphRunEvent[];
@@ -667,12 +672,22 @@ export function buildWorkflowBridgeDiagnostics(params: {
   failureOrigin?: WorkflowBridgeFailureOrigin;
   graphRunOverview?: GraphRunArtifact;
   graphRunEvents?: GraphRunEvent[];
+  graphCompilePlan?: GraphCompilePlan;
 }): Record<string, any> {
-  const { selection, failureOrigin, graphRunOverview, graphRunEvents } = params;
+  const {
+    selection,
+    failureOrigin,
+    graphRunOverview,
+    graphRunEvents,
+    graphCompilePlan,
+  } = params;
   const graphRunSnapshot = createGraphRunSnapshotEnvelope({
     overview: graphRunOverview,
     events: graphRunEvents,
     diagnosticsOverview: graphRunOverview?.diagnosticsOverview,
+  });
+  const graphCompileArtifact = createGraphCompileArtifactEnvelope({
+    plan: graphCompilePlan ?? null,
   });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
@@ -688,6 +703,9 @@ export function buildWorkflowBridgeDiagnostics(params: {
             ),
           },
         }
+      : {}),
+    ...(graphCompileArtifact
+      ? { graph_compile_artifact: graphCompileArtifact }
       : {}),
     ...(graphRunSnapshot ? { graph_run_snapshot: graphRunSnapshot } : {}),
     ...(graphRunOverview ? { graph_run_overview: graphRunOverview } : {}),
@@ -803,6 +821,7 @@ async function runGraphWorkflow(
   const currentChatId = String(getChatId() ?? "unknown");
   let latestGraphRunOverview: GraphRunArtifact | undefined;
   let latestGraphRunEvents: GraphRunEvent[] | undefined;
+  let latestGraphCompilePlan: GraphCompilePlan | undefined;
   const bridgeDiagnostics = buildWorkflowBridgeDiagnostics({
     selection: bridgeRoute,
   });
@@ -878,6 +897,8 @@ async function runGraphWorkflow(
       latestGraphRunOverview =
         graphResult.runArtifact ?? latestGraphRunOverview;
       latestGraphRunEvents = graphResult.runEvents ?? latestGraphRunEvents;
+      latestGraphCompilePlan =
+        graphResult.compilePlan ?? latestGraphCompilePlan;
 
       if (!graphResult.ok) {
         const reason = graphResult.reason ?? "graph workflow failed";
@@ -886,6 +907,7 @@ async function runGraphWorkflow(
           failureOrigin: "graph_dispatch",
           graphRunOverview: latestGraphRunOverview,
           graphRunEvents: latestGraphRunEvents,
+          graphCompilePlan: latestGraphCompilePlan,
         });
         const failure = buildWorkflowFailureDiagnostic({
           stage: "dispatch",
@@ -920,6 +942,7 @@ async function runGraphWorkflow(
       selection: bridgeRoute,
       graphRunOverview: latestGraphRunOverview,
       graphRunEvents: latestGraphRunEvents,
+      graphCompilePlan: latestGraphCompilePlan,
     });
     persistWorkflowSummary({
       ok: true,

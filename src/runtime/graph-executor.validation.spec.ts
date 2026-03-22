@@ -12,6 +12,10 @@ import type {
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
+  createGraphCompileArtifactEnvelope,
+  readGraphCompileArtifactEnvelope,
+} from "./graph-compile-artifact-codec";
+import {
   buildGraphDocumentExportPayload,
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
@@ -2131,6 +2135,13 @@ async function runValidationSpec(): Promise<void> {
     `Expected success runState.compileFingerprint to match compilePlan. Actual: ${successResult.runState.compileFingerprint} vs ${successResult.compilePlan?.compileFingerprint}`,
   );
   assert(
+    successResult.compileArtifact?.compileFingerprint ===
+      successResult.compilePlan?.compileFingerprint &&
+      successResult.compileArtifact?.compileFingerprint ===
+        successResult.runState.compileFingerprint,
+    `Expected executeGraph success result to expose compileArtifact aligned with compileFingerprint. Actual: ${JSON.stringify({ compileArtifact: successResult.compileArtifact, compilePlanFingerprint: successResult.compilePlan?.compileFingerprint, runStateFingerprint: successResult.runState.compileFingerprint })}`,
+  );
+  assert(
     successResult.failedStage === undefined,
     "Expected no failedStage on success",
   );
@@ -3093,6 +3104,7 @@ async function runValidationSpec(): Promise<void> {
     }),
     graphRunOverview: reuseContractResult.runArtifact,
     graphRunEvents: reuseContractResult.runEvents,
+    graphCompilePlan: reuseContractResult.compilePlan,
   });
   assertBridgeDiagnostics(reuseDiagnostics, {
     route: "graph",
@@ -3313,6 +3325,96 @@ async function runValidationSpec(): Promise<void> {
       failSkipResult.trace?.failedStage === "execute" &&
       failedNodeTrace?.status === "error",
     `Expected failedStage and node-level error trace to be consistent. failedStage=${failSkipResult.failedStage}, trace.failedStage=${failSkipResult.trace?.failedStage}, nodeStatus=${failedNodeTrace?.status}`,
+  );
+
+  const compileArtifactEnvelope = createGraphCompileArtifactEnvelope({
+    plan: handlerFailureResult.compilePlan,
+  });
+  assert(
+    compileArtifactEnvelope?.kind === "graph_compile_artifact" &&
+      compileArtifactEnvelope.version === "v1" &&
+      compileArtifactEnvelope.artifact.compileFingerprint ===
+        handlerFailureResult.compilePlan?.compileFingerprint &&
+      compileArtifactEnvelope.artifact.graphId ===
+        handlerFailureResult.compilePlan?.fingerprintSource?.graphId &&
+      compileArtifactEnvelope.artifact.nodeCount ===
+        handlerFailureResult.compilePlan?.fingerprintSource?.nodeCount &&
+      compileArtifactEnvelope.artifact.edgeCount ===
+        handlerFailureResult.compilePlan?.fingerprintSource?.edgeCount &&
+      compileArtifactEnvelope.artifact.nodeOrder.join(",") ===
+        (handlerFailureResult.compilePlan?.nodeOrder ?? []).join(","),
+    `Expected compile plan to project into stable compile artifact envelope. Actual: ${JSON.stringify(compileArtifactEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(compileArtifactEnvelope).includes("scopeKey") &&
+      !JSON.stringify(compileArtifactEnvelope).includes('"trace"') &&
+      !JSON.stringify(compileArtifactEnvelope).includes('"sequence"') &&
+      !JSON.stringify(compileArtifactEnvelope).includes('"status"') &&
+      !JSON.stringify(compileArtifactEnvelope).includes('"stage"') &&
+      !JSON.stringify(compileArtifactEnvelope).includes('"isSideEffectNode"'),
+    `Expected compile artifact envelope to omit compile/runtime internal fields. Actual: ${JSON.stringify(compileArtifactEnvelope)}`,
+  );
+
+  const compileArtifactRoundtrip = readGraphCompileArtifactEnvelope({
+    bridge: {
+      graph_compile_artifact: {
+        kind: "graph_compile_artifact",
+        version: "v1",
+        artifact: compileArtifactEnvelope?.artifact,
+      },
+    },
+  });
+  assert(
+    compileArtifactRoundtrip?.artifact.compileFingerprint ===
+      compileArtifactEnvelope?.artifact.compileFingerprint &&
+      compileArtifactRoundtrip?.artifact.nodes.length ===
+        compileArtifactEnvelope?.artifact.nodes.length,
+    `Expected compile artifact envelope to roundtrip through stable read model. Actual: ${JSON.stringify(compileArtifactRoundtrip)}`,
+  );
+
+  const degradedCompileArtifact = readGraphCompileArtifactEnvelope({
+    bridge: {
+      graph_compile_artifact: {
+        kind: "graph_compile_artifact",
+        version: "v1",
+        artifact: {
+          compileFingerprint: "compile_fp_sparse",
+          graphId: "graph_sparse",
+          nodeCount: -3,
+          edgeCount: -8,
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "src_user_input",
+              nodeFingerprint: "node_fp_sparse",
+              order: -7,
+              isTerminal: true,
+              dependsOn: ["missing_dep", 2],
+              hostWriteSummary: {
+                targetType: "worldbook",
+              },
+            },
+            {
+              moduleId: "broken",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedCompileArtifact?.artifact.nodeCount === 0 &&
+      degradedCompileArtifact.artifact.edgeCount === 0 &&
+      degradedCompileArtifact.artifact.nodeOrder.join(",") === "node_sparse" &&
+      degradedCompileArtifact.artifact.terminalNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedCompileArtifact.artifact.sideEffectNodeIds.length === 0 &&
+      degradedCompileArtifact.artifact.nodes.length === 1 &&
+      degradedCompileArtifact.artifact.nodes[0]?.order === 0 &&
+      degradedCompileArtifact.artifact.nodes[0]?.dependsOn.join(",") ===
+        "missing_dep" &&
+      degradedCompileArtifact.artifact.nodes[0]?.hostWriteSummary === undefined,
+    `Expected malformed or sparse compile artifact payloads to conservatively degrade to stable defaults. Actual: ${JSON.stringify(degradedCompileArtifact)}`,
   );
 
   const snapshotEnvelope = createGraphRunSnapshotEnvelope({
@@ -3639,19 +3741,30 @@ async function runValidationSpec(): Promise<void> {
       selectedGraphIds: ["graph_test"],
     },
   );
-  assertBridgeDiagnostics(
-    buildWorkflowBridgeDiagnostics({
-      selection: graphFirstRoute,
-      failureOrigin: "graph_dispatch",
-    }),
-    {
-      route: "graph",
-      reason: "graph_first",
-      hasExplicitLegacyFlowSelection: false,
-      enabledGraphCount: 1,
-      selectedGraphIds: ["graph_test"],
-      failureOrigin: "graph_dispatch",
-    },
+  const bridgeDiagnosticsWithCompileArtifact = buildWorkflowBridgeDiagnostics({
+    selection: graphFirstRoute,
+    failureOrigin: "graph_dispatch",
+    graphCompilePlan: compilePlanFixture,
+  });
+  assertBridgeDiagnostics(bridgeDiagnosticsWithCompileArtifact, {
+    route: "graph",
+    reason: "graph_first",
+    hasExplicitLegacyFlowSelection: false,
+    enabledGraphCount: 1,
+    selectedGraphIds: ["graph_test"],
+    failureOrigin: "graph_dispatch",
+  });
+  const bridgeCompileArtifact = readGraphCompileArtifactEnvelope(
+    bridgeDiagnosticsWithCompileArtifact,
+  );
+  assert(
+    bridgeCompileArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeCompileArtifact.artifact.graphId ===
+        compilePlanFixture.fingerprintSource?.graphId &&
+      bridgeCompileArtifact.artifact.nodes.length ===
+        compilePlanFixture.nodes.length,
+    `Expected workflow bridge diagnostics to expose stable compile artifact surface. Actual: ${JSON.stringify(bridgeCompileArtifact)}`,
   );
   assertBridgeDiagnostics(
     buildWorkflowBridgeDiagnostics({ selection: legacyFallbackRoute }),

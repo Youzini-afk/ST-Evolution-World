@@ -73,6 +73,7 @@ import type {
   WorkbenchNode,
   WorkbenchSideEffectLevel,
 } from "../ui/components/graph/module-types";
+import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-codec";
 import {
   ensureBuiltinHandlers,
   resolveNodeHandler,
@@ -2706,6 +2707,7 @@ export async function executeGraph(
   emitRunEvent("stage_started", { status: "running", stage: "compile" });
   const compileTimer = startStage("compile");
   let compilePlan: GraphCompilePlan;
+  let compileArtifact: GraphExecutionResult["compileArtifact"];
   try {
     compilePlan = compileGraphPlan(graph);
     trace.push(compileTimer.finish("ok"));
@@ -2728,6 +2730,9 @@ export async function executeGraph(
       failedStage: undefined,
       stageTrace: [...trace],
     };
+    compileArtifact = createGraphCompileArtifactEnvelope({
+      plan: compilePlan,
+    })?.artifact;
     checkpointCandidate = createCheckpointCandidate({
       runId: context.requestId,
       graphId: graph.id,
@@ -2910,6 +2915,7 @@ export async function executeGraph(
     return {
       ok: true,
       requestId: context.requestId,
+      compileArtifact,
       ...buildRunObservation({
         graph,
         requestId: context.requestId,
@@ -3024,6 +3030,9 @@ export async function executeGraph(
       ok: false,
       reason,
       requestId: context.requestId,
+      compileArtifact: createGraphCompileArtifactEnvelope({
+        plan: compilePlan,
+      })?.artifact,
       ...buildRunObservation({
         graph,
         requestId: context.requestId,
