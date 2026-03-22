@@ -25,6 +25,7 @@ import {
 import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artifact-codec";
 import { readGraphCompileRunLinkArtifactEnvelope } from "../runtime/graph-compile-run-link-artifact-codec";
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
+import { readGraphFailureExplainArtifactEnvelope } from "../runtime/graph-failure-explain-artifact-codec";
 import { readGraphHostEffectExplainArtifactEnvelope } from "../runtime/graph-host-effect-explain-artifact-codec";
 import { readGraphNodeInputResolutionArtifactEnvelope } from "../runtime/graph-input-resolution-artifact-codec";
 import { readGraphOutputExplainArtifactEnvelope } from "../runtime/graph-output-explain-artifact-codec";
@@ -68,6 +69,7 @@ import type {
   GraphCompileArtifactV1,
   GraphCompileRunLinkArtifactV1,
   GraphExecutionStage,
+  GraphFailureExplainArtifactV1,
   GraphHostEffectExplainArtifactV1,
   GraphNodeDiagnosticsView,
   GraphNodeDiagnosticsViewModel,
@@ -1227,6 +1229,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphFailureExplainArtifact(
+    diagnostics: unknown,
+  ): GraphFailureExplainArtifactV1 | null {
+    return (
+      readGraphFailureExplainArtifactEnvelope(diagnostics)?.artifact ?? null
+    );
+  }
+
   function toActiveGraphOutputExplainArtifact(
     diagnostics: unknown,
   ): GraphOutputExplainArtifactV1 | null {
@@ -1827,6 +1837,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphCompileRunLinkArtifact = computed(() =>
     toActiveGraphCompileRunLinkArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphFailureExplainArtifact = computed(() =>
+    toActiveGraphFailureExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeGraphOutputExplainArtifact = computed(() =>
@@ -2778,6 +2792,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphCompileArtifact,
     activeGraphNodeInputResolutionArtifact,
     activeGraphCompileRunLinkArtifact,
+    activeGraphFailureExplainArtifact,
     activeGraphOutputExplainArtifact,
     activeGraphHostEffectExplainArtifact,
     activeGraphReuseExplainArtifact,

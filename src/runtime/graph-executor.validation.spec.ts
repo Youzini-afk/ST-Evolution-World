@@ -39,6 +39,10 @@ import {
   validateGraph,
 } from "./graph-executor";
 import {
+  createGraphFailureExplainArtifactEnvelope,
+  readGraphFailureExplainArtifactEnvelope,
+} from "./graph-failure-explain-artifact-codec";
+import {
   createGraphHostEffectExplainArtifactEnvelope,
   readGraphHostEffectExplainArtifactEnvelope,
 } from "./graph-host-effect-explain-artifact-codec";
@@ -4462,6 +4466,318 @@ async function runValidationSpec(): Promise<void> {
     `Expected malformed or sparse reuse explain payloads to conservatively degrade without leaking internals. Actual: ${JSON.stringify(degradedReuseExplain)}`,
   );
 
+  const failureExplainEnvelope = createGraphFailureExplainArtifactEnvelope({
+    plan: skipPilotRepeat.compilePlan,
+    runArtifact: skipPilotRepeat.runArtifact,
+    result: skipPilotRepeat,
+    compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+    outputExplainArtifact: outputExplainEnvelope?.artifact,
+    hostEffectExplainArtifact: hostEffectExplainEnvelope?.artifact,
+    reuseExplainArtifact: reuseExplainEnvelope?.artifact,
+  });
+  assert(
+    failureExplainEnvelope?.kind === "graph_failure_explain_artifact" &&
+      failureExplainEnvelope.version === "v1" &&
+      failureExplainEnvelope.artifact.graphId ===
+        skipPilotRepeat.runArtifact?.graphId &&
+      failureExplainEnvelope.artifact.runId === skipPilotRepeat.requestId &&
+      failureExplainEnvelope.artifact.compileFingerprint ===
+        skipPilotRepeat.compilePlan?.compileFingerprint &&
+      failureExplainEnvelope.artifact.summary.runFailed === false &&
+      failureExplainEnvelope.artifact.summary.failureKind === "none" &&
+      failureExplainEnvelope.artifact.summary.failedNodeCount === 0 &&
+      failureExplainEnvelope.artifact.summary.notReachedNodeCount === 0 &&
+      failureExplainEnvelope.artifact.summary.executedBeforeFailureNodeCount ===
+        3 &&
+      failureExplainEnvelope.artifact.failedNodeIds.join(",") === "" &&
+      failureExplainEnvelope.artifact.notReachedNodeIds.join(",") === "",
+    `Expected success run to project no_failure contract with conservative executed counts. Actual: ${JSON.stringify(failureExplainEnvelope)}`,
+  );
+  assert(
+    failureExplainEnvelope?.artifact.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.failureDisposition}:${node.failureObserved}:${node.outputObservedBeforeFailure}:${node.producedHostEffectBeforeFailure}:${node.inputResolutionObserved}:${node.reuseDisposition}`,
+      )
+      .join(",") ===
+      "src_text:not_failed:false:true:false:true:not_applicable,filter_text:not_failed:false:true:false:true:skipped_reuse,out_reply:not_failed:false:false:true:true:ineligible_executed",
+    `Expected success failure explain records to remain observational only and preserve output/host/input/reuse context. Actual: ${JSON.stringify(failureExplainEnvelope?.artifact.nodes)}`,
+  );
+  assert(
+    !JSON.stringify(failureExplainEnvelope).includes('"outputs"') &&
+      !JSON.stringify(failureExplainEnvelope).includes('"hostWrites"') &&
+      !JSON.stringify(failureExplainEnvelope).includes(
+        '"hostCommitContracts"',
+      ) &&
+      !JSON.stringify(failureExplainEnvelope).includes('"runtimeOnly"') &&
+      !JSON.stringify(failureExplainEnvelope).includes('"scopeKey"') &&
+      !JSON.stringify(failureExplainEnvelope).includes("skip-pilot") &&
+      !JSON.stringify(failureExplainEnvelope).includes("repeated"),
+    `Expected failure explain artifact to avoid leaking raw payloads and runtime-only internals. Actual: ${JSON.stringify(failureExplainEnvelope)}`,
+  );
+
+  const executeFailureExplainEnvelope =
+    createGraphFailureExplainArtifactEnvelope({
+      plan: handlerFailureResult.compilePlan,
+      runArtifact: handlerFailureResult.runArtifact,
+      result: handlerFailureResult,
+      compileRunLinkArtifact: failureCompileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: failureOutputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: createGraphHostEffectExplainArtifactEnvelope({
+        plan: handlerFailureResult.compilePlan,
+        runArtifact: handlerFailureResult.runArtifact,
+        result: { moduleResults: handlerFailureResult.moduleResults },
+        compileRunLinkArtifact: failureCompileRunLinkEnvelope?.artifact,
+        outputExplainArtifact: failureOutputExplainEnvelope?.artifact,
+      })?.artifact,
+      reuseExplainArtifact: null,
+    });
+  assert(
+    executeFailureExplainEnvelope?.artifact.summary.runFailed === true &&
+      executeFailureExplainEnvelope.artifact.summary.failedStage ===
+        "execute" &&
+      executeFailureExplainEnvelope.artifact.summary.failureKind ===
+        "runtime_error" &&
+      executeFailureExplainEnvelope.artifact.summary.primaryFailedNodeId ===
+        "node_reply" &&
+      executeFailureExplainEnvelope.artifact.summary.primaryFailedModuleId ===
+        "out_reply_inject" &&
+      executeFailureExplainEnvelope.artifact.summary.failedNodeCount === 1 &&
+      executeFailureExplainEnvelope.artifact.summary.notReachedNodeCount ===
+        0 &&
+      executeFailureExplainEnvelope.artifact.summary
+        .executedBeforeFailureNodeCount === 2 &&
+      executeFailureExplainEnvelope.artifact.failedNodeIds.join(",") ===
+        "node_reply",
+    `Expected execute-stage single-node failure to expose primary failure anchor conservatively. Actual: ${JSON.stringify(executeFailureExplainEnvelope)}`,
+  );
+  assert(
+    executeFailureExplainEnvelope?.artifact.nodes.find(
+      (node) => node.nodeId === "node_reply",
+    )?.failureDisposition === "failed" &&
+      executeFailureExplainEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "node_reply",
+      )?.failureReasonKind === "runtime_error" &&
+      executeFailureExplainEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "node_reply",
+      )?.stage === "execute",
+    `Expected failed node record to preserve conservative execute/runtime_error attribution. Actual: ${JSON.stringify(executeFailureExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const notReachedFailureExplainEnvelope =
+    createGraphFailureExplainArtifactEnvelope({
+      plan: failSkipResult.compilePlan,
+      runArtifact: failSkipResult.runArtifact,
+      result: failSkipResult,
+      compileRunLinkArtifact: notReachedCompileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: notReachedOutputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: null,
+      reuseExplainArtifact: null,
+    });
+  assert(
+    notReachedFailureExplainEnvelope?.artifact.summary.runFailed === true &&
+      notReachedFailureExplainEnvelope.artifact.summary.failedStage ===
+        "execute" &&
+      notReachedFailureExplainEnvelope.artifact.summary.failedNodeCount === 1 &&
+      notReachedFailureExplainEnvelope.artifact.summary.notReachedNodeCount ===
+        1 &&
+      notReachedFailureExplainEnvelope.artifact.notReachedNodeIds.join(",") ===
+        "out_reply" &&
+      notReachedFailureExplainEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )?.failureDisposition === "not_reached" &&
+      notReachedFailureExplainEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )?.failureReasonKind === "dependency_not_reached",
+    `Expected downstream node after execute failure to conservatively project as not_reached. Actual: ${JSON.stringify(notReachedFailureExplainEnvelope)}`,
+  );
+
+  const graphFailureWithoutNodeEnvelope =
+    createGraphFailureExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_graph_level_failure",
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        status: "failed",
+        phase: "terminal",
+        phaseLabel: "失败",
+        failedStage: "compile",
+        errorSummary:
+          "compile exploded with internal details that should stay summarized\nsecret payload line",
+        eventCount: 0,
+        updatedAt: 1,
+      },
+      result: {
+        moduleResults: [],
+        nodeTraces: [],
+        inputResolutionArtifact: undefined,
+      },
+      compileRunLinkArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_graph_level_failure",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        fingerprintVersion: 1,
+        nodeCount: compilePlanFixture.nodes.length,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: compilePlanFixture.nodes.map((node) => ({
+          nodeId: node.nodeId,
+          moduleId: node.moduleId,
+          nodeFingerprint: node.nodeFingerprint,
+          compileOrder: node.order,
+          dependsOn: [...node.dependsOn],
+          isTerminal: node.isTerminal,
+          isSideEffect: node.isSideEffectNode,
+          runDisposition: "not_reached",
+          includedInFinalOutputs: false,
+          producedHostEffect: false,
+          inputResolutionObserved: false,
+        })),
+      },
+      outputExplainArtifact: null,
+      hostEffectExplainArtifact: null,
+      reuseExplainArtifact: null,
+    });
+  assert(
+    graphFailureWithoutNodeEnvelope?.artifact.summary.runFailed === true &&
+      graphFailureWithoutNodeEnvelope.artifact.summary.failedStage ===
+        "compile" &&
+      graphFailureWithoutNodeEnvelope.artifact.summary.failureKind ===
+        "compile_error" &&
+      !graphFailureWithoutNodeEnvelope.artifact.summary.primaryFailedNodeId &&
+      graphFailureWithoutNodeEnvelope.artifact.summary.failedNodeCount === 0 &&
+      graphFailureWithoutNodeEnvelope.artifact.summary.notReachedNodeCount ===
+        0 &&
+      graphFailureWithoutNodeEnvelope.artifact.summary.errorSummary ===
+        "compile exploded with internal details that should stay summarized" &&
+      graphFailureWithoutNodeEnvelope.artifact.nodes.every(
+        (node) => node.failureDisposition === "not_failed",
+      ),
+    `Expected graph-level failure without node anchor to remain conservative and summarized. Actual: ${JSON.stringify(graphFailureWithoutNodeEnvelope)}`,
+  );
+
+  const degradedFailureExplain = readGraphFailureExplainArtifactEnvelope({
+    bridge: {
+      graph_failure_explain_artifact: {
+        kind: "graph_failure_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          compileFingerprint: "compile_fp_sparse",
+          nodeCount: -5,
+          failedNodeIds: ["node_sparse", 2],
+          notReachedNodeIds: ["node_wait", { bad: true }],
+          summary: {
+            runFailed: true,
+            failedStage: "made_up_stage",
+            failureKind: "made_up_kind",
+            failedNodeCount: -1,
+            notReachedNodeCount: -2,
+            executedBeforeFailureNodeCount: -3,
+            errorSummary: "visible summary\nsecret line",
+            failureEvidenceSources: ["run_status", "nope"],
+            payload: { leak: true },
+          },
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "out_reply_inject",
+              nodeFingerprint: "node_fp_sparse",
+              compileOrder: -2,
+              runDisposition: "failed",
+              failureDisposition: "failed",
+              failureObserved: true,
+              stage: "execute",
+              failureReasonKind: "runtime_error",
+              isTerminal: true,
+              isSideEffect: true,
+              outputObservedBeforeFailure: true,
+              outputProjectionKind: "failed",
+              producedHostEffectBeforeFailure: true,
+              hostEffectProjectionKind: "failed",
+              inputResolutionObserved: true,
+              reuseDisposition: "made_up_reuse",
+              errorSummary: "node failure summary\nstack: secret",
+              outputs: { leak: true },
+              runtimeOnly: { leak: true },
+            },
+            {
+              nodeId: "node_wait",
+              moduleId: "flt_mvu_strip",
+              nodeFingerprint: "node_fp_wait",
+              compileOrder: 7,
+              runDisposition: "not_reached",
+              failureDisposition: "not_reached",
+              failureObserved: false,
+              stage: "execute",
+              failureReasonKind: "dependency_not_reached",
+              isTerminal: false,
+              isSideEffect: false,
+              outputObservedBeforeFailure: false,
+              outputProjectionKind: "not_reached",
+              producedHostEffectBeforeFailure: false,
+              hostEffectProjectionKind: "not_reached",
+              inputResolutionObserved: false,
+              reuseDisposition: "not_applicable",
+            },
+            {
+              nodeId: "broken_only",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedFailureExplain?.artifact.nodeCount === 0 &&
+      degradedFailureExplain.artifact.summary.failedStage === "unknown" &&
+      degradedFailureExplain.artifact.summary.failureKind === "unknown" &&
+      degradedFailureExplain.artifact.summary.failedNodeCount === 0 &&
+      degradedFailureExplain.artifact.summary.notReachedNodeCount === 0 &&
+      degradedFailureExplain.artifact.summary.executedBeforeFailureNodeCount ===
+        0 &&
+      degradedFailureExplain.artifact.summary.errorSummary ===
+        "visible summary" &&
+      degradedFailureExplain.artifact.summary.failureEvidenceSources.join(
+        ",",
+      ) === "run_status" &&
+      degradedFailureExplain.artifact.failedNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedFailureExplain.artifact.notReachedNodeIds.join(",") ===
+        "node_wait" &&
+      degradedFailureExplain.artifact.nodes.length === 2 &&
+      degradedFailureExplain.artifact.nodes[0]?.compileOrder === 0 &&
+      degradedFailureExplain.artifact.nodes[0]?.reuseDisposition ===
+        "not_applicable" &&
+      degradedFailureExplain.artifact.nodes[0]?.errorSummary ===
+        "node failure summary" &&
+      !JSON.stringify(degradedFailureExplain).includes('"outputs"') &&
+      !JSON.stringify(degradedFailureExplain).includes('"runtimeOnly"') &&
+      !JSON.stringify(degradedFailureExplain).includes('"payload"'),
+    `Expected malformed or sparse failure explain payloads to conservatively degrade without leaking runtime internals. Actual: ${JSON.stringify(degradedFailureExplain)}`,
+  );
+
+  const failureExplainRoundtrip = readGraphFailureExplainArtifactEnvelope({
+    bridge: {
+      graph_failure_explain_artifact: {
+        kind: "graph_failure_explain_artifact",
+        version: "v1",
+        artifact: executeFailureExplainEnvelope?.artifact,
+      },
+    },
+  });
+  assert(
+    failureExplainRoundtrip?.artifact.compileFingerprint ===
+      executeFailureExplainEnvelope?.artifact.compileFingerprint &&
+      failureExplainRoundtrip?.artifact.summary.primaryFailedNodeId ===
+        executeFailureExplainEnvelope?.artifact.summary.primaryFailedNodeId &&
+      JSON.stringify(failureExplainRoundtrip?.artifact.summary) ===
+        JSON.stringify(executeFailureExplainEnvelope?.artifact.summary),
+    `Expected failure explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(failureExplainRoundtrip)}`,
+  );
+
   const eligibleButExecutedGraph = makePlanExecutionGraph();
   const eligibleButExecutedPlan = compileGraphPlan(eligibleButExecutedGraph);
   const eligibleButExecutedTrace = eligibleButExecutedPlan.nodes.find(
@@ -5336,6 +5652,22 @@ async function runValidationSpec(): Promise<void> {
         "out_reply",
     `Expected workflow bridge diagnostics to expose stable compile-run link artifact surface aligned with compile fingerprint and run facts. Actual: ${JSON.stringify(bridgeCompileRunLinkArtifact)}`,
   );
+  const bridgeFailureExplainArtifact = readGraphFailureExplainArtifactEnvelope(
+    bridgeDiagnosticsWithCompileArtifact,
+  );
+  assert(
+    bridgeFailureExplainArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeFailureExplainArtifact.artifact.runId ===
+        skipPilotRepeat.requestId &&
+      bridgeFailureExplainArtifact.artifact.summary.runFailed === false &&
+      bridgeFailureExplainArtifact.artifact.summary.failureKind === "none" &&
+      bridgeFailureExplainArtifact.artifact.summary.failedNodeCount === 0 &&
+      bridgeFailureExplainArtifact.artifact.nodes.find(
+        (node) => node.nodeId === "filter_text",
+      )?.reuseDisposition === "skipped_reuse",
+    `Expected workflow bridge diagnostics to expose stable failure explain artifact surface for successful runs without misclassifying reuse as failure. Actual: ${JSON.stringify(bridgeFailureExplainArtifact)}`,
+  );
   const bridgeHostEffectExplainArtifact =
     readGraphHostEffectExplainArtifactEnvelope(
       bridgeDiagnosticsWithCompileArtifact,
@@ -5389,6 +5721,17 @@ async function runValidationSpec(): Promise<void> {
           node.runDisposition === "skipped_reuse",
       ),
     `Expected store read surface to consume graph compile-run link artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeCompileRunLinkArtifact)}`,
+  );
+  const activeFailureExplainArtifact = store.activeGraphFailureExplainArtifact;
+  assert(
+    activeFailureExplainArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeFailureExplainArtifact.runId === skipPilotRepeat.requestId &&
+      activeFailureExplainArtifact.summary.failureEvidenceSources.includes(
+        "compile_run_link",
+      ) &&
+      activeFailureExplainArtifact.summary.failureKind === "none",
+    `Expected store read surface to consume graph failure explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeFailureExplainArtifact)}`,
   );
   const activeOutputExplainArtifact = store.activeGraphOutputExplainArtifact;
   assert(

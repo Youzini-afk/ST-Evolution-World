@@ -7,6 +7,7 @@ import {
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
 } from "./graph-document-codec";
+import { readGraphFailureExplainArtifactEnvelope } from "./graph-failure-explain-artifact-codec";
 import { readGraphHostEffectExplainArtifactEnvelope } from "./graph-host-effect-explain-artifact-codec";
 import { readGraphOutputExplainArtifactEnvelope } from "./graph-output-explain-artifact-codec";
 import { readGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
@@ -532,6 +533,9 @@ type WorkflowBridgeFacts = {
   graph_compile_run_link_artifact?: ReturnType<
     typeof readGraphCompileRunLinkArtifactEnvelope
   >;
+  graph_failure_explain_artifact?: ReturnType<
+    typeof readGraphFailureExplainArtifactEnvelope
+  >;
   graph_host_effect_explain_artifact?: ReturnType<
     typeof readGraphHostEffectExplainArtifactEnvelope
   >;
@@ -607,6 +611,13 @@ function normalizeWorkflowBridgeDiagnostics(
   });
   if (graphCompileRunLinkArtifact) {
     normalized.graph_compile_run_link_artifact = graphCompileRunLinkArtifact;
+  }
+
+  const graphFailureExplainArtifact = readGraphFailureExplainArtifactEnvelope({
+    bridge: bridgeRecord,
+  });
+  if (graphFailureExplainArtifact) {
+    normalized.graph_failure_explain_artifact = graphFailureExplainArtifact;
   }
 
   const graphHostEffectExplainArtifact =

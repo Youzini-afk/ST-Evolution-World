@@ -698,6 +698,93 @@ export interface GraphReuseExplainArtifactEnvelope {
   artifact: GraphReuseExplainArtifactV1;
 }
 
+export type GraphFailureExplainStageV1 = GraphExecutionStage | "unknown";
+
+export type GraphFailureExplainKindV1 =
+  | "none"
+  | "validation_error"
+  | "compile_error"
+  | "runtime_error"
+  | "unknown";
+
+export type GraphFailureExplainReasonKindV1 =
+  | "none"
+  | "validation_error"
+  | "compile_error"
+  | "runtime_error"
+  | "dependency_not_reached"
+  | "unknown";
+
+export type GraphFailureExplainDispositionV1 =
+  | "not_failed"
+  | "failed"
+  | "not_reached";
+
+export type GraphFailureExplainEvidenceSourceV1 =
+  | "run_status"
+  | "failed_stage"
+  | "run_error_summary"
+  | "run_latest_node"
+  | "node_trace_error"
+  | "module_result_error"
+  | "compile_run_link"
+  | "input_resolution"
+  | "output_explain"
+  | "host_effect_explain"
+  | "reuse_explain";
+
+export interface GraphFailureExplainNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  runDisposition: GraphCompileRunLinkDispositionV1;
+  failureDisposition: GraphFailureExplainDispositionV1;
+  failureObserved: boolean;
+  stage: GraphFailureExplainStageV1;
+  failureReasonKind: GraphFailureExplainReasonKindV1;
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  outputObservedBeforeFailure: boolean;
+  outputProjectionKind: GraphOutputExplainProjectionKindV1;
+  producedHostEffectBeforeFailure: boolean;
+  hostEffectProjectionKind: GraphHostEffectExplainProjectionKindV1;
+  inputResolutionObserved: boolean;
+  reuseDisposition: GraphReuseExplainFinalDispositionV1;
+  errorSummary?: string;
+}
+
+export interface GraphFailureExplainSummaryV1 {
+  runFailed: boolean;
+  failedStage: GraphFailureExplainStageV1;
+  failureKind: GraphFailureExplainKindV1;
+  primaryFailedNodeId?: string;
+  primaryFailedModuleId?: string;
+  failedNodeCount: number;
+  notReachedNodeCount: number;
+  executedBeforeFailureNodeCount: number;
+  errorSummary?: string;
+  failureEvidenceSources: GraphFailureExplainEvidenceSourceV1[];
+}
+
+export interface GraphFailureExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  summary: GraphFailureExplainSummaryV1;
+  failedNodeIds: string[];
+  notReachedNodeIds: string[];
+  nodes: GraphFailureExplainNodeRecordV1[];
+}
+
+export interface GraphFailureExplainArtifactEnvelope {
+  kind: "graph_failure_explain_artifact";
+  version: "v1";
+  artifact: GraphFailureExplainArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;
