@@ -32,7 +32,13 @@ import type {
   GraphNodeDirtyReason,
   GraphNodeExecutionDecision,
   GraphNodeExecutionDecisionReason,
+  GraphNodeInputMissingReason,
+  GraphNodeInputResolutionArtifactV1,
+  GraphNodeInputResolutionNodeRecordV1,
+  GraphNodeInputResolutionStatus,
   GraphNodeInputSource,
+  GraphNodeInputSourceKind,
+  GraphNodeInputValueSummary,
   GraphNodeReuseReason,
   GraphNodeReuseVerdict,
   GraphReuseSummary,
@@ -1474,6 +1480,242 @@ function createInputFingerprint(
   );
 }
 
+function createValueSummary(value: unknown): GraphNodeInputValueSummary {
+  const valueType: GraphNodeInputValueSummary["valueType"] =
+    value === null
+      ? "null"
+      : value === undefined
+        ? "undefined"
+        : Array.isArray(value)
+          ? "array"
+          : typeof value === "string"
+            ? "string"
+            : typeof value === "number"
+              ? "number"
+              : typeof value === "boolean"
+                ? "boolean"
+                : typeof value === "object"
+                  ? "object"
+                  : "unknown";
+  const rawPreview =
+    value === undefined
+      ? ""
+      : typeof value === "string"
+        ? value
+        : typeof value === "number" || typeof value === "boolean"
+          ? String(value)
+          : value === null
+            ? "null"
+            : stableSerialize(value);
+  const valuePreview = rawPreview.slice(0, 160);
+
+  return {
+    valuePreview,
+    valueFingerprint: hashFingerprint(
+      stableSerialize({
+        scope: "graph_node_input_value_summary",
+        version: 1,
+        value,
+      }),
+    ),
+    valueType,
+    isTruncated: rawPreview.length > valuePreview.length,
+  };
+}
+
+function resolveInputSourceKind(params: {
+  hasObservedEdge: boolean;
+  hasContextValue: boolean;
+  isDefaulted: boolean;
+  hasValue: boolean;
+}): GraphNodeInputSourceKind {
+  if (params.hasObservedEdge) {
+    return "edge";
+  }
+  if (params.hasContextValue) {
+    return "context";
+  }
+  if (params.isDefaulted) {
+    return "default";
+  }
+  if (params.hasValue) {
+    return "constant";
+  }
+  return "unknown";
+}
+
+function resolveInputResolutionStatus(params: {
+  hasValue: boolean;
+  isDefaulted: boolean;
+  hasObservedEdge: boolean;
+  hasContextValue: boolean;
+}): GraphNodeInputResolutionStatus {
+  if (params.isDefaulted) {
+    return "defaulted";
+  }
+  if (params.hasValue || params.hasObservedEdge || params.hasContextValue) {
+    return "resolved";
+  }
+  return "missing";
+}
+
+function resolveInputMissingReason(params: {
+  status: GraphNodeInputResolutionStatus;
+  hasConfiguredEdge: boolean;
+  hasObservedEdge: boolean;
+  hasValue: boolean;
+}): GraphNodeInputMissingReason | undefined {
+  if (params.status !== "missing") {
+    return undefined;
+  }
+  if (params.hasConfiguredEdge && !params.hasObservedEdge) {
+    return "upstream_unavailable";
+  }
+  if (params.hasConfiguredEdge && params.hasObservedEdge && !params.hasValue) {
+    return "value_unavailable";
+  }
+  return "no_observed_source";
+}
+
+function createNodeInputResolutionRecord(params: {
+  node: WorkbenchNode;
+  planNode: GraphCompilePlanNode;
+  graph: WorkbenchGraph;
+  inputs: Record<string, any>;
+  inputSources: GraphNodeInputSource[];
+  stableContextInputs?: Record<string, unknown>;
+}): GraphNodeInputResolutionNodeRecordV1 {
+  const blueprint = getModuleBlueprint(params.node.moduleId);
+  const declaredInputKeys = new Set(
+    blueprint.ports
+      .filter((port) => port.direction === "in")
+      .map((port) => port.id),
+  );
+  for (const key of Object.keys(params.inputs)) {
+    declaredInputKeys.add(key);
+  }
+  for (const key of Object.keys(params.stableContextInputs ?? {})) {
+    declaredInputKeys.add(key);
+  }
+  for (const source of params.inputSources) {
+    declaredInputKeys.add(source.targetPort);
+  }
+
+  const inputs = [...declaredInputKeys]
+    .sort((left, right) => left.localeCompare(right))
+    .map((inputKey) => {
+      const port = blueprint.ports.find(
+        (candidate) =>
+          candidate.direction === "in" && candidate.id === inputKey,
+      );
+      const hasValue = Object.prototype.hasOwnProperty.call(
+        params.inputs,
+        inputKey,
+      );
+      const inputValue = hasValue ? params.inputs[inputKey] : undefined;
+      const observedSources = params.inputSources.filter(
+        (source) => source.targetPort === inputKey,
+      );
+      const hasObservedEdge = observedSources.length > 0;
+      const hasConfiguredEdge = params.graph.edges.some(
+        (edge) =>
+          edge.target === params.node.id && edge.targetPort === inputKey,
+      );
+      const hasContextValue = Boolean(
+        params.stableContextInputs &&
+        Object.prototype.hasOwnProperty.call(
+          params.stableContextInputs,
+          inputKey,
+        ),
+      );
+      const contextValue = hasContextValue
+        ? params.stableContextInputs?.[inputKey]
+        : undefined;
+      const isDefaulted =
+        !hasValue &&
+        !hasObservedEdge &&
+        !hasContextValue &&
+        Boolean(port?.optional);
+      const status = resolveInputResolutionStatus({
+        hasValue,
+        isDefaulted,
+        hasObservedEdge,
+        hasContextValue,
+      });
+      const sourceKind = resolveInputSourceKind({
+        hasObservedEdge,
+        hasContextValue,
+        isDefaulted,
+        hasValue,
+      });
+      const primaryObservedSource = observedSources[0];
+      const resolvedValue = hasValue
+        ? inputValue
+        : hasContextValue
+          ? contextValue
+          : undefined;
+      const missingReason = resolveInputMissingReason({
+        status,
+        hasConfiguredEdge,
+        hasObservedEdge,
+        hasValue,
+      });
+
+      return {
+        inputKey,
+        resolutionStatus: status,
+        sourceKind,
+        ...(primaryObservedSource?.sourceNodeId
+          ? { sourceNodeId: primaryObservedSource.sourceNodeId }
+          : {}),
+        ...(primaryObservedSource?.sourcePort
+          ? { sourcePort: primaryObservedSource.sourcePort }
+          : {}),
+        isDefaulted,
+        ...(missingReason ? { missingReason } : {}),
+        ...(status !== "missing" && status !== "unknown"
+          ? { valueSummary: createValueSummary(resolvedValue) }
+          : {}),
+      };
+    });
+
+  return {
+    nodeId: params.node.id,
+    moduleId: params.node.moduleId,
+    nodeFingerprint: params.planNode.nodeFingerprint,
+    inputs,
+  };
+}
+
+function createInputResolutionArtifact(params: {
+  runId: string;
+  graphId: string;
+  compileFingerprint?: string;
+  moduleResults: ModuleExecutionResult[];
+}): GraphNodeInputResolutionArtifactV1 {
+  return {
+    runId: params.runId,
+    graphId: params.graphId,
+    ...(params.compileFingerprint
+      ? { compileFingerprint: params.compileFingerprint }
+      : {}),
+    nodes: params.moduleResults
+      .map((result) => result.inputResolution)
+      .filter((record): record is GraphNodeInputResolutionNodeRecordV1 =>
+        Boolean(record),
+      )
+      .map((record) => ({
+        ...record,
+        inputs: record.inputs.map((input) => ({
+          ...input,
+          ...(input.valueSummary
+            ? { valueSummary: { ...input.valueSummary } }
+            : {}),
+        })),
+      })),
+  };
+}
+
 function createDirtySetSummary(
   entries: GraphDirtySetEntry[],
 ): GraphDirtySetSummary {
@@ -2147,6 +2389,14 @@ export async function executeCompiledGraph(
       nodeId: node.id,
       executionDecision,
     });
+    const inputResolution = createNodeInputResolutionRecord({
+      node,
+      planNode,
+      graph,
+      inputs,
+      inputSources,
+      stableContextInputs,
+    });
     const nodeTraceBase = {
       ...createNodeTraceBase(planNode, nodeStart, inputKeys),
       inputFingerprint,
@@ -2187,6 +2437,7 @@ export async function executeCompiledGraph(
         nodeFingerprint: planNode.nodeFingerprint,
         inputFingerprint,
         inputSources,
+        inputResolution,
         isDirty,
         dirtyReason,
         outputs: reusedOutputs,
@@ -2318,6 +2569,7 @@ export async function executeCompiledGraph(
         nodeFingerprint: planNode.nodeFingerprint,
         inputFingerprint,
         inputSources,
+        inputResolution,
         isDirty,
         dirtyReason,
         outputs,
@@ -2386,6 +2638,7 @@ export async function executeCompiledGraph(
         nodeFingerprint: planNode.nodeFingerprint,
         inputFingerprint,
         inputSources,
+        inputResolution,
         isDirty,
         dirtyReason,
         outputs: {},
@@ -2916,6 +3169,12 @@ export async function executeGraph(
       ok: true,
       requestId: context.requestId,
       compileArtifact,
+      inputResolutionArtifact: createInputResolutionArtifact({
+        runId: context.requestId,
+        graphId: graph.id,
+        compileFingerprint: compilePlan.compileFingerprint,
+        moduleResults: execution.moduleResults,
+      }),
       ...buildRunObservation({
         graph,
         requestId: context.requestId,
@@ -3033,6 +3292,13 @@ export async function executeGraph(
       compileArtifact: createGraphCompileArtifactEnvelope({
         plan: compilePlan,
       })?.artifact,
+      inputResolutionArtifact: createInputResolutionArtifact({
+        runId: context.requestId,
+        graphId: graph.id,
+        compileFingerprint: compilePlan.compileFingerprint,
+        moduleResults:
+          error instanceof GraphExecutionStageError ? error.moduleResults : [],
+      }),
       ...buildRunObservation({
         graph,
         requestId: context.requestId,

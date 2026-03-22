@@ -24,6 +24,7 @@ import {
 } from "../runtime/floor-binding";
 import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artifact-codec";
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
+import { readGraphNodeInputResolutionArtifactEnvelope } from "../runtime/graph-input-resolution-artifact-codec";
 import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
 import { runWorkflow } from "../runtime/pipeline";
 import {
@@ -65,6 +66,7 @@ import type {
   GraphNodeDiagnosticsViewModel,
   GraphNodeDirtyReason,
   GraphNodeExecutionDecisionReason,
+  GraphNodeInputResolutionArtifactV1,
   GraphNodeReuseReason,
   GraphRunArtifact,
   GraphRunBlockingContract,
@@ -1190,6 +1192,15 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     return readGraphCompileArtifactEnvelope(diagnostics)?.artifact ?? null;
   }
 
+  function toActiveGraphNodeInputResolutionArtifact(
+    diagnostics: unknown,
+  ): GraphNodeInputResolutionArtifactV1 | null {
+    return (
+      readGraphNodeInputResolutionArtifactEnvelope(diagnostics)?.artifact ??
+      null
+    );
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1760,6 +1771,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphRunArtifact = computed(() =>
     toActiveGraphRunArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphNodeInputResolutionArtifact = computed(() =>
+    toActiveGraphNodeInputResolutionArtifact(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchNodeDiagnostics = computed(() =>
@@ -2693,6 +2708,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeWorkbenchDiagnosticsSummary,
     activeWorkbenchNodeDiagnostics,
     activeGraphCompileArtifact,
+    activeGraphNodeInputResolutionArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,

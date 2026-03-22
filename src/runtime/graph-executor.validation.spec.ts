@@ -32,6 +32,10 @@ import {
   validateGraph,
 } from "./graph-executor";
 import {
+  createGraphNodeInputResolutionArtifactEnvelope,
+  readGraphNodeInputResolutionArtifactEnvelope,
+} from "./graph-input-resolution-artifact-codec";
+import {
   createGraphRunSnapshotEnvelope,
   readGraphRunSnapshotEnvelope,
 } from "./graph-run-artifact-codec";
@@ -3415,6 +3419,151 @@ async function runValidationSpec(): Promise<void> {
         "missing_dep" &&
       degradedCompileArtifact.artifact.nodes[0]?.hostWriteSummary === undefined,
     `Expected malformed or sparse compile artifact payloads to conservatively degrade to stable defaults. Actual: ${JSON.stringify(degradedCompileArtifact)}`,
+  );
+
+  const inputResolutionEnvelope =
+    createGraphNodeInputResolutionArtifactEnvelope({
+      result: handlerFailureResult,
+    });
+  assert(
+    inputResolutionEnvelope?.kind === "graph_node_input_resolution_artifact" &&
+      inputResolutionEnvelope.version === "v1" &&
+      inputResolutionEnvelope.artifact.runId ===
+        handlerFailureResult.requestId &&
+      inputResolutionEnvelope.artifact.graphId ===
+        handlerFailureResult.runArtifact?.graphId &&
+      inputResolutionEnvelope.artifact.compileFingerprint ===
+        handlerFailureResult.runArtifact?.compileFingerprint &&
+      inputResolutionEnvelope.artifact.nodes.length ===
+        handlerFailureResult.moduleResults.length,
+    `Expected node input resolution facts to project into stable input artifact envelope. Actual: ${JSON.stringify(inputResolutionEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(inputResolutionEnvelope).includes("scopeKey") &&
+      !JSON.stringify(inputResolutionEnvelope).includes('"outputs"') &&
+      !JSON.stringify(inputResolutionEnvelope).includes('"trace"') &&
+      !JSON.stringify(inputResolutionEnvelope).includes('"hostWrites"'),
+    `Expected input resolution artifact envelope to omit runtime internals and full payloads. Actual: ${JSON.stringify(inputResolutionEnvelope)}`,
+  );
+  const resolvedNodeInput = inputResolutionEnvelope?.artifact.nodes.find(
+    (node) => node.nodeId === "node_transform",
+  );
+  const sourceInput = resolvedNodeInput?.inputs.find(
+    (item) => item.inputKey === "text",
+  );
+  assert(
+    sourceInput?.resolutionStatus === "resolved" &&
+      sourceInput.sourceKind === "edge" &&
+      sourceInput.sourceNodeId === "node_input" &&
+      sourceInput.sourcePort === "text" &&
+      sourceInput.isDefaulted === false &&
+      typeof sourceInput.valueSummary?.valueFingerprint === "string" &&
+      sourceInput.valueSummary.valueFingerprint.length > 0,
+    `Expected upstream edge-backed input resolution facts to be observable. Actual: ${JSON.stringify(sourceInput)}`,
+  );
+  const failingNodeInput = inputResolutionEnvelope?.artifact.nodes
+    .find((node) => node.nodeId === "node_reply")
+    ?.inputs.find((item) => item.inputKey === "text");
+  assert(
+    failingNodeInput?.resolutionStatus === "missing" &&
+      failingNodeInput.sourceKind === "unknown" &&
+      failingNodeInput.missingReason === "no_observed_source",
+    `Expected missing input explanation to stay conservative when no source is observed. Actual: ${JSON.stringify(failingNodeInput)}`,
+  );
+
+  const inputResolutionRoundtrip = readGraphNodeInputResolutionArtifactEnvelope(
+    {
+      bridge: {
+        graph_node_input_resolution_artifact: {
+          kind: "graph_node_input_resolution_artifact",
+          version: "v1",
+          artifact: inputResolutionEnvelope?.artifact,
+        },
+      },
+    },
+  );
+  assert(
+    inputResolutionRoundtrip?.artifact.runId ===
+      inputResolutionEnvelope?.artifact.runId &&
+      inputResolutionRoundtrip?.artifact.nodes.length ===
+        inputResolutionEnvelope?.artifact.nodes.length,
+    `Expected node input resolution envelope to roundtrip through stable read model. Actual: ${JSON.stringify(inputResolutionRoundtrip)}`,
+  );
+
+  const degradedInputResolution = readGraphNodeInputResolutionArtifactEnvelope({
+    bridge: {
+      graph_node_input_resolution_artifact: {
+        kind: "graph_node_input_resolution_artifact",
+        version: "v1",
+        artifact: {
+          runId: "run_sparse",
+          graphId: "graph_sparse",
+          compileFingerprint: 42,
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "src_user_input",
+              nodeFingerprint: "node_fp_sparse",
+              inputs: [
+                {
+                  inputKey: "userInput",
+                  resolutionStatus: "resolved",
+                  sourceKind: "context",
+                  isDefaulted: false,
+                  valueSummary: {
+                    valuePreview: "hello",
+                    valueFingerprint: "fp_value",
+                    valueType: "string",
+                    privatePayload: { raw: "should_not_survive" },
+                  },
+                  internalTrace: "omit_me",
+                },
+                {
+                  resolutionStatus: "missing",
+                },
+              ],
+            },
+            {
+              nodeId: "broken_only",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedInputResolution?.artifact.compileFingerprint === undefined &&
+      degradedInputResolution?.artifact.nodes.length === 1 &&
+      degradedInputResolution?.artifact.nodes[0]?.inputs.length === 1 &&
+      degradedInputResolution?.artifact.nodes[0]?.inputs[0]?.valueSummary
+        ?.valueFingerprint === "fp_value" &&
+      !JSON.stringify(degradedInputResolution).includes("privatePayload") &&
+      !JSON.stringify(degradedInputResolution).includes("internalTrace"),
+    `Expected malformed or sparse input resolution payloads to conservatively degrade without leaking internal fields. Actual: ${JSON.stringify(degradedInputResolution)}`,
+  );
+
+  const bridgeInputResolutionDiagnostics = buildWorkflowBridgeDiagnostics({
+    selection: selectWorkflowBridgeRoute({
+      input: {
+        flow_ids: [],
+      },
+      settings: {
+        workbench_graphs: [makeBaseGraph()],
+      },
+    }),
+    graphRunOverview: handlerFailureResult.runArtifact,
+    graphRunEvents: handlerFailureResult.runEvents,
+    graphCompilePlan: handlerFailureResult.compilePlan,
+    graphInputResolutionArtifact: inputResolutionEnvelope?.artifact,
+  });
+  const bridgeInputResolution = readGraphNodeInputResolutionArtifactEnvelope(
+    bridgeInputResolutionDiagnostics,
+  );
+  assert(
+    bridgeInputResolution?.artifact.runId === handlerFailureResult.requestId &&
+      bridgeInputResolution?.artifact.nodes.length ===
+        (inputResolutionEnvelope?.artifact.nodes.length ?? 0),
+    `Expected workflow bridge diagnostics to expose stable node input resolution artifact surface. Actual: ${JSON.stringify(bridgeInputResolution)}`,
   );
 
   const snapshotEnvelope = createGraphRunSnapshotEnvelope({

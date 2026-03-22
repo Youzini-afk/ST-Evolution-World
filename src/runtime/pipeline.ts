@@ -1,5 +1,6 @@
 import type {
   GraphCompilePlan,
+  GraphNodeInputResolutionArtifactEnvelope,
   GraphRunArtifact,
   GraphRunEvent,
   GraphRunSnapshotEnvelope,
@@ -12,6 +13,7 @@ import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
 import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
+import { createGraphNodeInputResolutionArtifactEnvelope } from "./graph-input-resolution-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
 import { uuidv4 } from "./helpers";
 import { injectReplyInstructionOnce } from "./injection";
@@ -50,6 +52,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_compile_artifact?: ReturnType<
     typeof createGraphCompileArtifactEnvelope
   >;
+  graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
   graph_run_overview?: GraphRunArtifact;
   graph_run_events?: GraphRunEvent[];
@@ -673,6 +676,7 @@ export function buildWorkflowBridgeDiagnostics(params: {
   graphRunOverview?: GraphRunArtifact;
   graphRunEvents?: GraphRunEvent[];
   graphCompilePlan?: GraphCompilePlan;
+  graphInputResolutionArtifact?: GraphNodeInputResolutionArtifactEnvelope["artifact"];
 }): Record<string, any> {
   const {
     selection,
@@ -680,6 +684,7 @@ export function buildWorkflowBridgeDiagnostics(params: {
     graphRunOverview,
     graphRunEvents,
     graphCompilePlan,
+    graphInputResolutionArtifact,
   } = params;
   const graphRunSnapshot = createGraphRunSnapshotEnvelope({
     overview: graphRunOverview,
@@ -689,6 +694,16 @@ export function buildWorkflowBridgeDiagnostics(params: {
   const graphCompileArtifact = createGraphCompileArtifactEnvelope({
     plan: graphCompilePlan ?? null,
   });
+  const graphNodeInputResolutionArtifact =
+    createGraphNodeInputResolutionArtifactEnvelope({
+      result: graphInputResolutionArtifact
+        ? {
+            requestId: graphInputResolutionArtifact.runId,
+            runArtifact: graphRunOverview,
+            inputResolutionArtifact: graphInputResolutionArtifact,
+          }
+        : null,
+    });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -706,6 +721,12 @@ export function buildWorkflowBridgeDiagnostics(params: {
       : {}),
     ...(graphCompileArtifact
       ? { graph_compile_artifact: graphCompileArtifact }
+      : {}),
+    ...(graphNodeInputResolutionArtifact
+      ? {
+          graph_node_input_resolution_artifact:
+            graphNodeInputResolutionArtifact,
+        }
       : {}),
     ...(graphRunSnapshot ? { graph_run_snapshot: graphRunSnapshot } : {}),
     ...(graphRunOverview ? { graph_run_overview: graphRunOverview } : {}),
@@ -822,6 +843,9 @@ async function runGraphWorkflow(
   let latestGraphRunOverview: GraphRunArtifact | undefined;
   let latestGraphRunEvents: GraphRunEvent[] | undefined;
   let latestGraphCompilePlan: GraphCompilePlan | undefined;
+  let latestGraphInputResolutionArtifact:
+    | GraphNodeInputResolutionArtifactEnvelope["artifact"]
+    | undefined;
   const bridgeDiagnostics = buildWorkflowBridgeDiagnostics({
     selection: bridgeRoute,
   });
@@ -899,6 +923,9 @@ async function runGraphWorkflow(
       latestGraphRunEvents = graphResult.runEvents ?? latestGraphRunEvents;
       latestGraphCompilePlan =
         graphResult.compilePlan ?? latestGraphCompilePlan;
+      latestGraphInputResolutionArtifact =
+        graphResult.inputResolutionArtifact ??
+        latestGraphInputResolutionArtifact;
 
       if (!graphResult.ok) {
         const reason = graphResult.reason ?? "graph workflow failed";
@@ -908,6 +935,7 @@ async function runGraphWorkflow(
           graphRunOverview: latestGraphRunOverview,
           graphRunEvents: latestGraphRunEvents,
           graphCompilePlan: latestGraphCompilePlan,
+          graphInputResolutionArtifact: latestGraphInputResolutionArtifact,
         });
         const failure = buildWorkflowFailureDiagnostic({
           stage: "dispatch",
@@ -943,6 +971,7 @@ async function runGraphWorkflow(
       graphRunOverview: latestGraphRunOverview,
       graphRunEvents: latestGraphRunEvents,
       graphCompilePlan: latestGraphCompilePlan,
+      graphInputResolutionArtifact: latestGraphInputResolutionArtifact,
     });
     persistWorkflowSummary({
       ok: true,
@@ -974,6 +1003,7 @@ async function runGraphWorkflow(
       failureOrigin,
       graphRunOverview: latestGraphRunOverview,
       graphRunEvents: latestGraphRunEvents,
+      graphInputResolutionArtifact: latestGraphInputResolutionArtifact,
     });
     const failure = buildWorkflowFailureDiagnostic({
       stage: failureOrigin === "cancelled" ? "cancelled" : "dispatch",

@@ -424,6 +424,71 @@ export interface GraphNodeTraceError {
   stack?: string;
 }
 
+export type GraphNodeInputResolutionStatus =
+  | "resolved"
+  | "missing"
+  | "defaulted"
+  | "unknown";
+
+export type GraphNodeInputSourceKind =
+  | "edge"
+  | "context"
+  | "default"
+  | "constant"
+  | "unknown";
+
+export type GraphNodeInputMissingReason =
+  | "upstream_unavailable"
+  | "value_unavailable"
+  | "no_observed_source"
+  | "unknown";
+
+export interface GraphNodeInputValueSummary {
+  valuePreview: string;
+  valueFingerprint: string;
+  valueType:
+    | "string"
+    | "number"
+    | "boolean"
+    | "array"
+    | "object"
+    | "null"
+    | "undefined"
+    | "unknown";
+  isTruncated: boolean;
+}
+
+export interface GraphNodeInputResolutionItemV1 {
+  inputKey: string;
+  resolutionStatus: GraphNodeInputResolutionStatus;
+  sourceKind: GraphNodeInputSourceKind;
+  sourceNodeId?: string;
+  sourcePort?: string;
+  isDefaulted: boolean;
+  missingReason?: GraphNodeInputMissingReason;
+  valueSummary?: GraphNodeInputValueSummary;
+}
+
+export interface GraphNodeInputResolutionNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  inputs: GraphNodeInputResolutionItemV1[];
+}
+
+export interface GraphNodeInputResolutionArtifactV1 {
+  runId: string;
+  graphId: string;
+  compileFingerprint?: string;
+  nodes: GraphNodeInputResolutionNodeRecordV1[];
+}
+
+export interface GraphNodeInputResolutionArtifactEnvelope {
+  kind: "graph_node_input_resolution_artifact";
+  version: "v1";
+  artifact: GraphNodeInputResolutionArtifactV1;
+}
+
 export type GraphNodeDirtyReason =
   | "initial_run"
   | "input_changed"
@@ -1012,6 +1077,7 @@ export interface ModuleExecutionResult {
   nodeFingerprint: string;
   inputFingerprint?: string;
   inputSources?: GraphNodeInputSource[];
+  inputResolution?: GraphNodeInputResolutionNodeRecordV1;
   isDirty?: boolean;
   dirtyReason?: GraphNodeDirtyReason;
   cacheKeyFacts?: GraphNodeCacheKeyFacts;
@@ -1205,6 +1271,7 @@ export interface GraphExecutionResult {
   runArtifact?: GraphRunArtifact;
   runEvents?: GraphRunEvent[];
   checkpointCandidate?: GraphRunCheckpointSummary;
+  inputResolutionArtifact?: GraphNodeInputResolutionArtifactV1;
   moduleResults: ModuleExecutionResult[];
   finalOutputs: Record<string, any>;
   elapsedMs: number;
