@@ -11,12 +11,16 @@
  *   - Do NOT open external plugin loading (internal-only for now)
  */
 
-import { getModuleBlueprint } from "../ui/components/graph/module-registry";
+import {
+  getModuleBlueprint,
+  getModuleMetadataSummary,
+} from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
   GraphCompilePlanNode,
   HostCommitContract,
   HostWriteDescriptor,
+  ModuleMetadataSemanticSummary,
   ModuleOutput,
   WorkbenchCapability,
   WorkbenchNode,
@@ -110,6 +114,11 @@ export interface NodeHandlerDescriptor {
   execute: NodeExecutionHandler;
   capability?: WorkbenchCapability;
   sideEffect?: WorkbenchSideEffectLevel;
+  metadataSummary?: {
+    semantic: ModuleMetadataSemanticSummary;
+    helpSummary?: string;
+    diagnosticsLabel?: string;
+  } | null;
   kind: "builtin" | "fallback";
   produceHostWriteDescriptors?: HostWriteDescriptorProducer;
   produceHostCommitContracts?: HostCommitContractProducer;
@@ -134,12 +143,20 @@ function normalizeCapability(
   sideEffect?: WorkbenchSideEffectLevel,
   kind?: NodeHandlerDescriptor["kind"],
   moduleId?: string,
+  metadataCapability?: ModuleMetadataSemanticSummary["capability"],
 ): WorkbenchCapability {
   if (capability) return capability;
+  if (metadataCapability) return metadataCapability;
   if (kind === "fallback") return "fallback";
   if (moduleId?.startsWith("src_")) return "source";
   if (sideEffect) return sideEffect;
   return "unknown";
+}
+
+function getStableMetadataSummary(
+  moduleId: string,
+): NodeHandlerDescriptor["metadataSummary"] {
+  return getModuleMetadataSummary(moduleId);
 }
 
 function normalizeLegacySideEffect(
@@ -165,11 +182,17 @@ function normalizeLegacySideEffect(
 function normalizeDescriptor(
   descriptor: NodeHandlerDescriptor,
 ): NodeHandlerDescriptor {
+  const metadataSummary =
+    descriptor.kind === "fallback"
+      ? null
+      : (descriptor.metadataSummary ??
+        getStableMetadataSummary(descriptor.moduleId));
   const capability = normalizeCapability(
     descriptor.capability,
     descriptor.sideEffect,
     descriptor.kind,
     descriptor.moduleId,
+    metadataSummary?.semantic.capability,
   );
   const normalizedSideEffect = normalizeLegacySideEffect(
     descriptor.sideEffect,
@@ -179,6 +202,7 @@ function normalizeDescriptor(
     ...descriptor,
     capability,
     sideEffect: normalizedSideEffect,
+    metadataSummary,
     produceHostWriteDescriptors:
       capability === "writes_host" && descriptor.kind !== "fallback"
         ? descriptor.produceHostWriteDescriptors
@@ -281,6 +305,7 @@ function createFallbackDescriptor(moduleId: string): NodeHandlerDescriptor {
     handlerId: "__fallback__",
     capability: "fallback",
     sideEffect: "unknown",
+    metadataSummary: null,
     kind: "fallback",
     execute: async ({ node, inputs }) => {
       const blueprint = getModuleBlueprint(node.moduleId);

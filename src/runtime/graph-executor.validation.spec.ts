@@ -1,3 +1,7 @@
+import {
+  getModuleMetadataSummary,
+  getModuleMetadataSurface,
+} from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
   GraphCompilePlan,
@@ -4062,6 +4066,50 @@ async function runValidationSpec(): Promise<void> {
     `Expected src_user_input descriptor capability to stay source while legacy sideEffect maps to reads_host. Actual: ${JSON.stringify(srcUserResolve.descriptor)}`,
   );
 
+  const sourceMetadata = getModuleMetadataSurface("src_user_input");
+  const filterMetadata = getModuleMetadataSurface("flt_mvu_strip");
+  const outputMetadata = getModuleMetadataSurface("out_reply_inject");
+  assert(
+    sourceMetadata?.semantic.capability === "source" &&
+      sourceMetadata.help?.summary === "读取当前触发图执行的用户输入文本。",
+    `Expected src_user_input metadata pilot summary to be exposed via blueprint. Actual: ${JSON.stringify(sourceMetadata)}`,
+  );
+  assert(
+    filterMetadata?.semantic.sideEffect === "pure" &&
+      filterMetadata.help?.summary === "剥离文本中的 MVU XML 块与相关产物。",
+    `Expected flt_mvu_strip metadata pilot summary to be exposed via blueprint. Actual: ${JSON.stringify(filterMetadata)}`,
+  );
+  assert(
+    outputMetadata?.semantic.capability === "writes_host" &&
+      outputMetadata.semantic.hostWriteHint?.operation ===
+        "inject_reply_instruction" &&
+      outputMetadata.help?.summary === "把指令文本写入宿主 reply instruction。",
+    `Expected out_reply_inject metadata pilot summary to carry host write hint. Actual: ${JSON.stringify(outputMetadata)}`,
+  );
+
+  const outputMetadataSummary = getModuleMetadataSummary("out_reply_inject");
+  assert(
+    outputMetadataSummary?.diagnosticsLabel ===
+      "reply_instruction:inject_reply_instruction",
+    `Expected registry metadata summary helper to reuse host write diagnostics label. Actual: ${JSON.stringify(outputMetadataSummary)}`,
+  );
+  assert(
+    srcUserResolve.descriptor.metadataSummary?.helpSummary ===
+      sourceMetadata?.help?.summary &&
+      srcUserResolve.descriptor.metadataSummary?.semantic.capability ===
+        sourceMetadata?.semantic.capability,
+    `Expected runtime descriptor to reuse source metadata summary instead of redefining it. Actual descriptor=${JSON.stringify(srcUserResolve.descriptor.metadataSummary)} blueprint=${JSON.stringify(sourceMetadata)}`,
+  );
+  const outReplyResolve = resolveNodeHandler("out_reply_inject");
+  assert(
+    outReplyResolve.descriptor.metadataSummary?.diagnosticsLabel ===
+      outputMetadataSummary?.diagnosticsLabel &&
+      outReplyResolve.descriptor.metadataSummary?.semantic.hostWriteHint
+        ?.operation ===
+        outputMetadataSummary?.semantic.hostWriteHint?.operation,
+    `Expected runtime descriptor and registry metadata summary helper to share the same host-write summary. Actual descriptor=${JSON.stringify(outReplyResolve.descriptor.metadataSummary)} summary=${JSON.stringify(outputMetadataSummary)}`,
+  );
+
   // 3. Registry resolves unregistered moduleId with explicit fallback
   const unknownResolve = resolveNodeHandler("__totally_unknown_module__");
   assert(
@@ -4080,6 +4128,17 @@ async function runValidationSpec(): Promise<void> {
     unknownResolve.descriptor.capability === "fallback" &&
       unknownResolve.descriptor.sideEffect === "unknown",
     `Expected unknown module fallback capability to stay 'fallback' while legacy sideEffect remains conservative. Actual: ${JSON.stringify(unknownResolve.descriptor)}`,
+  );
+  assert(
+    unknownResolve.descriptor.metadataSummary === null,
+    `Expected fallback descriptor metadata summary to stay null so fallback remains execution-only. Actual: ${JSON.stringify(unknownResolve.descriptor.metadataSummary)}`,
+  );
+  const fallbackBlueprintMetadata = getModuleMetadataSurface(
+    "pkg_prompt_assembly",
+  );
+  assert(
+    fallbackBlueprintMetadata === undefined,
+    `Expected fallback blueprint without pilot metadata not to grow UI/schema responsibilities. Actual: ${JSON.stringify(fallbackBlueprintMetadata)}`,
   );
 
   // 4. Executor success path without static handler map

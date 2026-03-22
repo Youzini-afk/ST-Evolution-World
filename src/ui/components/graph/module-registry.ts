@@ -4,6 +4,11 @@
 import type {
   HostWriteSummary,
   ModuleBlueprint,
+  ModuleMetadataConfigSummary,
+  ModuleMetadataDiagnosticsSummary,
+  ModuleMetadataHelpSummary,
+  ModuleMetadataSemanticSummary,
+  ModuleMetadataUiSummary,
   ModulePortDef,
 } from "./module-types";
 export type { ModuleBlueprint, ModulePortDef };
@@ -34,6 +39,92 @@ const withHostTargetHint = (
     hostTargetHint,
   },
 });
+
+function buildConfigSummary(
+  module: Pick<ModuleBlueprint, "configSchema">,
+): ModuleMetadataConfigSummary {
+  const schemaFieldKeys = (module.configSchema ?? []).map((field) => field.key);
+  return {
+    schemaFieldKeys,
+    schemaFieldCount: schemaFieldKeys.length,
+    hasSchema: schemaFieldKeys.length > 0,
+  };
+}
+
+function buildDiagnosticsSummary(
+  semantic: ModuleMetadataSemanticSummary,
+): ModuleMetadataDiagnosticsSummary {
+  const capabilityLabelMap: Record<
+    NonNullable<ModuleMetadataSemanticSummary["capability"]>,
+    string
+  > = {
+    unknown: "未知能力",
+    pure: "纯数据处理",
+    reads_host: "读取宿主",
+    writes_host: "写入宿主",
+    network: "网络调用",
+    source: "源节点",
+    fallback: "回退执行",
+  };
+  const sideEffectLabelMap: Record<
+    NonNullable<ModuleMetadataSemanticSummary["sideEffect"]>,
+    string
+  > = {
+    unknown: "副作用未知",
+    pure: "无宿主副作用",
+    reads_host: "仅读取宿主",
+    writes_host: "写入宿主",
+    network: "网络副作用",
+    source: "源侧读取",
+    fallback: "回退语义",
+  };
+  return {
+    capabilityLabel: capabilityLabelMap[semantic.capability ?? "unknown"],
+    sideEffectLabel: sideEffectLabelMap[semantic.sideEffect ?? "unknown"],
+    hostWriteLabel: semantic.hostWriteHint
+      ? `${semantic.hostWriteHint.targetType}:${semantic.hostWriteHint.operation}`
+      : undefined,
+  };
+}
+
+function withMetadataSurface(
+  module: ModuleBlueprint,
+  options: {
+    semantic?: Partial<ModuleMetadataSemanticSummary>;
+    help?: ModuleMetadataHelpSummary;
+    ui?: ModuleMetadataUiSummary;
+  },
+): ModuleBlueprint {
+  const runtimeMeta = module.runtimeMeta ?? {};
+  const resolvedSideEffect =
+    options.semantic?.sideEffect ?? runtimeMeta.sideEffect;
+  const semantic: ModuleMetadataSemanticSummary = {
+    runtimeKind: options.semantic?.runtimeKind ?? runtimeMeta.runtimeKind,
+    capability:
+      options.semantic?.capability ??
+      runtimeMeta.capability ??
+      (resolvedSideEffect === "writes_host" ||
+      resolvedSideEffect === "reads_host" ||
+      resolvedSideEffect === "pure"
+        ? resolvedSideEffect
+        : undefined),
+    sideEffect: resolvedSideEffect,
+    hostWriteHint:
+      options.semantic?.hostWriteHint ??
+      runtimeMeta.hostTargetHint ??
+      undefined,
+  };
+  return {
+    ...module,
+    metadata: {
+      semantic,
+      config: buildConfigSummary(module),
+      help: options.help,
+      ui: options.ui,
+      diagnostics: buildDiagnosticsSummary(semantic),
+    },
+  };
+}
 
 // ── Helper for common port patterns ──
 
@@ -953,7 +1044,7 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
 // Registry
 // ════════════════════════════════════════════════════════════
 
-const ALL_MODULES: ModuleBlueprint[] = [
+const ALL_MODULES_BASE: ModuleBlueprint[] = [
   ...withRuntimeMeta(SOURCE_MODULES, {
     schemaVersion: 1,
     runtimeKind: "dataflow",
@@ -1006,6 +1097,58 @@ const ALL_MODULES: ModuleBlueprint[] = [
   }),
 ];
 
+const MODULE_METADATA_PILOT_BY_ID: Readonly<
+  Record<
+    string,
+    {
+      help: ModuleMetadataHelpSummary;
+      ui: ModuleMetadataUiSummary;
+    }
+  >
+> = {
+  src_user_input: {
+    help: {
+      summary: "读取当前触发图执行的用户输入文本。",
+      whenToUse: "作为文本处理链路的起点，适合接到过滤或拼接节点。",
+      caution: "仅暴露当前触发输入，不承担历史对话聚合。",
+    },
+    ui: { badge: "Source", accent: "info" },
+  },
+  flt_mvu_strip: {
+    help: {
+      summary: "剥离文本中的 MVU XML 块与相关产物。",
+      whenToUse: "接在用户输入或模型输出后，做轻量净化。",
+      caution: "仅做文本清洗，不负责宿主写入或状态控制。",
+    },
+    ui: { badge: "Pure", accent: "success" },
+  },
+  out_reply_inject: {
+    help: {
+      summary: "把指令文本写入宿主 reply instruction。",
+      whenToUse: "作为终端输出节点，把处理后的文本交给宿主回复注入。",
+      caution: "会产生宿主写入，不应视为纯计算节点。",
+    },
+    ui: { badge: "Host Write", accent: "warning" },
+  },
+};
+
+const ALL_MODULES: ModuleBlueprint[] = ALL_MODULES_BASE.map((module) => {
+  const pilotMetadata = MODULE_METADATA_PILOT_BY_ID[module.moduleId];
+  if (!pilotMetadata) {
+    return module;
+  }
+  return withMetadataSurface(module, {
+    semantic: {
+      runtimeKind: module.runtimeMeta?.runtimeKind,
+      capability: module.runtimeMeta?.capability,
+      sideEffect: module.runtimeMeta?.sideEffect,
+      hostWriteHint: module.runtimeMeta?.hostTargetHint,
+    },
+    help: pilotMetadata.help,
+    ui: pilotMetadata.ui,
+  });
+});
+
 /** Map for O(1) lookup by moduleId */
 export const MODULE_REGISTRY: ReadonlyMap<string, ModuleBlueprint> = new Map(
   ALL_MODULES.map((m) => [m.moduleId, m]),
@@ -1018,6 +1161,32 @@ export function getModuleBlueprint(moduleId: string): ModuleBlueprint {
     throw new Error(`[ModuleRegistry] Unknown module: ${moduleId}`);
   }
   return bp;
+}
+
+export function getModuleMetadataSurface(
+  moduleId: string,
+): ModuleBlueprint["metadata"] | undefined {
+  return getModuleBlueprint(moduleId).metadata;
+}
+
+export function getModuleMetadataSummary(moduleId: string): {
+  semantic: ModuleBlueprint["metadata"] extends infer T
+    ? T extends { semantic: infer S }
+      ? S
+      : never
+    : never;
+  helpSummary?: string;
+  diagnosticsLabel?: string;
+} | null {
+  const metadata = getModuleMetadataSurface(moduleId);
+  if (!metadata) {
+    return null;
+  }
+  return {
+    semantic: metadata.semantic,
+    helpSummary: metadata.help?.summary,
+    diagnosticsLabel: metadata.diagnostics?.hostWriteLabel,
+  };
 }
 
 /** Get all modules in a category */

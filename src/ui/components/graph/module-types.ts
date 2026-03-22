@@ -124,6 +124,44 @@ export interface HostCommitSummary {
   path?: HostCommitContract["path"];
 }
 
+export interface ModuleMetadataSemanticSummary {
+  runtimeKind?: WorkbenchRuntimeKind;
+  capability?: WorkbenchCapability;
+  sideEffect?: WorkbenchSideEffectLevel;
+  hostWriteHint?: HostWriteSummary;
+}
+
+export interface ModuleMetadataConfigSummary {
+  schemaFieldKeys: readonly string[];
+  schemaFieldCount: number;
+  hasSchema: boolean;
+}
+
+export interface ModuleMetadataHelpSummary {
+  summary: string;
+  whenToUse?: string;
+  caution?: string;
+}
+
+export interface ModuleMetadataUiSummary {
+  badge?: string;
+  accent?: "neutral" | "info" | "success" | "warning" | "danger";
+}
+
+export interface ModuleMetadataDiagnosticsSummary {
+  capabilityLabel: string;
+  sideEffectLabel: string;
+  hostWriteLabel?: string;
+}
+
+export interface ModuleMetadataSurface {
+  semantic: ModuleMetadataSemanticSummary;
+  config?: ModuleMetadataConfigSummary;
+  help?: ModuleMetadataHelpSummary;
+  ui?: ModuleMetadataUiSummary;
+  diagnostics?: ModuleMetadataDiagnosticsSummary;
+}
+
 /** Blueprint definition for a module type (registered in the registry) */
 export interface ModuleBlueprint {
   /** Unique module type ID, e.g. 'src_char_fields' */
@@ -151,6 +189,8 @@ export interface ModuleBlueprint {
     nodes: WorkbenchNode[];
     edges: WorkbenchEdge[];
   };
+  /** Read-only registry metadata surface used by UI / diagnostics summaries */
+  metadata?: ModuleMetadataSurface;
   /** Optional runtime contract metadata for forward-compatible execution kernels */
   runtimeMeta?: {
     schemaVersion?: number;
