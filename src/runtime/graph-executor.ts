@@ -35,10 +35,15 @@ import type {
   GraphRunBlockingInputRequirementType,
   GraphRunBlockingReason,
   GraphRunCheckpointSummary,
+  GraphRunContinuationContract,
+  GraphRunContinuationHandlingPolicy,
+  GraphRunContinuationVerdict,
   GraphRunDiagnosticsOverview,
   GraphRunEvent,
+  GraphRunManualInputSlotSchema,
   GraphRunPhase,
   GraphRunRecoveryEligibilityFact,
+  GraphRunRecoveryEvidenceFact,
   GraphRunRecoveryPrerequisiteFact,
   GraphRunStatus,
   GraphRunTerminalOutcome,
@@ -524,6 +529,180 @@ function deriveRecoveryEligibilityFact(params: {
   };
 }
 
+function deriveRecoveryEvidence(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunRecoveryEvidenceFact {
+  if (
+    params.status === "completed" ||
+    params.status === "failed" ||
+    params.status === "cancelled"
+  ) {
+    return {
+      source: "terminal_state",
+      trust: "strong",
+      label: "终局状态已观察",
+      detail: "终局状态只能作为 system-side not continuable 的只读事实来源。",
+    };
+  }
+  if (params.checkpointCandidate) {
+    return {
+      source: "checkpoint_candidate",
+      trust: "limited",
+      label: "checkpoint candidate 已观察",
+      detail: "checkpoint candidate 仅提升恢复资格来源可信度，不构成恢复承诺。",
+    };
+  }
+  if (params.status === "waiting_user" || params.waitingUser) {
+    return {
+      source: "waiting_user",
+      trust: "weak",
+      label: "外部输入阻塞已观察",
+      detail: "waiting_user 只说明观测到外部输入需求，系统侧不承诺自动继续。",
+    };
+  }
+  return {
+    source: "unknown",
+    trust: "unknown",
+    label: "恢复证据来源未知",
+    detail: "当前只读观测不足以形成更高可信度的来源判断。",
+  };
+}
+
+function deriveManualInputSlotSchema(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+}): GraphRunManualInputSlotSchema[] {
+  if (params.status !== "waiting_user" || !params.waitingUser) {
+    return [];
+  }
+  const inferredType = inferBlockingInputRequirementType(params.waitingUser);
+  const valueType =
+    inferredType === "confirmation"
+      ? "confirmation"
+      : inferredType === "text_input"
+        ? "text"
+        : inferredType === "selection"
+          ? "selection"
+          : "unknown";
+  return [
+    {
+      key: "observed_waiting_user_input",
+      label: "观察到的人工输入槽位",
+      valueType,
+      required: true,
+      ...(params.waitingUser.reason?.trim()
+        ? { description: params.waitingUser.reason.trim() }
+        : {}),
+      source: "waiting_user",
+    },
+  ];
+}
+
+function deriveContinuationHandlingPolicy(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunContinuationHandlingPolicy {
+  if (
+    params.status === "completed" ||
+    params.status === "failed" ||
+    params.status === "cancelled"
+  ) {
+    return {
+      kind: "system_side_not_continuable",
+      label: "系统侧判定不可继续",
+      detail: "终局状态只保留只读结果解释，不再对继续性作出积极推断。",
+    };
+  }
+  if (params.status === "waiting_user" || params.waitingUser) {
+    return {
+      kind: "external_input_observed",
+      label: "已观察到外部输入阻塞",
+      detail: "waiting_user 仅表示外部输入需求被观察到，系统侧不承诺自动继续。",
+    };
+  }
+  if (params.checkpointCandidate) {
+    return {
+      kind: "checkpoint_evidence_only",
+      label: "仅存在 checkpoint 证据",
+      detail: "checkpoint candidate 只补充资格来源说明，不转化为恢复承诺。",
+    };
+  }
+  return {
+    kind: "observe_only",
+    label: "仅保留只读观察",
+    detail: "当前只读模型不声明任何继续动作能力。",
+  };
+}
+
+function deriveContinuationVerdict(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunContinuationVerdict {
+  if (params.status === "completed") {
+    return {
+      status: "not_continuable",
+      source: "terminal_state",
+      label: "终局后不可继续",
+      detail: "completed 为 system-side not continuable 的保守结论。",
+    };
+  }
+  if (params.status === "failed") {
+    return {
+      status: "not_continuable",
+      source: "terminal_state",
+      label: "失败后不可继续",
+      detail: "failed 为 system-side not continuable 的保守结论。",
+    };
+  }
+  if (params.status === "cancelled") {
+    return {
+      status: "not_continuable",
+      source: "terminal_state",
+      label: "取消后不可继续",
+      detail: "cancelled 为 system-side not continuable 的保守结论。",
+    };
+  }
+  if (params.status === "waiting_user" || params.waitingUser) {
+    return {
+      status: "blocked_by_external_input",
+      source: "waiting_user",
+      label: "继续性受外部输入阻塞",
+      detail: "只观察到外部输入需求，系统侧不承诺自动继续。",
+    };
+  }
+  if (params.checkpointCandidate) {
+    return {
+      status: "unknown",
+      source: "checkpoint_candidate",
+      label: "继续性未知",
+      detail: "checkpoint candidate 仅说明存在只读证据，不能推出恢复承诺。",
+    };
+  }
+  return {
+    status: "unknown",
+    source: "unknown",
+    label: "继续性未知",
+    detail: "当前缺少足够只读事实，已保守降级。",
+  };
+}
+
+function deriveContinuationContract(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunContinuationContract {
+  return {
+    handlingPolicy: deriveContinuationHandlingPolicy(params),
+    verdict: deriveContinuationVerdict(params),
+    recoveryEvidence: deriveRecoveryEvidence(params),
+    manualInputSlots: deriveManualInputSlotSchema(params),
+  };
+}
+
 function deriveRunReadModel(params: {
   status: GraphRunStatus;
   currentStage?: GraphExecutionStage;
@@ -535,6 +714,7 @@ function deriveRunReadModel(params: {
   phaseLabel: string;
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
+  continuationContract: GraphRunContinuationContract;
   recoveryEligibility: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
 } {
@@ -562,6 +742,11 @@ function deriveRunReadModel(params: {
     return {
       ...readModel,
       ...(blockingContract ? { blockingContract } : {}),
+      continuationContract: deriveContinuationContract({
+        status: params.status,
+        waitingUser: params.waitingUser,
+        checkpointCandidate: params.checkpointCandidate,
+      }),
       recoveryEligibility: deriveRecoveryEligibilityFact({
         status: params.status,
         waitingUser: params.waitingUser,
@@ -693,6 +878,7 @@ function createRunState(params: {
     ...(readModel.blockingContract
       ? { blockingContract: readModel.blockingContract }
       : {}),
+    continuationContract: readModel.continuationContract,
     recoveryEligibility: readModel.recoveryEligibility,
     ...(readModel.terminalOutcome
       ? { terminalOutcome: readModel.terminalOutcome }
@@ -769,6 +955,7 @@ function createGraphRunArtifact(params: {
     ...(readModel.blockingContract
       ? { blockingContract: readModel.blockingContract }
       : {}),
+    continuationContract: readModel.continuationContract,
     recoveryEligibility: readModel.recoveryEligibility,
     ...(readModel.terminalOutcome
       ? { terminalOutcome: readModel.terminalOutcome }
@@ -1500,6 +1687,9 @@ export async function executeCompiledGraph(
       ...(artifact.blockingContract
         ? { blockingContract: artifact.blockingContract }
         : {}),
+      ...(artifact.continuationContract
+        ? { continuationContract: artifact.continuationContract }
+        : {}),
       ...(artifact.recoveryEligibility
         ? { recoveryEligibility: artifact.recoveryEligibility }
         : {}),
@@ -2097,6 +2287,9 @@ export async function executeGraph(
         : {}),
       ...(runArtifact.blockingContract
         ? { blockingContract: runArtifact.blockingContract }
+        : {}),
+      ...(runArtifact.continuationContract
+        ? { continuationContract: runArtifact.continuationContract }
         : {}),
       ...(runArtifact.recoveryEligibility
         ? { recoveryEligibility: runArtifact.recoveryEligibility }

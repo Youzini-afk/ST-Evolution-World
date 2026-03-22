@@ -62,6 +62,7 @@ import type {
   GraphRunPartialOutputSummary,
   GraphRunPhase,
   GraphRunRecoveryEligibilityFact,
+  GraphRunRecoveryEvidenceTrust,
   GraphRunStatus,
   GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
@@ -826,6 +827,9 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     };
 
     const blockingContract = toBlockingContract(artifact.blockingContract);
+    const continuationContract = _.isPlainObject(artifact.continuationContract)
+      ? (artifact.continuationContract as GraphRunArtifact["continuationContract"])
+      : undefined;
     const recoveryEligibility = toRecoveryEligibility(
       artifact.recoveryEligibility,
     ) ?? {
@@ -846,6 +850,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           : (phaseLabels[phase] ?? "运行中"),
       ...(blockingReason ? { blockingReason } : {}),
       ...(blockingContract ? { blockingContract } : {}),
+      ...(continuationContract ? { continuationContract } : {}),
       recoveryEligibility,
       ...(terminalOutcome ? { terminalOutcome } : {}),
       currentStage:
@@ -972,6 +977,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     };
 
     const blockingContract = artifact.blockingContract ?? null;
+    const continuationContract = artifact.continuationContract ?? null;
     const inputType = blockingContract?.inputRequirement.type ?? "unknown";
     const inputRequirementTypeLabels: Record<
       GraphRunBlockingInputRequirementType,
@@ -982,6 +988,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       selection: "选择",
       unknown: "未知",
     };
+    const evidenceTrustLabels: Record<GraphRunRecoveryEvidenceTrust, string> = {
+      strong: "高",
+      limited: "中",
+      weak: "低",
+      unknown: "未知",
+    };
     const blockingCategoryLabel = blockingContract
       ? blockingContract.kind === "waiting_user"
         ? "waiting_user"
@@ -989,6 +1001,27 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           ? "cancellation"
           : "unknown"
       : "无阻塞契约";
+    const manualInputSlots = Array.isArray(
+      continuationContract?.manualInputSlots,
+    )
+      ? continuationContract.manualInputSlots
+      : [];
+    const manualInputSlotSchemaLabel =
+      manualInputSlots.length > 0
+        ? manualInputSlots
+            .map((slot) => {
+              const typeLabel =
+                slot.valueType === "confirmation"
+                  ? "确认"
+                  : slot.valueType === "text"
+                    ? "文本"
+                    : slot.valueType === "selection"
+                      ? "选择"
+                      : "未知";
+              return `${slot.label}（${typeLabel}）`;
+            })
+            .join("；")
+        : "未观察到人工输入槽位声明";
 
     return {
       runId: artifact.runId,
@@ -1016,6 +1049,23 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         blockingContract?.requiresHumanInput === true ? "需要" : "不需要",
       inputRequirementType: inputType,
       inputRequirementTypeLabel: inputRequirementTypeLabels[inputType],
+      continuationContract,
+      handlingPolicyLabel: continuationContract?.handlingPolicy
+        ? `${continuationContract.handlingPolicy.label}${continuationContract.handlingPolicy.detail?.trim() ? ` · ${continuationContract.handlingPolicy.detail.trim()}` : ""}`
+        : "unknown · 仅保留只读观察",
+      continuationVerdictLabel: continuationContract?.verdict
+        ? `${continuationContract.verdict.status} · ${continuationContract.verdict.label}${continuationContract.verdict.detail?.trim() ? ` · ${continuationContract.verdict.detail.trim()}` : ""}`
+        : "unknown · 继续性未知",
+      recoveryEvidenceLabel: continuationContract?.recoveryEvidence
+        ? `${continuationContract.recoveryEvidence.label}${continuationContract.recoveryEvidence.detail?.trim() ? ` · ${continuationContract.recoveryEvidence.detail.trim()}` : ""}`
+        : "unknown · 恢复证据未知",
+      recoveryEvidenceTrustLabel: continuationContract?.recoveryEvidence
+        ? evidenceTrustLabels[continuationContract.recoveryEvidence.trust]
+        : "未知",
+      recoveryEvidenceSourceLabel:
+        continuationContract?.recoveryEvidence?.source ?? "unknown",
+      manualInputSlotCount: manualInputSlots.length,
+      manualInputSlotSchemaLabel,
       recoveryEligibility: artifact.recoveryEligibility ?? null,
       recoveryEligibilityLabel: artifact.recoveryEligibility
         ? `${artifact.recoveryEligibility.status} · ${artifact.recoveryEligibility.label}`

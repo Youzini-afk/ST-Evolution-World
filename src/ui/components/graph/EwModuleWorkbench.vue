@@ -88,6 +88,13 @@
               {{ activeRunSummary.hasBlockingContract ? "存在" : "无" }}
             </span>
             <span class="ew-workbench__diagnostics-item">
+              handling policy {{ activeRunSummary.handlingPolicyLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              continuation verdict
+              {{ activeRunSummary.continuationVerdictLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
               恢复资格 {{ activeRunSummary.recoveryEligibilityLabel }}
             </span>
           </div>
@@ -105,6 +112,18 @@
             </template>
             <span v-else class="ew-workbench__diagnostics-item">
               无 checkpoint candidate 事实
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              恢复证据 {{ activeRunSummary.recoveryEvidenceLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              证据可信度 {{ activeRunSummary.recoveryEvidenceTrustLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              证据来源 {{ activeRunSummary.recoveryEvidenceSourceLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              人工输入槽位 {{ activeRunSummary.manualInputSlotSchemaLabel }}
             </span>
             <span class="ew-workbench__diagnostics-reason">
               阻塞原因 {{ activeRunSummary.blockingReasonLabel }}

@@ -478,6 +478,19 @@ export type GraphRunRecoveryFactSource =
   | "status"
   | "unknown";
 
+export type GraphRunRecoveryEvidenceTrust =
+  | "strong"
+  | "limited"
+  | "weak"
+  | "unknown";
+
+export interface GraphRunRecoveryEvidenceFact {
+  source: GraphRunRecoveryFactSource;
+  trust: GraphRunRecoveryEvidenceTrust;
+  label: string;
+  detail?: string;
+}
+
 export interface GraphRunRecoveryPrerequisiteFact {
   source: GraphRunRecoveryFactSource;
   code:
@@ -496,6 +509,53 @@ export interface GraphRunBlockingContract {
   requiresHumanInput: boolean;
   inputRequirement: GraphRunBlockingInputRequirement;
   recoveryPrerequisites: GraphRunRecoveryPrerequisiteFact[];
+}
+
+export type GraphRunContinuationHandlingPolicyKind =
+  | "observe_only"
+  | "external_input_observed"
+  | "checkpoint_evidence_only"
+  | "system_side_not_continuable"
+  | "unknown";
+
+export interface GraphRunContinuationHandlingPolicy {
+  kind: GraphRunContinuationHandlingPolicyKind;
+  label: string;
+  detail?: string;
+}
+
+export type GraphRunContinuationVerdictStatus =
+  | "not_continuable"
+  | "blocked_by_external_input"
+  | "unknown";
+
+export interface GraphRunContinuationVerdict {
+  status: GraphRunContinuationVerdictStatus;
+  source: GraphRunRecoveryFactSource;
+  label: string;
+  detail?: string;
+}
+
+export type GraphRunManualInputSlotValueType =
+  | "confirmation"
+  | "text"
+  | "selection"
+  | "unknown";
+
+export interface GraphRunManualInputSlotSchema {
+  key: string;
+  label: string;
+  valueType: GraphRunManualInputSlotValueType;
+  required: boolean;
+  description?: string;
+  source: GraphRunRecoveryFactSource;
+}
+
+export interface GraphRunContinuationContract {
+  handlingPolicy: GraphRunContinuationHandlingPolicy;
+  verdict: GraphRunContinuationVerdict;
+  recoveryEvidence: GraphRunRecoveryEvidenceFact;
+  manualInputSlots: GraphRunManualInputSlotSchema[];
 }
 
 export type GraphRunRecoveryEligibility = "eligible" | "ineligible" | "unknown";
@@ -573,6 +633,7 @@ export interface GraphRunArtifact {
   phaseLabel: string;
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
+  continuationContract?: GraphRunContinuationContract;
   recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
@@ -599,6 +660,7 @@ export interface GraphRunEvent {
   phaseLabel?: string;
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
+  continuationContract?: GraphRunContinuationContract;
   recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   stage?: GraphExecutionStage;
@@ -673,6 +735,7 @@ export interface GraphRunState {
   phaseLabel: string;
   blockingReason?: GraphRunBlockingReason;
   blockingContract?: GraphRunBlockingContract;
+  continuationContract?: GraphRunContinuationContract;
   recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
@@ -738,6 +801,14 @@ export interface GraphActiveRunSummaryViewModel {
   requiresHumanInputLabel: string;
   inputRequirementType: GraphRunBlockingInputRequirementType;
   inputRequirementTypeLabel: string;
+  continuationContract: GraphRunContinuationContract | null;
+  handlingPolicyLabel: string;
+  continuationVerdictLabel: string;
+  recoveryEvidenceLabel: string;
+  recoveryEvidenceTrustLabel: string;
+  recoveryEvidenceSourceLabel: string;
+  manualInputSlotCount: number;
+  manualInputSlotSchemaLabel: string;
   recoveryEligibility: GraphRunRecoveryEligibilityFact | null;
   recoveryEligibilityLabel: string;
   terminalOutcome: GraphRunTerminalOutcome | null;

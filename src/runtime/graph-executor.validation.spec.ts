@@ -28,24 +28,80 @@ import {
 import { loadLastRun, loadLastRunForChat, setLastRun } from "./settings";
 import { RunSummarySchema, type EwFlowConfig, type RunSummary } from "./types";
 
-function toActiveGraphRunArtifactForTest(
-  diagnostics: Record<string, any>,
-): { recoveryEligibility?: { status?: string } } | null {
+function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
+  recoveryEligibility?: { status?: string };
+  continuationContract?: {
+    handlingPolicy?: { kind?: string };
+    verdict?: { status?: string };
+    recoveryEvidence?: { source?: string; trust?: string };
+    manualInputSlots?: Array<{ key?: string; valueType?: string }>;
+  };
+} | null {
   const artifact = diagnostics?.bridge?.graph_run_overview;
   if (!artifact || typeof artifact !== "object") {
     return null;
   }
   const recovery = artifact.recoveryEligibility;
-  if (
-    recovery &&
-    typeof recovery === "object" &&
-    (recovery.status === "eligible" ||
-      recovery.status === "ineligible" ||
-      recovery.status === "unknown")
-  ) {
-    return { recoveryEligibility: { status: recovery.status } };
-  }
-  return { recoveryEligibility: { status: "unknown" } };
+  const continuation =
+    artifact.continuationContract &&
+    typeof artifact.continuationContract === "object"
+      ? artifact.continuationContract
+      : null;
+  return {
+    recoveryEligibility:
+      recovery &&
+      typeof recovery === "object" &&
+      (recovery.status === "eligible" ||
+        recovery.status === "ineligible" ||
+        recovery.status === "unknown")
+        ? { status: recovery.status }
+        : { status: "unknown" },
+    continuationContract: continuation
+      ? {
+          handlingPolicy:
+            continuation.handlingPolicy &&
+            typeof continuation.handlingPolicy === "object"
+              ? { kind: String(continuation.handlingPolicy.kind ?? "unknown") }
+              : { kind: "unknown" },
+          verdict:
+            continuation.verdict && typeof continuation.verdict === "object"
+              ? { status: String(continuation.verdict.status ?? "unknown") }
+              : { status: "unknown" },
+          recoveryEvidence:
+            continuation.recoveryEvidence &&
+            typeof continuation.recoveryEvidence === "object"
+              ? {
+                  source: String(
+                    continuation.recoveryEvidence.source ?? "unknown",
+                  ),
+                  trust: String(
+                    continuation.recoveryEvidence.trust ?? "unknown",
+                  ),
+                }
+              : { source: "unknown", trust: "unknown" },
+          manualInputSlots: Array.isArray(continuation.manualInputSlots)
+            ? continuation.manualInputSlots.map((slot: unknown) => ({
+                key:
+                  slot && typeof slot === "object"
+                    ? String((slot as Record<string, unknown>).key ?? "")
+                    : "",
+                valueType:
+                  slot && typeof slot === "object"
+                    ? String(
+                        (slot as Record<string, unknown>).valueType ??
+                          "unknown",
+                      )
+                    : "unknown",
+              }))
+            : [],
+        }
+      : {
+          handlingPolicy: { kind: "unknown" },
+          verdict: { status: "unknown" },
+          recoveryEvidence: { source: "unknown", trust: "unknown" },
+          manualInputSlots: [],
+        },
+  };
 }
 
 type MemoryStorage = {
@@ -1530,6 +1586,19 @@ async function runValidationSpec(): Promise<void> {
       successResult.runArtifact?.recoveryEligibility?.status === "ineligible" &&
       successResult.runArtifact?.recoveryEligibility?.source ===
         "terminal_state" &&
+      successResult.runArtifact?.continuationContract?.handlingPolicy.kind ===
+        "system_side_not_continuable" &&
+      successResult.runArtifact?.continuationContract?.verdict.status ===
+        "not_continuable" &&
+      successResult.runArtifact?.continuationContract?.recoveryEvidence
+        .source === "terminal_state" &&
+      successResult.runArtifact?.continuationContract?.recoveryEvidence
+        .trust === "strong" &&
+      Array.isArray(
+        successResult.runArtifact?.continuationContract?.manualInputSlots,
+      ) &&
+      successResult.runArtifact?.continuationContract?.manualInputSlots
+        .length === 0 &&
       !successResult.runArtifact?.blockingContract,
     `Expected success runArtifact to preserve waiting_user as read-only observation while final status remains completed. Actual: ${JSON.stringify(successResult.runArtifact)}`,
   );
@@ -1543,7 +1612,19 @@ async function runValidationSpec(): Promise<void> {
         "confirmation" &&
       waitingUserEvent.recoveryEligibility?.status === "eligible" &&
       waitingUserEvent.recoveryEligibility?.source === "checkpoint_candidate" &&
+      waitingUserEvent.continuationContract?.handlingPolicy.kind ===
+        "external_input_observed" &&
+      waitingUserEvent.continuationContract?.verdict.status ===
+        "blocked_by_external_input" &&
+      waitingUserEvent.continuationContract?.recoveryEvidence.source ===
+        "checkpoint_candidate" &&
+      waitingUserEvent.continuationContract?.recoveryEvidence.trust ===
+        "limited" &&
       waitingUserEvent.artifact?.blockingContract?.kind === "waiting_user" &&
+      waitingUserEvent.artifact?.continuationContract?.manualInputSlots?.[0]
+        ?.key === "observed_waiting_user_input" &&
+      waitingUserEvent.artifact?.continuationContract?.manualInputSlots?.[0]
+        ?.valueType === "confirmation" &&
       waitingUserEvent.artifact?.recoveryEligibility?.status === "eligible",
     `Expected waiting_user event to expose blocking contract plus conservative recovery eligibility. Actual: ${JSON.stringify(waitingUserEvent)}`,
   );
@@ -1564,8 +1645,10 @@ async function runValidationSpec(): Promise<void> {
     successResult.checkpointCandidate?.nodeId === "filter_text" &&
       successResult.checkpointCandidate?.stage === "execute" &&
       successResult.checkpointCandidate?.reason === "terminal_candidate" &&
-      successResult.checkpointCandidate?.resumable === false,
-    `Expected success checkpoint candidate to retain terminal summary only. Actual: ${JSON.stringify(successResult.checkpointCandidate)}`,
+      successResult.checkpointCandidate?.resumable === false &&
+      waitingUserEvent?.continuationContract?.verdict.status !==
+        "not_continuable",
+    `Expected checkpoint candidate to retain terminal summary only without turning waiting_user observation into a recovery promise. Actual: ${JSON.stringify({ checkpoint: successResult.checkpointCandidate, waitingUserEvent })}`,
   );
   assert(
     successResult.runState.failedStage === undefined,
@@ -2570,8 +2653,17 @@ async function runValidationSpec(): Promise<void> {
     },
   });
   assert(
-    degradedArtifact?.recoveryEligibility?.status === "unknown",
-    `Expected read-side fallback to degrade missing recovery eligibility fields to unknown. Actual: ${JSON.stringify(degradedArtifact)}`,
+    degradedArtifact?.recoveryEligibility?.status === "unknown" &&
+      degradedArtifact?.continuationContract?.handlingPolicy?.kind ===
+        "unknown" &&
+      degradedArtifact?.continuationContract?.verdict?.status === "unknown" &&
+      degradedArtifact?.continuationContract?.recoveryEvidence?.source ===
+        "unknown" &&
+      degradedArtifact?.continuationContract?.recoveryEvidence?.trust ===
+        "unknown" &&
+      Array.isArray(degradedArtifact?.continuationContract?.manualInputSlots) &&
+      degradedArtifact?.continuationContract?.manualInputSlots.length === 0,
+    `Expected read-side fallback to degrade missing recovery eligibility and continuation fields to unknown. Actual: ${JSON.stringify(degradedArtifact)}`,
   );
 
   const executeFailureOverview =
