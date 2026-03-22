@@ -833,16 +833,15 @@ async function runGraphWorkflow(
             ];
             input.onProgress?.({
               phase:
-                graphEvent.type === "run_completed"
+                graphEvent.terminalOutcome === "completed"
                   ? "completed"
-                  : graphEvent.type === "run_failed" ||
-                      graphEvent.type === "run_cancelled"
+                  : graphEvent.terminalOutcome === "failed"
                     ? "failed"
                     : graphEvent.status === "streaming"
                       ? "streaming"
                       : "dispatching",
               request_id: requestId,
-              message: `图运行事件：${graphEvent.type}`,
+              message: `图运行事件：${graphEvent.type}${graphEvent.phaseLabel ? ` · ${graphEvent.phaseLabel}` : ""}${graphEvent.blockingReason?.label ? ` · ${graphEvent.blockingReason.label}` : ""}${graphEvent.terminalOutcome === "cancelled" ? " · 已取消" : ""}`,
               graph_id: graph.id,
             } as WorkflowProgressUpdate);
             return;

@@ -59,6 +59,12 @@
               {{ activeRunSummary.statusLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
+              运行阶段 {{ activeRunSummary.phaseLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              终局结果 {{ activeRunSummary.terminalOutcomeLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
               {{
                 activeRunSummary.hasActiveRun
                   ? "存在活动运行"
@@ -66,7 +72,7 @@
               }}
             </span>
             <span class="ew-workbench__diagnostics-item">
-              阶段 {{ activeRunSummary.currentStageLabel }}
+              执行阶段 {{ activeRunSummary.currentStageLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
               最近节点 {{ activeRunSummary.latestNodeLabel }}
@@ -101,6 +107,9 @@
             <span v-else class="ew-workbench__diagnostics-item">
               无 checkpoint candidate
             </span>
+            <span class="ew-workbench__diagnostics-reason">
+              阻塞原因 {{ activeRunSummary.blockingReasonLabel }}
+            </span>
             <span class="ew-workbench__diagnostics-item">
               heartbeat
               {{
@@ -121,7 +130,7 @@
               class="ew-workbench__diagnostics-reason"
               :data-waiting-user="activeRunSummary.waitingUser ? '1' : '0'"
             >
-              waiting_user
+              waiting_user（只读阻塞事实）
               {{
                 activeRunSummary.waitingUser
                   ? activeRunSummary.waitingUserLabel

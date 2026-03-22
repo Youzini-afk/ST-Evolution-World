@@ -53,11 +53,14 @@ import type {
   GraphExecutionStage,
   GraphNodeDirtyReason,
   GraphRunArtifact,
+  GraphRunBlockingReason,
   GraphRunDiagnosticsOverview,
   GraphRunDiagnosticsSummaryViewModel,
   GraphRunHeartbeatSummary,
   GraphRunPartialOutputSummary,
+  GraphRunPhase,
   GraphRunStatus,
+  GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
 } from "./components/graph/module-types";
 import { convertStPresetToFlow, isSillyTavernPreset } from "./convertStPreset";
@@ -311,6 +314,59 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     { immediate: true },
   );
 
+  const graphRunPhases: GraphRunPhase[] = [
+    "queued",
+    "validating",
+    "compiling",
+    "executing",
+    "blocked",
+    "finishing",
+    "terminal",
+  ];
+
+  const graphRunTerminalOutcomes: GraphRunTerminalOutcome[] = [
+    "completed",
+    "failed",
+    "cancelled",
+  ];
+
+  function toBlockingReason(
+    value: unknown,
+  ): GraphRunBlockingReason | undefined {
+    if (!_.isPlainObject(value)) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const category =
+      record.category === "waiting_user" ||
+      record.category === "cancellation" ||
+      record.category === "unknown"
+        ? record.category
+        : undefined;
+    const code =
+      record.code === "waiting_user" ||
+      record.code === "cancelling" ||
+      record.code === "unknown"
+        ? record.code
+        : undefined;
+    const label =
+      typeof record.label === "string" && record.label.trim()
+        ? record.label.trim()
+        : undefined;
+    if (!category || !code || !label) {
+      return undefined;
+    }
+    return {
+      category,
+      code,
+      label,
+      detail:
+        typeof record.detail === "string" && record.detail.trim()
+          ? record.detail.trim()
+          : undefined,
+    };
+  }
+
   function toGraphDiagnosticsOverview(
     diagnostics: unknown,
   ): GraphRunDiagnosticsOverview | null {
@@ -384,10 +440,46 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           ? run.compileFingerprint.trim()
           : undefined;
 
+    const phase = graphRunPhases.includes(run.phase as GraphRunPhase)
+      ? (run.phase as GraphRunPhase)
+      : runStatus === "completed" ||
+          runStatus === "failed" ||
+          runStatus === "cancelled"
+        ? "terminal"
+        : runStatus === "queued"
+          ? "queued"
+          : runStatus === "waiting_user" || runStatus === "cancelling"
+            ? "blocked"
+            : runStatus === "running" && failedStage === "validate"
+              ? "validating"
+              : runStatus === "running" && failedStage === "compile"
+                ? "compiling"
+                : "executing";
+    const phaseLabel =
+      typeof run.phaseLabel === "string" && run.phaseLabel.trim()
+        ? run.phaseLabel.trim()
+        : phase === "terminal"
+          ? "已结束"
+          : "运行中";
+    const terminalOutcome = graphRunTerminalOutcomes.includes(
+      run.terminalOutcome as GraphRunTerminalOutcome,
+    )
+      ? (run.terminalOutcome as GraphRunTerminalOutcome)
+      : runStatus === "completed" ||
+          runStatus === "failed" ||
+          runStatus === "cancelled"
+        ? runStatus
+        : undefined;
+    const blockingReason = toBlockingReason(run.blockingReason);
+
     return {
       run: {
         runId: typeof run.runId === "string" ? run.runId : "",
         status: runStatus,
+        phase,
+        phaseLabel,
+        ...(blockingReason ? { blockingReason } : {}),
+        ...(terminalOutcome ? { terminalOutcome } : {}),
         ...(failedStage ? { failedStage } : {}),
         startedAt: normalizeCount(run.startedAt),
         completedAt: normalizeCount(run.completedAt),
@@ -565,13 +657,53 @@ export const useEwStore = defineStore("evolution-world-store", () => {
             : "waiting_user",
       };
     };
+    const status =
+      typeof artifact.status === "string"
+        ? (artifact.status as GraphRunStatus)
+        : "completed";
+    const phase = graphRunPhases.includes(artifact.phase as GraphRunPhase)
+      ? (artifact.phase as GraphRunPhase)
+      : status === "completed" || status === "failed" || status === "cancelled"
+        ? "terminal"
+        : status === "queued"
+          ? "queued"
+          : status === "waiting_user" || status === "cancelling"
+            ? "blocked"
+            : "executing";
+    const terminalOutcome = graphRunTerminalOutcomes.includes(
+      artifact.terminalOutcome as GraphRunTerminalOutcome,
+    )
+      ? (artifact.terminalOutcome as GraphRunTerminalOutcome)
+      : status === "completed" || status === "failed" || status === "cancelled"
+        ? status
+        : undefined;
+    const blockingReason = toBlockingReason(artifact.blockingReason);
+    const phaseLabels: Record<GraphRunPhase, string> = {
+      queued: "排队中",
+      validating: "校验中",
+      compiling: "编译中",
+      executing: "执行中",
+      blocked: "阻塞中",
+      finishing: "收束中",
+      terminal: "已结束",
+    };
+    const terminalOutcomeLabels: Record<GraphRunTerminalOutcome, string> = {
+      completed: "已完成",
+      failed: "已失败",
+      cancelled: "已取消",
+    };
+
     return {
       runId: typeof artifact.runId === "string" ? artifact.runId : "",
       graphId: typeof artifact.graphId === "string" ? artifact.graphId : "",
-      status:
-        typeof artifact.status === "string"
-          ? (artifact.status as GraphRunStatus)
-          : "completed",
+      status,
+      phase,
+      phaseLabel:
+        typeof artifact.phaseLabel === "string" && artifact.phaseLabel.trim()
+          ? artifact.phaseLabel.trim()
+          : (phaseLabels[phase] ?? "运行中"),
+      ...(blockingReason ? { blockingReason } : {}),
+      ...(terminalOutcome ? { terminalOutcome } : {}),
       currentStage:
         artifact.currentStage === "validate" ||
         artifact.currentStage === "compile" ||
@@ -680,16 +812,43 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       artifact.checkpointCandidate,
     );
 
+    const phaseLabels: Record<GraphRunPhase, string> = {
+      queued: "排队中",
+      validating: "校验中",
+      compiling: "编译中",
+      executing: "执行中",
+      blocked: "阻塞中",
+      finishing: "收束中",
+      terminal: "已结束",
+    };
+    const terminalOutcomeLabels: Record<GraphRunTerminalOutcome, string> = {
+      completed: "已完成",
+      failed: "已失败",
+      cancelled: "已取消",
+    };
+
     return {
       runId: artifact.runId,
       graphId: artifact.graphId,
-      hasActiveRun:
-        artifact.status === "running" ||
-        artifact.status === "streaming" ||
-        artifact.status === "waiting_user",
+      hasActiveRun: artifact.terminalOutcome === undefined,
       status: artifact.status,
       statusLabel:
         statusLabels[artifact.status] ?? `状态 ${String(artifact.status)}`,
+      phase: artifact.phase,
+      phaseLabel:
+        artifact.phaseLabel ||
+        phaseLabels[artifact.phase] ||
+        `阶段 ${artifact.phase}`,
+      blockingReason: artifact.blockingReason ?? null,
+      blockingReasonLabel: artifact.blockingReason
+        ? artifact.blockingReason.detail?.trim()
+          ? `${artifact.blockingReason.label} · ${artifact.blockingReason.detail.trim()}`
+          : artifact.blockingReason.label
+        : "无阻塞原因",
+      terminalOutcome: artifact.terminalOutcome ?? null,
+      terminalOutcomeLabel: artifact.terminalOutcome
+        ? terminalOutcomeLabels[artifact.terminalOutcome]
+        : "未终局",
       currentStage: artifact.currentStage,
       currentStageLabel: artifact.currentStage
         ? stageLabels[artifact.currentStage]

@@ -1484,13 +1484,19 @@ async function runValidationSpec(): Promise<void> {
   assert(successResult.ok, "Expected executeGraph to succeed for valid graph");
   assert(
     successResult.runState.status === "completed" &&
+      successResult.runState.phase === "terminal" &&
+      successResult.runState.phaseLabel === "已完成" &&
+      successResult.runState.terminalOutcome === "completed" &&
       successResult.runState.currentStage === "execute" &&
       successResult.runState.graphId === "graph_test" &&
       successResult.runState.runId === successResult.requestId,
-    `Expected success runState to remain completed even when waiting_user observation is emitted, while preserving requestId mapping. Actual: ${JSON.stringify(successResult.runState)}`,
+    `Expected success runState to remain completed with terminal read-only semantics even when waiting_user observation is emitted, while preserving requestId mapping. Actual: ${JSON.stringify(successResult.runState)}`,
   );
   assert(
     successResult.runArtifact?.status === "completed" &&
+      successResult.runArtifact?.phase === "terminal" &&
+      successResult.runArtifact?.terminalOutcome === "completed" &&
+      !successResult.runArtifact?.blockingReason &&
       successResult.runArtifact?.graphId === "graph_test" &&
       successResult.runArtifact?.currentStage === "execute" &&
       successResult.runArtifact?.latestNodeId === "filter_text" &&
@@ -2140,6 +2146,8 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     handlerFailureResult.runState.status === "failed" &&
+      handlerFailureResult.runState.phase === "terminal" &&
+      handlerFailureResult.runState.terminalOutcome === "failed" &&
       handlerFailureResult.runState.currentStage === "execute" &&
       handlerFailureResult.runState.failedStage === "execute" &&
       handlerFailureResult.runState.compileFingerprint ===
@@ -2148,6 +2156,8 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     handlerFailureResult.runArtifact?.status === "failed" &&
+      handlerFailureResult.runArtifact?.phase === "terminal" &&
+      handlerFailureResult.runArtifact?.terminalOutcome === "failed" &&
       handlerFailureResult.runArtifact?.failedStage === "execute" &&
       handlerFailureResult.runArtifact?.latestNodeId === "llm_call" &&
       handlerFailureResult.runArtifact?.latestNodeStatus === "failed" &&
@@ -2216,7 +2226,8 @@ async function runValidationSpec(): Promise<void> {
     (handlerFailureResult.runArtifact?.latestHeartbeat?.timestamp ?? 0) > 0 &&
       (handlerFailureResult.runArtifact?.latestPartialOutput?.length ?? 0) >=
         0 &&
-      !handlerFailureResult.runArtifact?.waitingUser,
+      !handlerFailureResult.runArtifact?.waitingUser &&
+      !handlerFailureResult.runArtifact?.blockingReason,
     `Expected failure path to preserve last observable heartbeat and tolerate prior partial output summaries while safely omitting waiting_user. Actual: ${JSON.stringify(handlerFailureResult.runArtifact)}`,
   );
 
@@ -2313,6 +2324,8 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     cancelledExecutionResult.runState.status === "cancelled" &&
+      cancelledExecutionResult.runState.phase === "terminal" &&
+      cancelledExecutionResult.runState.terminalOutcome === "cancelled" &&
       cancelledExecutionResult.runState.currentStage === "execute" &&
       cancelledExecutionResult.runState.failedStage === "execute" &&
       cancelledExecutionResult.runState.compileFingerprint ===
@@ -2321,6 +2334,8 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     cancelledExecutionResult.runArtifact?.status === "cancelled" &&
+      cancelledExecutionResult.runArtifact?.phase === "terminal" &&
+      cancelledExecutionResult.runArtifact?.terminalOutcome === "cancelled" &&
       cancelledExecutionResult.runArtifact?.failedStage === "execute",
     `Expected cancelled execution artifact to expose cancelled lifecycle state. Actual: ${JSON.stringify(cancelledExecutionResult.runArtifact)}`,
   );
@@ -2366,6 +2381,8 @@ async function runValidationSpec(): Promise<void> {
   assert(
     successOverview.run.runId === successResult.runState.runId &&
       successOverview.run.status === "completed" &&
+      successOverview.run.phase === "terminal" &&
+      successOverview.run.terminalOutcome === "completed" &&
       successOverview.compile.compileFingerprint ===
         successResult.compilePlan?.compileFingerprint &&
       successOverview.compile.nodeCount === 2 &&
@@ -2443,6 +2460,8 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     validationFailureOverview.run.status === "failed" &&
+      validationFailureOverview.run.phase === "terminal" &&
+      validationFailureOverview.run.terminalOutcome === "failed" &&
       validationFailureOverview.run.failedStage === "validate" &&
       validationFailureOverview.compile.compileFingerprint === undefined &&
       validationFailureOverview.compile.nodeCount === undefined &&

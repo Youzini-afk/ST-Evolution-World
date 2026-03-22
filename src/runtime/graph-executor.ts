@@ -31,10 +31,13 @@ import type {
   GraphNodeReuseVerdict,
   GraphReuseSummary,
   GraphRunArtifact,
+  GraphRunBlockingReason,
   GraphRunCheckpointSummary,
   GraphRunDiagnosticsOverview,
   GraphRunEvent,
+  GraphRunPhase,
   GraphRunStatus,
+  GraphRunTerminalOutcome,
   GraphStageTrace,
   GraphTraceStageStatus,
   HostCommitContract,
@@ -371,6 +374,118 @@ function createCompileFingerprint(
   );
 }
 
+function deriveRunReadModel(params: {
+  status: GraphRunStatus;
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+}): {
+  phase: GraphRunPhase;
+  phaseLabel: string;
+  blockingReason?: GraphRunBlockingReason;
+  terminalOutcome?: GraphRunTerminalOutcome;
+} {
+  const stageLabel =
+    params.currentStage === "validate"
+      ? "校验"
+      : params.currentStage === "compile"
+        ? "编译"
+        : params.currentStage === "execute"
+          ? "执行"
+          : "运行";
+
+  if (params.status === "queued") {
+    return {
+      phase: "queued",
+      phaseLabel: "排队中",
+    };
+  }
+
+  if (params.status === "completed") {
+    return {
+      phase: "terminal",
+      phaseLabel: "已完成",
+      terminalOutcome: "completed",
+    };
+  }
+
+  if (params.status === "failed") {
+    return {
+      phase: "terminal",
+      phaseLabel: "已失败",
+      terminalOutcome: "failed",
+    };
+  }
+
+  if (params.status === "cancelled") {
+    return {
+      phase: "terminal",
+      phaseLabel: "已取消",
+      terminalOutcome: "cancelled",
+    };
+  }
+
+  if (params.status === "cancelling") {
+    return {
+      phase: "blocked",
+      phaseLabel: "取消中",
+      blockingReason: {
+        category: "cancellation",
+        code: "cancelling",
+        label: "正在取消",
+        detail: "运行收到取消信号，等待当前串行路径收束。",
+      },
+    };
+  }
+
+  if (params.status === "waiting_user") {
+    const detail = params.waitingUser?.reason?.trim();
+    return {
+      phase: "blocked",
+      phaseLabel: "等待用户",
+      blockingReason: {
+        category: "waiting_user",
+        code: "waiting_user",
+        label: "等待用户确认",
+        ...(detail ? { detail } : {}),
+      },
+    };
+  }
+
+  if (params.status === "streaming") {
+    return {
+      phase: "executing",
+      phaseLabel: `${stageLabel}中（流式）`,
+    };
+  }
+
+  if (params.currentStage === "validate") {
+    return {
+      phase: "validating",
+      phaseLabel: "校验中",
+    };
+  }
+
+  if (params.currentStage === "compile") {
+    return {
+      phase: "compiling",
+      phaseLabel: "编译中",
+    };
+  }
+
+  if (params.currentStage === "execute") {
+    return {
+      phase: "executing",
+      phaseLabel: "执行中",
+    };
+  }
+
+  return {
+    phase: "finishing",
+    phaseLabel: `${stageLabel}收束中`,
+  };
+}
+
 function createRunState(params: {
   runId: string;
   graphId: string;
@@ -379,12 +494,27 @@ function createRunState(params: {
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
   compileFingerprint?: string;
+  waitingUser?: GraphRunArtifact["waitingUser"];
 }) {
   const completedAt = Date.now();
+  const readModel = deriveRunReadModel({
+    status: params.status,
+    currentStage: params.currentStage,
+    failedStage: params.failedStage,
+    waitingUser: params.waitingUser,
+  });
   return {
     runId: params.runId,
     graphId: params.graphId,
     status: params.status,
+    phase: readModel.phase,
+    phaseLabel: readModel.phaseLabel,
+    ...(readModel.blockingReason
+      ? { blockingReason: readModel.blockingReason }
+      : {}),
+    ...(readModel.terminalOutcome
+      ? { terminalOutcome: readModel.terminalOutcome }
+      : {}),
     currentStage: params.currentStage,
     failedStage: params.failedStage,
     startedAt: params.startedAt,
@@ -438,10 +568,24 @@ function createGraphRunArtifact(params: {
   waitingUser?: GraphRunArtifact["waitingUser"];
   eventCount: number;
 }): GraphRunArtifact {
+  const readModel = deriveRunReadModel({
+    status: params.status,
+    currentStage: params.currentStage,
+    failedStage: params.failedStage,
+    waitingUser: params.waitingUser,
+  });
   return {
     runId: params.runId,
     graphId: params.graphId,
     status: params.status,
+    phase: readModel.phase,
+    phaseLabel: readModel.phaseLabel,
+    ...(readModel.blockingReason
+      ? { blockingReason: readModel.blockingReason }
+      : {}),
+    ...(readModel.terminalOutcome
+      ? { terminalOutcome: readModel.terminalOutcome }
+      : {}),
     currentStage: params.currentStage,
     failedStage: params.failedStage,
     compileFingerprint: params.compileFingerprint,
@@ -490,6 +634,7 @@ function buildRunObservation(params: {
       currentStage: params.currentStage,
       failedStage: params.failedStage,
       compileFingerprint: params.compileFingerprint,
+      waitingUser: params.waitingUser,
     }),
     runArtifact: createGraphRunArtifact({
       runId: params.requestId,
@@ -1692,18 +1837,30 @@ export async function executeGraph(
       waitingUser,
       eventCount: runEvents.length + 1,
     });
+    const runArtifact = observation.runArtifact;
+    if (!runArtifact) {
+      return;
+    }
     const event: GraphRunEvent = {
       type,
       runId: context.requestId,
       graphId: graph.id,
       timestamp: Date.now(),
       ...(params.status ? { status: params.status } : {}),
+      phase: runArtifact.phase,
+      phaseLabel: runArtifact.phaseLabel,
+      ...(runArtifact.blockingReason
+        ? { blockingReason: runArtifact.blockingReason }
+        : {}),
+      ...(runArtifact.terminalOutcome
+        ? { terminalOutcome: runArtifact.terminalOutcome }
+        : {}),
       ...(params.stage ? { stage: params.stage } : {}),
       ...(params.error ? { error: params.error } : {}),
       ...(params.diagnosticsOverview
         ? { diagnosticsOverview: params.diagnosticsOverview }
         : {}),
-      artifact: observation.runArtifact,
+      artifact: runArtifact,
     };
     runEvents.push(event);
     context.onProgress?.(event);
@@ -1806,15 +1963,40 @@ export async function executeGraph(
       reason: "stage_boundary",
     });
     emitRunEvent("stage_finished", { status: "running", stage: "compile" });
-    runEvents.push({
-      type: "checkpoint_candidate",
-      runId: context.requestId,
-      graphId: graph.id,
+    const compileCheckpointObservation = buildRunObservation({
+      graph,
+      requestId: context.requestId,
+      startedAt,
       status: "running",
-      stage: "compile",
-      checkpoint: checkpointCandidate,
-      timestamp: Date.now(),
+      currentStage: "compile",
+      compileFingerprint: compilePlan.compileFingerprint,
+      checkpointCandidate,
+      latestHeartbeat,
+      latestPartialOutput,
+      waitingUser,
+      eventCount: runEvents.length + 1,
     });
+    const compileCheckpointArtifact = compileCheckpointObservation.runArtifact;
+    if (compileCheckpointArtifact) {
+      runEvents.push({
+        type: "checkpoint_candidate",
+        runId: context.requestId,
+        graphId: graph.id,
+        status: "running",
+        phase: compileCheckpointArtifact.phase,
+        phaseLabel: compileCheckpointArtifact.phaseLabel,
+        ...(compileCheckpointArtifact.blockingReason
+          ? { blockingReason: compileCheckpointArtifact.blockingReason }
+          : {}),
+        ...(compileCheckpointArtifact.terminalOutcome
+          ? { terminalOutcome: compileCheckpointArtifact.terminalOutcome }
+          : {}),
+        stage: "compile",
+        checkpoint: checkpointCandidate,
+        artifact: compileCheckpointArtifact,
+        timestamp: Date.now(),
+      });
+    }
     context.onProgress?.(runEvents[runEvents.length - 1]);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);

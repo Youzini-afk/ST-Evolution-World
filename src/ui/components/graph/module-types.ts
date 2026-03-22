@@ -428,6 +428,34 @@ export type GraphRunStatus =
   | "failed"
   | "completed";
 
+export type GraphRunPhase =
+  | "queued"
+  | "validating"
+  | "compiling"
+  | "executing"
+  | "blocked"
+  | "finishing"
+  | "terminal";
+
+export type GraphRunBlockingReasonCategory =
+  | "waiting_user"
+  | "cancellation"
+  | "unknown";
+
+export type GraphRunBlockingReasonCode =
+  | "waiting_user"
+  | "cancelling"
+  | "unknown";
+
+export interface GraphRunBlockingReason {
+  category: GraphRunBlockingReasonCategory;
+  code: GraphRunBlockingReasonCode;
+  label: string;
+  detail?: string;
+}
+
+export type GraphRunTerminalOutcome = "completed" | "failed" | "cancelled";
+
 export type GraphRunEventType =
   | "run_queued"
   | "run_started"
@@ -488,6 +516,10 @@ export interface GraphRunArtifact {
   graphId: string;
   compileFingerprint?: string;
   status: GraphRunStatus;
+  phase: GraphRunPhase;
+  phaseLabel: string;
+  blockingReason?: GraphRunBlockingReason;
+  terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
   latestNodeId?: string;
@@ -508,6 +540,10 @@ export interface GraphRunEvent {
   runId: string;
   graphId: string;
   status?: GraphRunStatus;
+  phase?: GraphRunPhase;
+  phaseLabel?: string;
+  blockingReason?: GraphRunBlockingReason;
+  terminalOutcome?: GraphRunTerminalOutcome;
   stage?: GraphExecutionStage;
   nodeId?: string;
   moduleId?: string;
@@ -576,6 +612,10 @@ export interface GraphRunState {
   runId: string;
   graphId?: string;
   status: GraphRunStatus;
+  phase: GraphRunPhase;
+  phaseLabel: string;
+  blockingReason?: GraphRunBlockingReason;
+  terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
   startedAt: number;
@@ -628,6 +668,12 @@ export interface GraphActiveRunSummaryViewModel {
   hasActiveRun: boolean;
   status: GraphRunStatus;
   statusLabel: string;
+  phase: GraphRunPhase;
+  phaseLabel: string;
+  blockingReason: GraphRunBlockingReason | null;
+  blockingReasonLabel: string;
+  terminalOutcome: GraphRunTerminalOutcome | null;
+  terminalOutcomeLabel: string;
   currentStage?: GraphExecutionStage;
   currentStageLabel: string;
   latestNodeId?: string;
