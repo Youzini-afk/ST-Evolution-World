@@ -11,6 +11,7 @@ import type {
   GraphRunEvent,
   GraphRunSnapshotEnvelope,
   GraphSchedulingExplainArtifactEnvelope,
+  GraphTerminalOutcomeExplainArtifactEnvelope,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { getEffectiveFlows } from "./char-flows";
@@ -28,6 +29,7 @@ import { createGraphOutputExplainArtifactEnvelope } from "./graph-output-explain
 import { createGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
 import { createGraphSchedulingExplainArtifactEnvelope } from "./graph-scheduling-explain-artifact-codec";
+import { createGraphTerminalOutcomeExplainArtifactEnvelope } from "./graph-terminal-outcome-explain-artifact-codec";
 import { uuidv4 } from "./helpers";
 import { injectReplyInstructionOnce } from "./injection";
 import { mergeFlowResults } from "./merger";
@@ -71,6 +73,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_output_explain_artifact?: GraphOutputExplainArtifactEnvelope;
   graph_reuse_explain_artifact?: GraphReuseExplainArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
+  graph_terminal_outcome_explain_artifact?: GraphTerminalOutcomeExplainArtifactEnvelope;
   graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
   graph_run_overview?: GraphRunArtifact;
@@ -828,6 +831,21 @@ export function buildWorkflowBridgeDiagnostics(params: {
       reuseExplainArtifact: graphReuseExplainArtifact?.artifact ?? null,
     },
   );
+  const graphTerminalOutcomeExplainArtifact =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: graphCompilePlan ?? null,
+      runArtifact: effectiveGraphRunOverview ?? null,
+      result: graphExecutionResult
+        ? {
+            moduleResults: graphExecutionResult.moduleResults,
+          }
+        : null,
+      compileRunLinkArtifact: graphCompileRunLinkArtifact?.artifact ?? null,
+      outputExplainArtifact: graphOutputExplainArtifact?.artifact ?? null,
+      hostEffectExplainArtifact:
+        graphHostEffectExplainArtifact?.artifact ?? null,
+      failureExplainArtifact: graphFailureExplainArtifact?.artifact ?? null,
+    });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -869,6 +887,12 @@ export function buildWorkflowBridgeDiagnostics(params: {
     ...(graphHostEffectExplainArtifact
       ? {
           graph_host_effect_explain_artifact: graphHostEffectExplainArtifact,
+        }
+      : {}),
+    ...(graphTerminalOutcomeExplainArtifact
+      ? {
+          graph_terminal_outcome_explain_artifact:
+            graphTerminalOutcomeExplainArtifact,
         }
       : {}),
     ...(graphNodeInputResolutionArtifact

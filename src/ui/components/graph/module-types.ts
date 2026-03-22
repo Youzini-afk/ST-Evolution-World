@@ -785,6 +785,67 @@ export interface GraphFailureExplainArtifactEnvelope {
   artifact: GraphFailureExplainArtifactV1;
 }
 
+export type GraphTerminalOutcomeExplainProjectionDispositionV1 =
+  | "non_terminal"
+  | "projected_complete"
+  | "projected_truncated";
+
+export type GraphTerminalOutcomeExplainProjectionRoleV1 =
+  | "not_reached"
+  | "observed_before_failure"
+  | "final_output"
+  | "host_effect_only"
+  | "not_projected";
+
+export interface GraphTerminalOutcomeExplainNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  runDisposition: GraphCompileRunLinkDispositionV1;
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  includedInTerminalProjection: boolean;
+  projectionRole: GraphTerminalOutcomeExplainProjectionRoleV1;
+  hostEffectObserved: boolean;
+  outputObserved: boolean;
+  outputProjectionKind: GraphOutputExplainProjectionKindV1;
+  hostEffectProjectionKind: GraphHostEffectExplainProjectionKindV1;
+  failureDisposition: GraphFailureExplainDispositionV1;
+}
+
+export interface GraphTerminalOutcomeExplainSummaryV1 {
+  runStatus: GraphRunStatus;
+  phase: GraphRunPhase;
+  terminalOutcomeObserved: boolean;
+  terminalOutcome: GraphRunTerminalOutcome | "non_terminal";
+  failedStage?: GraphExecutionStage;
+  projectionDisposition: GraphTerminalOutcomeExplainProjectionDispositionV1;
+  finalOutputNodeCount: number;
+  hostEffectOnlyNodeCount: number;
+  truncatedByFailure: boolean;
+}
+
+export interface GraphTerminalOutcomeExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  summary: GraphTerminalOutcomeExplainSummaryV1;
+  finalProjectionNodeIds: string[];
+  hostEffectOnlyNodeIds: string[];
+  observedBeforeFailureNodeIds: string[];
+  notReachedNodeIds: string[];
+  nodes: GraphTerminalOutcomeExplainNodeRecordV1[];
+}
+
+export interface GraphTerminalOutcomeExplainArtifactEnvelope {
+  kind: "graph_terminal_outcome_explain_artifact";
+  version: "v1";
+  artifact: GraphTerminalOutcomeExplainArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;

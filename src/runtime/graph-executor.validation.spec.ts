@@ -67,6 +67,10 @@ import {
   readGraphSchedulingExplainArtifactEnvelope,
 } from "./graph-scheduling-explain-artifact-codec";
 import {
+  createGraphTerminalOutcomeExplainArtifactEnvelope,
+  readGraphTerminalOutcomeExplainArtifactEnvelope,
+} from "./graph-terminal-outcome-explain-artifact-codec";
+import {
   buildWorkflowBridgeDiagnostics,
   selectWorkflowBridgeRoute,
   type WorkflowBridgeRouteSelection,
@@ -4778,6 +4782,332 @@ async function runValidationSpec(): Promise<void> {
     `Expected failure explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(failureExplainRoundtrip)}`,
   );
 
+  const successTerminalOutcomeEnvelope =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: skipPilotRepeat.compilePlan,
+      runArtifact: skipPilotRepeat.runArtifact,
+      result: { moduleResults: skipPilotRepeat.moduleResults },
+      compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: outputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: hostEffectExplainEnvelope?.artifact,
+      failureExplainArtifact: failureExplainEnvelope?.artifact,
+    });
+  assert(
+    successTerminalOutcomeEnvelope?.kind ===
+      "graph_terminal_outcome_explain_artifact" &&
+      successTerminalOutcomeEnvelope.version === "v1" &&
+      successTerminalOutcomeEnvelope.artifact.summary.runStatus ===
+        "completed" &&
+      successTerminalOutcomeEnvelope.artifact.summary.phase === "terminal" &&
+      successTerminalOutcomeEnvelope.artifact.summary
+        .terminalOutcomeObserved === true &&
+      successTerminalOutcomeEnvelope.artifact.summary.terminalOutcome ===
+        "completed" &&
+      successTerminalOutcomeEnvelope.artifact.summary.projectionDisposition ===
+        "projected_complete" &&
+      successTerminalOutcomeEnvelope.artifact.summary.finalOutputNodeCount ===
+        0 &&
+      successTerminalOutcomeEnvelope.artifact.summary
+        .hostEffectOnlyNodeCount === 1 &&
+      successTerminalOutcomeEnvelope.artifact.summary.truncatedByFailure ===
+        false &&
+      successTerminalOutcomeEnvelope.artifact.hostEffectOnlyNodeIds.join(
+        ",",
+      ) === "out_reply" &&
+      successTerminalOutcomeEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionRole: string }) =>
+          node.nodeId === "out_reply",
+      )?.projectionRole === "host_effect_only" &&
+      successTerminalOutcomeEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; includedInTerminalProjection: boolean }) =>
+          node.nodeId === "out_reply",
+      )?.includedInTerminalProjection === true,
+    `Expected completed terminal outcome explain artifact to expose stable completed end-state projection facts, including host_effect_only nodes. Actual: ${JSON.stringify(successTerminalOutcomeEnvelope)}`,
+  );
+
+  const finalOutputTerminalOutcomeEnvelope =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: finalOutputResult.compilePlan,
+      runArtifact: finalOutputResult.runArtifact,
+      result: { moduleResults: finalOutputResult.moduleResults },
+      compileRunLinkArtifact: finalOutputCompileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: finalOutputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: null,
+      failureExplainArtifact: createGraphFailureExplainArtifactEnvelope({
+        plan: finalOutputResult.compilePlan,
+        runArtifact: finalOutputResult.runArtifact,
+        result: finalOutputResult,
+        compileRunLinkArtifact: finalOutputCompileRunLinkEnvelope?.artifact,
+        outputExplainArtifact: finalOutputExplainEnvelope?.artifact,
+        hostEffectExplainArtifact: null,
+        reuseExplainArtifact: null,
+      })?.artifact,
+    });
+  assert(
+    finalOutputTerminalOutcomeEnvelope?.artifact.summary.terminalOutcome ===
+      "completed" &&
+      finalOutputTerminalOutcomeEnvelope.artifact.summary
+        .finalOutputNodeCount === 1 &&
+      finalOutputTerminalOutcomeEnvelope.artifact.finalProjectionNodeIds.join(
+        ",",
+      ) === "filter_text" &&
+      finalOutputTerminalOutcomeEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionRole: string }) =>
+          node.nodeId === "filter_text",
+      )?.projectionRole === "final_output" &&
+      finalOutputTerminalOutcomeEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionRole: string }) =>
+          node.nodeId === "src_text",
+      )?.projectionRole === "not_projected",
+    `Expected completed terminal outcome explain artifact to distinguish final_output from non-projected upstream nodes. Actual: ${JSON.stringify(finalOutputTerminalOutcomeEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(successTerminalOutcomeEnvelope).includes('"outputs"') &&
+      !JSON.stringify(successTerminalOutcomeEnvelope).includes(
+        '"hostWrites"',
+      ) &&
+      !JSON.stringify(successTerminalOutcomeEnvelope).includes(
+        '"hostCommitContracts"',
+      ) &&
+      !JSON.stringify(successTerminalOutcomeEnvelope).includes(
+        '"runtimeOnly"',
+      ) &&
+      !JSON.stringify(successTerminalOutcomeEnvelope).includes("skip-pilot") &&
+      !JSON.stringify(successTerminalOutcomeEnvelope).includes("repeated") &&
+      !JSON.stringify(successTerminalOutcomeEnvelope).includes("host + output"),
+    `Expected terminal outcome explain artifact to omit payloads and runtime-only details. Actual: ${JSON.stringify(successTerminalOutcomeEnvelope)}`,
+  );
+
+  const failedTerminalOutcomeEnvelope =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: failSkipResult.compilePlan,
+      runArtifact: failSkipResult.runArtifact,
+      result: { moduleResults: failSkipResult.moduleResults },
+      compileRunLinkArtifact: notReachedCompileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: notReachedOutputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: null,
+      failureExplainArtifact: notReachedFailureExplainEnvelope?.artifact,
+    });
+  assert(
+    failedTerminalOutcomeEnvelope?.artifact.summary.runStatus === "failed" &&
+      failedTerminalOutcomeEnvelope.artifact.summary.terminalOutcome ===
+        "failed" &&
+      failedTerminalOutcomeEnvelope.artifact.summary.failedStage ===
+        "execute" &&
+      failedTerminalOutcomeEnvelope.artifact.summary.projectionDisposition ===
+        "projected_truncated" &&
+      failedTerminalOutcomeEnvelope.artifact.summary.truncatedByFailure ===
+        true &&
+      failedTerminalOutcomeEnvelope.artifact.observedBeforeFailureNodeIds.join(
+        ",",
+      ) === "src_text,filter_text" &&
+      failedTerminalOutcomeEnvelope.artifact.notReachedNodeIds.join(",") ===
+        "out_reply" &&
+      failedTerminalOutcomeEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionRole: string }) =>
+          node.nodeId === "filter_text",
+      )?.projectionRole === "observed_before_failure" &&
+      failedTerminalOutcomeEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionRole: string }) =>
+          node.nodeId === "out_reply",
+      )?.projectionRole === "not_reached",
+    `Expected failed terminal outcome explain artifact to conservatively expose truncated end-state projection and observed_before_failure/not_reached distinctions. Actual: ${JSON.stringify(failedTerminalOutcomeEnvelope)}`,
+  );
+
+  const cancelledCompileRunLinkEnvelope =
+    createGraphCompileRunLinkArtifactEnvelope({
+      plan: cancelledExecutionResult.compilePlan,
+      runArtifact: cancelledExecutionResult.runArtifact,
+      result: cancelledExecutionResult,
+    });
+  const cancelledOutputExplainEnvelope =
+    createGraphOutputExplainArtifactEnvelope({
+      plan: cancelledExecutionResult.compilePlan,
+      runArtifact: cancelledExecutionResult.runArtifact,
+      result: cancelledExecutionResult,
+      compileRunLinkArtifact: cancelledCompileRunLinkEnvelope?.artifact,
+    });
+  const cancelledFailureExplainEnvelope =
+    createGraphFailureExplainArtifactEnvelope({
+      plan: cancelledExecutionResult.compilePlan,
+      runArtifact: cancelledExecutionResult.runArtifact,
+      result: cancelledExecutionResult,
+      compileRunLinkArtifact: cancelledCompileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: cancelledOutputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: null,
+      reuseExplainArtifact: null,
+    });
+  const cancelledTerminalOutcomeEnvelope =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: cancelledExecutionResult.compilePlan,
+      runArtifact: cancelledExecutionResult.runArtifact,
+      result: { moduleResults: cancelledExecutionResult.moduleResults },
+      compileRunLinkArtifact: cancelledCompileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: cancelledOutputExplainEnvelope?.artifact,
+      hostEffectExplainArtifact: null,
+      failureExplainArtifact: cancelledFailureExplainEnvelope?.artifact,
+    });
+  assert(
+    cancelledTerminalOutcomeEnvelope?.artifact.summary.runStatus ===
+      "cancelled" &&
+      cancelledTerminalOutcomeEnvelope.artifact.summary.terminalOutcome ===
+        "cancelled" &&
+      cancelledTerminalOutcomeEnvelope.artifact.summary
+        .projectionDisposition === "projected_truncated" &&
+      cancelledTerminalOutcomeEnvelope.artifact.summary.truncatedByFailure ===
+        true &&
+      cancelledTerminalOutcomeEnvelope.artifact.notReachedNodeIds.join(",") ===
+        "src_text,filter_text,out_reply" &&
+      !JSON.stringify(cancelledTerminalOutcomeEnvelope).includes(
+        '"blockingContract"',
+      ) &&
+      !JSON.stringify(cancelledTerminalOutcomeEnvelope).includes(
+        '"recoveryEligibility"',
+      ) &&
+      !JSON.stringify(cancelledTerminalOutcomeEnvelope).includes(
+        '"continuationContract"',
+      ),
+    `Expected cancelled terminal outcome explain artifact to remain a stable read-only terminal summary without implying recovery or control semantics. Actual: ${JSON.stringify(cancelledTerminalOutcomeEnvelope)}`,
+  );
+
+  const nonTerminalTerminalOutcomeEnvelope =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_waiting_terminal_explain",
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "等待用户",
+        eventCount: 0,
+        updatedAt: 1,
+      },
+      result: { moduleResults: [] },
+      compileRunLinkArtifact: null,
+      outputExplainArtifact: null,
+      hostEffectExplainArtifact: null,
+      failureExplainArtifact: null,
+    });
+  assert(
+    nonTerminalTerminalOutcomeEnvelope?.artifact.summary.runStatus ===
+      "waiting_user" &&
+      nonTerminalTerminalOutcomeEnvelope.artifact.summary.phase === "blocked" &&
+      nonTerminalTerminalOutcomeEnvelope.artifact.summary
+        .terminalOutcomeObserved === false &&
+      nonTerminalTerminalOutcomeEnvelope.artifact.summary.terminalOutcome ===
+        "non_terminal" &&
+      nonTerminalTerminalOutcomeEnvelope.artifact.summary
+        .projectionDisposition === "non_terminal" &&
+      nonTerminalTerminalOutcomeEnvelope.artifact.summary.truncatedByFailure ===
+        false,
+    `Expected waiting_user/non-terminal runs to conservatively degrade to non_terminal terminal outcome explain state. Actual: ${JSON.stringify(nonTerminalTerminalOutcomeEnvelope)}`,
+  );
+
+  const degradedTerminalOutcomeExplain =
+    readGraphTerminalOutcomeExplainArtifactEnvelope({
+      bridge: {
+        graph_terminal_outcome_explain_artifact: {
+          kind: "graph_terminal_outcome_explain_artifact",
+          version: "v1",
+          artifact: {
+            graphId: "graph_sparse",
+            runId: "run_sparse",
+            compileFingerprint: "compile_fp_sparse",
+            nodeCount: -2,
+            summary: {
+              runStatus: "cancelled",
+              phase: "terminal",
+              terminalOutcomeObserved: true,
+              terminalOutcome: "cancelled",
+              failedStage: "execute",
+              projectionDisposition: "invented",
+              finalOutputNodeCount: -1,
+              hostEffectOnlyNodeCount: -9,
+              truncatedByFailure: true,
+              payload: { leak: true },
+            },
+            finalProjectionNodeIds: ["node_sparse", 2],
+            hostEffectOnlyNodeIds: ["node_sparse", false],
+            observedBeforeFailureNodeIds: ["node_observed", null],
+            notReachedNodeIds: ["node_wait", { bad: true }],
+            nodes: [
+              {
+                nodeId: "node_sparse",
+                moduleId: "out_reply_inject",
+                nodeFingerprint: "node_fp_sparse",
+                compileOrder: -4,
+                runDisposition: "invented_state",
+                isTerminal: true,
+                isSideEffect: true,
+                includedInTerminalProjection: true,
+                projectionRole: "host_effect_only",
+                hostEffectObserved: true,
+                outputObserved: false,
+                outputProjectionKind: "host_effect_only",
+                hostEffectProjectionKind: "host_effect_only",
+                failureDisposition: "not_failed",
+                outputs: { leak: true },
+                runtimeOnly: { leak: true },
+              },
+              {
+                nodeId: "node_wait",
+                moduleId: "flt_mvu_strip",
+                nodeFingerprint: "node_fp_wait",
+                compileOrder: 3,
+                runDisposition: "not_reached",
+                isTerminal: true,
+                isSideEffect: false,
+                includedInTerminalProjection: false,
+                projectionRole: "not_reached",
+                hostEffectObserved: false,
+                outputObserved: false,
+                outputProjectionKind: "not_reached",
+                hostEffectProjectionKind: "not_reached",
+                failureDisposition: "not_reached",
+              },
+              {
+                nodeId: "broken_only",
+              },
+            ],
+          },
+        },
+      },
+    });
+  assert(
+    degradedTerminalOutcomeExplain?.artifact.nodeCount === 0 &&
+      degradedTerminalOutcomeExplain.artifact.summary.runStatus ===
+        "cancelled" &&
+      degradedTerminalOutcomeExplain.artifact.summary.terminalOutcome ===
+        "cancelled" &&
+      degradedTerminalOutcomeExplain.artifact.summary.projectionDisposition ===
+        "projected_truncated" &&
+      degradedTerminalOutcomeExplain.artifact.summary.finalOutputNodeCount ===
+        0 &&
+      degradedTerminalOutcomeExplain.artifact.summary
+        .hostEffectOnlyNodeCount === 0 &&
+      degradedTerminalOutcomeExplain.artifact.summary.truncatedByFailure ===
+        true &&
+      degradedTerminalOutcomeExplain.artifact.finalProjectionNodeIds.join(
+        ",",
+      ) === "node_sparse" &&
+      degradedTerminalOutcomeExplain.artifact.observedBeforeFailureNodeIds.join(
+        ",",
+      ) === "node_observed" &&
+      degradedTerminalOutcomeExplain.artifact.notReachedNodeIds.join(",") ===
+        "node_wait" &&
+      degradedTerminalOutcomeExplain.artifact.nodes.length === 2 &&
+      degradedTerminalOutcomeExplain.artifact.nodes[0]?.compileOrder === 0 &&
+      degradedTerminalOutcomeExplain.artifact.nodes[0]?.runDisposition ===
+        "not_reached" &&
+      !JSON.stringify(degradedTerminalOutcomeExplain).includes('"outputs"') &&
+      !JSON.stringify(degradedTerminalOutcomeExplain).includes(
+        '"runtimeOnly"',
+      ) &&
+      !JSON.stringify(degradedTerminalOutcomeExplain).includes('"payload"'),
+    `Expected malformed or sparse terminal outcome explain payloads to conservatively degrade without leaking payload or runtime-only details. Actual: ${JSON.stringify(degradedTerminalOutcomeExplain)}`,
+  );
+
   const eligibleButExecutedGraph = makePlanExecutionGraph();
   const eligibleButExecutedPlan = compileGraphPlan(eligibleButExecutedGraph);
   const eligibleButExecutedTrace = eligibleButExecutedPlan.nodes.find(
@@ -5697,6 +6027,24 @@ async function runValidationSpec(): Promise<void> {
         .skipped_reuse === 1,
     `Expected workflow bridge diagnostics to expose stable reuse explain artifact surface aligned with compile fingerprint and reuse facts. Actual: ${JSON.stringify(bridgeReuseExplainArtifact)}`,
   );
+  const bridgeTerminalOutcomeExplainArtifact =
+    readGraphTerminalOutcomeExplainArtifactEnvelope(
+      bridgeDiagnosticsWithCompileArtifact,
+    );
+  assert(
+    bridgeTerminalOutcomeExplainArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeTerminalOutcomeExplainArtifact.artifact.runId ===
+        skipPilotRepeat.requestId &&
+      bridgeTerminalOutcomeExplainArtifact.artifact.summary.terminalOutcome ===
+        "completed" &&
+      bridgeTerminalOutcomeExplainArtifact.artifact.summary
+        .hostEffectOnlyNodeCount === 1 &&
+      bridgeTerminalOutcomeExplainArtifact.artifact.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )?.projectionRole === "host_effect_only",
+    `Expected workflow bridge diagnostics to expose stable terminal outcome explain artifact surface aligned with compile fingerprint and end-state projection facts. Actual: ${JSON.stringify(bridgeTerminalOutcomeExplainArtifact)}`,
+  );
   const store = useEwStore();
   setLastRun(
     RunSummarySchema.parse({
@@ -5770,6 +6118,23 @@ async function runValidationSpec(): Promise<void> {
           node.nodeId === "filter_text",
       )?.finalReuseDisposition === "skipped_reuse",
     `Expected store read surface to consume graph reuse explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeReuseExplainArtifact)}`,
+  );
+  const activeTerminalOutcomeExplainArtifact =
+    store.activeGraphTerminalOutcomeExplainArtifact;
+  assert(
+    activeTerminalOutcomeExplainArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeTerminalOutcomeExplainArtifact.runId ===
+        skipPilotRepeat.requestId &&
+      activeTerminalOutcomeExplainArtifact.summary.terminalOutcome ===
+        "completed" &&
+      activeTerminalOutcomeExplainArtifact.summary.hostEffectOnlyNodeCount ===
+        1 &&
+      activeTerminalOutcomeExplainArtifact.nodes.find(
+        (node: { nodeId: string; projectionRole: string }) =>
+          node.nodeId === "out_reply",
+      )?.projectionRole === "host_effect_only",
+    `Expected store read surface to consume graph terminal outcome explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeTerminalOutcomeExplainArtifact)}`,
   );
   assertBridgeDiagnostics(
     buildWorkflowBridgeDiagnostics({ selection: legacyFallbackRoute }),

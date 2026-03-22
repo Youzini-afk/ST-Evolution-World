@@ -11,6 +11,7 @@ import { readGraphFailureExplainArtifactEnvelope } from "./graph-failure-explain
 import { readGraphHostEffectExplainArtifactEnvelope } from "./graph-host-effect-explain-artifact-codec";
 import { readGraphOutputExplainArtifactEnvelope } from "./graph-output-explain-artifact-codec";
 import { readGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
+import { readGraphTerminalOutcomeExplainArtifactEnvelope } from "./graph-terminal-outcome-explain-artifact-codec";
 import { simpleHash } from "./helpers";
 import {
   readSharedSettings,
@@ -545,6 +546,9 @@ type WorkflowBridgeFacts = {
   graph_reuse_explain_artifact?: ReturnType<
     typeof readGraphReuseExplainArtifactEnvelope
   >;
+  graph_terminal_outcome_explain_artifact?: ReturnType<
+    typeof readGraphTerminalOutcomeExplainArtifactEnvelope
+  >;
 };
 
 function normalizeWorkflowBridgeDiagnostics(
@@ -641,6 +645,15 @@ function normalizeWorkflowBridgeDiagnostics(
   });
   if (graphReuseExplainArtifact) {
     normalized.graph_reuse_explain_artifact = graphReuseExplainArtifact;
+  }
+
+  const graphTerminalOutcomeExplainArtifact =
+    readGraphTerminalOutcomeExplainArtifactEnvelope({
+      bridge: bridgeRecord,
+    });
+  if (graphTerminalOutcomeExplainArtifact) {
+    normalized.graph_terminal_outcome_explain_artifact =
+      graphTerminalOutcomeExplainArtifact;
   }
 
   return normalized;

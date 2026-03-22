@@ -2,6 +2,7 @@ import {
   GraphDocumentEnvelope,
   buildGraphDocumentExportPayload,
 } from "@/runtime/graph-document-codec";
+import { readGraphTerminalOutcomeExplainArtifactEnvelope } from "@/runtime/graph-terminal-outcome-explain-artifact-codec";
 import _ from "lodash";
 import {
   clearCharFlowDraft,
@@ -98,6 +99,7 @@ import type {
   GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
   GraphSchedulingExplainArtifactV1,
+  GraphTerminalOutcomeExplainArtifactV1,
   ModuleExplainContract,
   WorkbenchGraph,
 } from "./components/graph/module-types";
@@ -1259,6 +1261,15 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     return readGraphReuseExplainArtifactEnvelope(diagnostics)?.artifact ?? null;
   }
 
+  function toActiveGraphTerminalOutcomeExplainArtifact(
+    diagnostics: unknown,
+  ): GraphTerminalOutcomeExplainArtifactV1 | null {
+    return (
+      readGraphTerminalOutcomeExplainArtifactEnvelope(diagnostics)?.artifact ??
+      null
+    );
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1857,6 +1868,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphSchedulingExplainArtifact = computed(() =>
     toActiveGraphSchedulingExplainArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphTerminalOutcomeExplainArtifact = computed(() =>
+    toActiveGraphTerminalOutcomeExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchNodeDiagnostics = computed(() =>
@@ -2797,6 +2812,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphHostEffectExplainArtifact,
     activeGraphReuseExplainArtifact,
     activeGraphSchedulingExplainArtifact,
+    activeGraphTerminalOutcomeExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,
