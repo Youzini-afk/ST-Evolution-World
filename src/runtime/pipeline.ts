@@ -4,6 +4,7 @@ import type {
   GraphRunArtifact,
   GraphRunEvent,
   GraphRunSnapshotEnvelope,
+  GraphSchedulingExplainArtifactEnvelope,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { getEffectiveFlows } from "./char-flows";
@@ -15,6 +16,7 @@ import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-cod
 import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphNodeInputResolutionArtifactEnvelope } from "./graph-input-resolution-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
+import { createGraphSchedulingExplainArtifactEnvelope } from "./graph-scheduling-explain-artifact-codec";
 import { uuidv4 } from "./helpers";
 import { injectReplyInstructionOnce } from "./injection";
 import { mergeFlowResults } from "./merger";
@@ -52,6 +54,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_compile_artifact?: ReturnType<
     typeof createGraphCompileArtifactEnvelope
   >;
+  graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
   graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
   graph_run_overview?: GraphRunArtifact;
@@ -694,6 +697,10 @@ export function buildWorkflowBridgeDiagnostics(params: {
   const graphCompileArtifact = createGraphCompileArtifactEnvelope({
     plan: graphCompilePlan ?? null,
   });
+  const graphSchedulingExplainArtifact =
+    createGraphSchedulingExplainArtifactEnvelope({
+      plan: graphCompilePlan ?? null,
+    });
   const graphNodeInputResolutionArtifact =
     createGraphNodeInputResolutionArtifactEnvelope({
       result: graphInputResolutionArtifact
@@ -721,6 +728,11 @@ export function buildWorkflowBridgeDiagnostics(params: {
       : {}),
     ...(graphCompileArtifact
       ? { graph_compile_artifact: graphCompileArtifact }
+      : {}),
+    ...(graphSchedulingExplainArtifact
+      ? {
+          graph_scheduling_explain_artifact: graphSchedulingExplainArtifact,
+        }
       : {}),
     ...(graphNodeInputResolutionArtifact
       ? {

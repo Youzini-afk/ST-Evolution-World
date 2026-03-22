@@ -419,6 +419,49 @@ export interface GraphCompileArtifactEnvelope {
   artifact: GraphCompileArtifactV1;
 }
 
+export type GraphSchedulingExplainStrategyMode = "topological_order";
+
+export type GraphSchedulingExplainReasonKind =
+  | "source_node"
+  | "dependency_constrained"
+  | "terminal_projection"
+  | "side_effect_projection"
+  | "topological_tie_break";
+
+export interface GraphSchedulingExplainOrderingReasonV1 {
+  kind: GraphSchedulingExplainReasonKind;
+  dependsOnNodeIds: string[];
+  detail: string;
+}
+
+export interface GraphSchedulingExplainNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  order: number;
+  dependsOn: string[];
+  readyLayer: number;
+  isSource: boolean;
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  orderingReason: GraphSchedulingExplainOrderingReasonV1;
+}
+
+export interface GraphSchedulingExplainArtifactV1 {
+  graphId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  strategyMode: GraphSchedulingExplainStrategyMode;
+  nodeCount: number;
+  nodes: GraphSchedulingExplainNodeRecordV1[];
+}
+
+export interface GraphSchedulingExplainArtifactEnvelope {
+  kind: "graph_scheduling_explain_artifact";
+  version: "v1";
+  artifact: GraphSchedulingExplainArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;

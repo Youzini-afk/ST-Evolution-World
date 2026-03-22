@@ -40,6 +40,10 @@ import {
   readGraphRunSnapshotEnvelope,
 } from "./graph-run-artifact-codec";
 import {
+  createGraphSchedulingExplainArtifactEnvelope,
+  readGraphSchedulingExplainArtifactEnvelope,
+} from "./graph-scheduling-explain-artifact-codec";
+import {
   buildWorkflowBridgeDiagnostics,
   selectWorkflowBridgeRoute,
   type WorkflowBridgeRouteSelection,
@@ -3421,6 +3425,116 @@ async function runValidationSpec(): Promise<void> {
     `Expected malformed or sparse compile artifact payloads to conservatively degrade to stable defaults. Actual: ${JSON.stringify(degradedCompileArtifact)}`,
   );
 
+  const schedulingExplainEnvelope =
+    createGraphSchedulingExplainArtifactEnvelope({
+      plan: handlerFailureResult.compilePlan,
+    });
+  assert(
+    schedulingExplainEnvelope?.kind === "graph_scheduling_explain_artifact" &&
+      schedulingExplainEnvelope.version === "v1" &&
+      schedulingExplainEnvelope.artifact.compileFingerprint ===
+        handlerFailureResult.compilePlan?.compileFingerprint &&
+      schedulingExplainEnvelope.artifact.graphId ===
+        handlerFailureResult.compilePlan?.fingerprintSource?.graphId &&
+      schedulingExplainEnvelope.artifact.nodeCount ===
+        handlerFailureResult.compilePlan?.fingerprintSource?.nodeCount &&
+      schedulingExplainEnvelope.artifact.strategyMode === "topological_order" &&
+      schedulingExplainEnvelope.artifact.nodes.length ===
+        (handlerFailureResult.compilePlan?.nodes.length ?? 0),
+    `Expected compile plan to project into stable scheduling explain envelope. Actual: ${JSON.stringify(schedulingExplainEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(schedulingExplainEnvelope).includes("scopeKey") &&
+      !JSON.stringify(schedulingExplainEnvelope).includes('"trace"') &&
+      !JSON.stringify(schedulingExplainEnvelope).includes('"sequence"') &&
+      !JSON.stringify(schedulingExplainEnvelope).includes('"status"') &&
+      !JSON.stringify(schedulingExplainEnvelope).includes('"stage"') &&
+      !JSON.stringify(schedulingExplainEnvelope).includes('"hostWrites"') &&
+      !JSON.stringify(schedulingExplainEnvelope).includes(
+        '"hostCommitContracts"',
+      ),
+    `Expected scheduling explain envelope to omit runtime/cache internals. Actual: ${JSON.stringify(schedulingExplainEnvelope)}`,
+  );
+  assert(
+    schedulingExplainEnvelope?.artifact.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.order}:${node.readyLayer}:${node.isSource}:${node.isTerminal}:${node.isSideEffect}:${node.orderingReason.kind}:${node.dependsOn.join("+")}:${node.orderingReason.dependsOnNodeIds.join("+")}`,
+      )
+      .join(",") ===
+      "src_text:0:0:true:false:false:source_node::,filter_text:1:1:false:false:false:dependency_constrained:src_text:src_text,out_reply:2:2:false:true:true:terminal_projection:filter_text:filter_text",
+    `Expected scheduling explain artifact to project stable order/dependency/layer/identity facts. Actual: ${JSON.stringify(schedulingExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const schedulingExplainRoundtrip = readGraphSchedulingExplainArtifactEnvelope(
+    {
+      bridge: {
+        graph_scheduling_explain_artifact: {
+          kind: "graph_scheduling_explain_artifact",
+          version: "v1",
+          artifact: schedulingExplainEnvelope?.artifact,
+        },
+      },
+    },
+  );
+  assert(
+    schedulingExplainRoundtrip?.artifact.compileFingerprint ===
+      schedulingExplainEnvelope?.artifact.compileFingerprint &&
+      schedulingExplainRoundtrip?.artifact.nodes.length ===
+        schedulingExplainEnvelope?.artifact.nodes.length,
+    `Expected scheduling explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(schedulingExplainRoundtrip)}`,
+  );
+
+  const degradedSchedulingExplain = readGraphSchedulingExplainArtifactEnvelope({
+    bridge: {
+      graph_scheduling_explain_artifact: {
+        kind: "graph_scheduling_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          compileFingerprint: "compile_fp_sparse",
+          nodeCount: -4,
+          strategyMode: "invented_parallel_mode",
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "src_user_input",
+              nodeFingerprint: "node_fp_sparse",
+              order: -2,
+              readyLayer: 99,
+              dependsOn: ["missing_dep", 2],
+              isTerminal: true,
+              isSideEffect: true,
+              orderingReason: {
+                kind: "made_up_reason",
+                dependsOnNodeIds: ["missing_dep", 2],
+              },
+              leakedTrace: true,
+            },
+            {
+              moduleId: "broken",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedSchedulingExplain?.artifact.nodeCount === 0 &&
+      degradedSchedulingExplain.artifact.strategyMode === "topological_order" &&
+      degradedSchedulingExplain.artifact.nodes.length === 1 &&
+      degradedSchedulingExplain.artifact.nodes[0]?.nodeId === "node_sparse" &&
+      degradedSchedulingExplain.artifact.nodes[0]?.order === 0 &&
+      degradedSchedulingExplain.artifact.nodes[0]?.readyLayer === 0 &&
+      degradedSchedulingExplain.artifact.nodes[0]?.isSource === false &&
+      degradedSchedulingExplain.artifact.nodes[0]?.orderingReason.kind ===
+        "terminal_projection" &&
+      degradedSchedulingExplain.artifact.nodes[0]?.orderingReason.dependsOnNodeIds.join(
+        ",",
+      ) === "missing_dep",
+    `Expected sparse scheduling explain payload to degrade conservatively. Actual: ${JSON.stringify(degradedSchedulingExplain)}`,
+  );
+
   const inputResolutionEnvelope =
     createGraphNodeInputResolutionArtifactEnvelope({
       result: handlerFailureResult,
@@ -3914,6 +4028,24 @@ async function runValidationSpec(): Promise<void> {
       bridgeCompileArtifact.artifact.nodes.length ===
         compilePlanFixture.nodes.length,
     `Expected workflow bridge diagnostics to expose stable compile artifact surface. Actual: ${JSON.stringify(bridgeCompileArtifact)}`,
+  );
+  const bridgeSchedulingExplainArtifact =
+    readGraphSchedulingExplainArtifactEnvelope(
+      bridgeDiagnosticsWithCompileArtifact,
+    );
+  assert(
+    bridgeSchedulingExplainArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeSchedulingExplainArtifact.artifact.graphId ===
+        compilePlanFixture.fingerprintSource?.graphId &&
+      bridgeSchedulingExplainArtifact.artifact.nodes.length ===
+        compilePlanFixture.nodes.length &&
+      bridgeSchedulingExplainArtifact.artifact.nodes.every(
+        (node) =>
+          !Object.prototype.hasOwnProperty.call(node, "compileFingerprint") &&
+          typeof node.orderingReason?.detail === "string",
+      ),
+    `Expected workflow bridge diagnostics to expose stable scheduling explain artifact surface aligned with compile fingerprint. Actual: ${JSON.stringify(bridgeSchedulingExplainArtifact)}`,
   );
   assertBridgeDiagnostics(
     buildWorkflowBridgeDiagnostics({ selection: legacyFallbackRoute }),

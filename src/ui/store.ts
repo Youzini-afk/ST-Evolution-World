@@ -26,6 +26,7 @@ import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artif
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
 import { readGraphNodeInputResolutionArtifactEnvelope } from "../runtime/graph-input-resolution-artifact-codec";
 import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
+import { readGraphSchedulingExplainArtifactEnvelope } from "../runtime/graph-scheduling-explain-artifact-codec";
 import { runWorkflow } from "../runtime/pipeline";
 import {
   previewPrompt,
@@ -86,6 +87,7 @@ import type {
   GraphRunStatus,
   GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
+  GraphSchedulingExplainArtifactV1,
   ModuleExplainContract,
   WorkbenchGraph,
 } from "./components/graph/module-types";
@@ -1201,6 +1203,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphSchedulingExplainArtifact(
+    diagnostics: unknown,
+  ): GraphSchedulingExplainArtifactV1 | null {
+    return (
+      readGraphSchedulingExplainArtifactEnvelope(diagnostics)?.artifact ?? null
+    );
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1775,6 +1785,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphNodeInputResolutionArtifact = computed(() =>
     toActiveGraphNodeInputResolutionArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphSchedulingExplainArtifact = computed(() =>
+    toActiveGraphSchedulingExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchNodeDiagnostics = computed(() =>
@@ -2709,6 +2723,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeWorkbenchNodeDiagnostics,
     activeGraphCompileArtifact,
     activeGraphNodeInputResolutionArtifact,
+    activeGraphSchedulingExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,
