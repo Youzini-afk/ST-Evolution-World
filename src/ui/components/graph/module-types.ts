@@ -454,6 +454,59 @@ export interface GraphRunBlockingReason {
   detail?: string;
 }
 
+export type GraphRunBlockingContractKind =
+  | "waiting_user"
+  | "cancellation"
+  | "unknown";
+
+export type GraphRunBlockingInputRequirementType =
+  | "confirmation"
+  | "text_input"
+  | "selection"
+  | "unknown";
+
+export interface GraphRunBlockingInputRequirement {
+  required: boolean;
+  type: GraphRunBlockingInputRequirementType;
+  detail?: string;
+}
+
+export type GraphRunRecoveryFactSource =
+  | "waiting_user"
+  | "checkpoint_candidate"
+  | "terminal_state"
+  | "status"
+  | "unknown";
+
+export interface GraphRunRecoveryPrerequisiteFact {
+  source: GraphRunRecoveryFactSource;
+  code:
+    | "user_input_required"
+    | "checkpoint_observed"
+    | "run_not_terminal"
+    | "terminal_state"
+    | "unknown";
+  label: string;
+  detail?: string;
+}
+
+export interface GraphRunBlockingContract {
+  kind: GraphRunBlockingContractKind;
+  reason: GraphRunBlockingReason;
+  requiresHumanInput: boolean;
+  inputRequirement: GraphRunBlockingInputRequirement;
+  recoveryPrerequisites: GraphRunRecoveryPrerequisiteFact[];
+}
+
+export type GraphRunRecoveryEligibility = "eligible" | "ineligible" | "unknown";
+
+export interface GraphRunRecoveryEligibilityFact {
+  status: GraphRunRecoveryEligibility;
+  source: GraphRunRecoveryFactSource;
+  label: string;
+  detail?: string;
+}
+
 export type GraphRunTerminalOutcome = "completed" | "failed" | "cancelled";
 
 export type GraphRunEventType =
@@ -519,6 +572,8 @@ export interface GraphRunArtifact {
   phase: GraphRunPhase;
   phaseLabel: string;
   blockingReason?: GraphRunBlockingReason;
+  blockingContract?: GraphRunBlockingContract;
+  recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
@@ -543,6 +598,8 @@ export interface GraphRunEvent {
   phase?: GraphRunPhase;
   phaseLabel?: string;
   blockingReason?: GraphRunBlockingReason;
+  blockingContract?: GraphRunBlockingContract;
+  recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   stage?: GraphExecutionStage;
   nodeId?: string;
@@ -615,6 +672,8 @@ export interface GraphRunState {
   phase: GraphRunPhase;
   phaseLabel: string;
   blockingReason?: GraphRunBlockingReason;
+  blockingContract?: GraphRunBlockingContract;
+  recoveryEligibility?: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
@@ -672,6 +731,15 @@ export interface GraphActiveRunSummaryViewModel {
   phaseLabel: string;
   blockingReason: GraphRunBlockingReason | null;
   blockingReasonLabel: string;
+  blockingContract: GraphRunBlockingContract | null;
+  hasBlockingContract: boolean;
+  blockingCategoryLabel: string;
+  requiresHumanInput: boolean;
+  requiresHumanInputLabel: string;
+  inputRequirementType: GraphRunBlockingInputRequirementType;
+  inputRequirementTypeLabel: string;
+  recoveryEligibility: GraphRunRecoveryEligibilityFact | null;
+  recoveryEligibilityLabel: string;
   terminalOutcome: GraphRunTerminalOutcome | null;
   terminalOutcomeLabel: string;
   currentStage?: GraphExecutionStage;
@@ -683,7 +751,6 @@ export interface GraphActiveRunSummaryViewModel {
   latestNodeStatusLabel: string;
   eventCount: number;
   updatedAt: number;
-  hasRecoveryCandidate: boolean;
   checkpointCandidate: GraphCheckpointCandidateViewModel | null;
   latestHeartbeat: GraphRunHeartbeatSummary | null;
   latestHeartbeatLabel: string;

@@ -53,12 +53,15 @@ import type {
   GraphExecutionStage,
   GraphNodeDirtyReason,
   GraphRunArtifact,
+  GraphRunBlockingContract,
+  GraphRunBlockingInputRequirementType,
   GraphRunBlockingReason,
   GraphRunDiagnosticsOverview,
   GraphRunDiagnosticsSummaryViewModel,
   GraphRunHeartbeatSummary,
   GraphRunPartialOutputSummary,
   GraphRunPhase,
+  GraphRunRecoveryEligibilityFact,
   GraphRunStatus,
   GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
@@ -364,6 +367,135 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         typeof record.detail === "string" && record.detail.trim()
           ? record.detail.trim()
           : undefined,
+    };
+  }
+
+  function toBlockingInputRequirementType(
+    value: unknown,
+  ): GraphRunBlockingInputRequirementType {
+    return value === "confirmation" ||
+      value === "text_input" ||
+      value === "selection" ||
+      value === "unknown"
+      ? value
+      : "unknown";
+  }
+
+  function toRecoveryEligibility(
+    value: unknown,
+  ): GraphRunRecoveryEligibilityFact | undefined {
+    if (!_.isPlainObject(value)) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const status =
+      record.status === "eligible" ||
+      record.status === "ineligible" ||
+      record.status === "unknown"
+        ? record.status
+        : undefined;
+    const source =
+      record.source === "waiting_user" ||
+      record.source === "checkpoint_candidate" ||
+      record.source === "terminal_state" ||
+      record.source === "status" ||
+      record.source === "unknown"
+        ? record.source
+        : undefined;
+    const label =
+      typeof record.label === "string" && record.label.trim()
+        ? record.label.trim()
+        : undefined;
+    if (!status || !source || !label) {
+      return undefined;
+    }
+    return {
+      status,
+      source,
+      label,
+      detail:
+        typeof record.detail === "string" && record.detail.trim()
+          ? record.detail.trim()
+          : undefined,
+    };
+  }
+
+  function toBlockingContract(
+    value: unknown,
+  ): GraphRunBlockingContract | undefined {
+    if (!_.isPlainObject(value)) {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const kind =
+      record.kind === "waiting_user" ||
+      record.kind === "cancellation" ||
+      record.kind === "unknown"
+        ? record.kind
+        : undefined;
+    const reason = toBlockingReason(record.reason);
+    const inputRequirement = _.isPlainObject(record.inputRequirement)
+      ? (record.inputRequirement as Record<string, unknown>)
+      : null;
+    if (!kind || !reason || !inputRequirement) {
+      return undefined;
+    }
+    return {
+      kind,
+      reason,
+      requiresHumanInput: record.requiresHumanInput === true,
+      inputRequirement: {
+        required: inputRequirement.required === true,
+        type: toBlockingInputRequirementType(inputRequirement.type),
+        detail:
+          typeof inputRequirement.detail === "string" &&
+          inputRequirement.detail.trim()
+            ? inputRequirement.detail.trim()
+            : undefined,
+      },
+      recoveryPrerequisites: Array.isArray(record.recoveryPrerequisites)
+        ? record.recoveryPrerequisites
+            .filter((item): item is Record<string, unknown> =>
+              _.isPlainObject(item),
+            )
+            .map((item) => {
+              const source =
+                item.source === "waiting_user" ||
+                item.source === "checkpoint_candidate" ||
+                item.source === "terminal_state" ||
+                item.source === "status" ||
+                item.source === "unknown"
+                  ? item.source
+                  : "unknown";
+              const code =
+                item.code === "user_input_required" ||
+                item.code === "checkpoint_observed" ||
+                item.code === "run_not_terminal" ||
+                item.code === "terminal_state" ||
+                item.code === "unknown"
+                  ? item.code
+                  : "unknown";
+              const label =
+                typeof item.label === "string" && item.label.trim()
+                  ? item.label.trim()
+                  : "恢复前提未知";
+              return {
+                source,
+                code,
+                label,
+                detail:
+                  typeof item.detail === "string" && item.detail.trim()
+                    ? item.detail.trim()
+                    : undefined,
+              };
+            })
+        : [
+            {
+              source: "unknown",
+              code: "unknown",
+              label: "恢复前提未知",
+            },
+          ],
     };
   }
 
@@ -693,6 +825,16 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       cancelled: "已取消",
     };
 
+    const blockingContract = toBlockingContract(artifact.blockingContract);
+    const recoveryEligibility = toRecoveryEligibility(
+      artifact.recoveryEligibility,
+    ) ?? {
+      status: "unknown",
+      source: "unknown",
+      label: "恢复资格未知",
+      detail: "读侧缺少足够字段，已保守降级。",
+    };
+
     return {
       runId: typeof artifact.runId === "string" ? artifact.runId : "",
       graphId: typeof artifact.graphId === "string" ? artifact.graphId : "",
@@ -703,6 +845,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           ? artifact.phaseLabel.trim()
           : (phaseLabels[phase] ?? "运行中"),
       ...(blockingReason ? { blockingReason } : {}),
+      ...(blockingContract ? { blockingContract } : {}),
+      recoveryEligibility,
       ...(terminalOutcome ? { terminalOutcome } : {}),
       currentStage:
         artifact.currentStage === "validate" ||
@@ -827,6 +971,25 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       cancelled: "已取消",
     };
 
+    const blockingContract = artifact.blockingContract ?? null;
+    const inputType = blockingContract?.inputRequirement.type ?? "unknown";
+    const inputRequirementTypeLabels: Record<
+      GraphRunBlockingInputRequirementType,
+      string
+    > = {
+      confirmation: "确认",
+      text_input: "文本输入",
+      selection: "选择",
+      unknown: "未知",
+    };
+    const blockingCategoryLabel = blockingContract
+      ? blockingContract.kind === "waiting_user"
+        ? "waiting_user"
+        : blockingContract.kind === "cancellation"
+          ? "cancellation"
+          : "unknown"
+      : "无阻塞契约";
+
     return {
       runId: artifact.runId,
       graphId: artifact.graphId,
@@ -845,6 +1008,18 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           ? `${artifact.blockingReason.label} · ${artifact.blockingReason.detail.trim()}`
           : artifact.blockingReason.label
         : "无阻塞原因",
+      blockingContract,
+      hasBlockingContract: blockingContract !== null,
+      blockingCategoryLabel,
+      requiresHumanInput: blockingContract?.requiresHumanInput === true,
+      requiresHumanInputLabel:
+        blockingContract?.requiresHumanInput === true ? "需要" : "不需要",
+      inputRequirementType: inputType,
+      inputRequirementTypeLabel: inputRequirementTypeLabels[inputType],
+      recoveryEligibility: artifact.recoveryEligibility ?? null,
+      recoveryEligibilityLabel: artifact.recoveryEligibility
+        ? `${artifact.recoveryEligibility.status} · ${artifact.recoveryEligibility.label}`
+        : "unknown · 恢复资格未知",
       terminalOutcome: artifact.terminalOutcome ?? null,
       terminalOutcomeLabel: artifact.terminalOutcome
         ? terminalOutcomeLabels[artifact.terminalOutcome]
@@ -867,7 +1042,6 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         : "—",
       eventCount: artifact.eventCount,
       updatedAt: artifact.updatedAt,
-      hasRecoveryCandidate: checkpointCandidate !== null,
       checkpointCandidate,
       latestHeartbeat: artifact.latestHeartbeat ?? null,
       latestHeartbeatLabel: artifact.latestHeartbeat

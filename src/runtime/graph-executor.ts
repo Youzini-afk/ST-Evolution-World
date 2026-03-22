@@ -31,11 +31,15 @@ import type {
   GraphNodeReuseVerdict,
   GraphReuseSummary,
   GraphRunArtifact,
+  GraphRunBlockingContract,
+  GraphRunBlockingInputRequirementType,
   GraphRunBlockingReason,
   GraphRunCheckpointSummary,
   GraphRunDiagnosticsOverview,
   GraphRunEvent,
   GraphRunPhase,
+  GraphRunRecoveryEligibilityFact,
+  GraphRunRecoveryPrerequisiteFact,
   GraphRunStatus,
   GraphRunTerminalOutcome,
   GraphStageTrace,
@@ -374,15 +378,164 @@ function createCompileFingerprint(
   );
 }
 
+function inferBlockingInputRequirementType(
+  waitingUser?: GraphRunArtifact["waitingUser"],
+): GraphRunBlockingInputRequirementType {
+  const reason = waitingUser?.reason?.trim().toLowerCase();
+  if (!reason) {
+    return "unknown";
+  }
+  if (/选择|select|choice|option/.test(reason)) {
+    return "selection";
+  }
+  if (/输入|text|reply|answer/.test(reason)) {
+    return "text_input";
+  }
+  if (/确认|confirm|approval|consent|继续/.test(reason)) {
+    return "confirmation";
+  }
+  return "unknown";
+}
+
+function deriveRecoveryPrerequisites(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunRecoveryPrerequisiteFact[] {
+  const facts: GraphRunRecoveryPrerequisiteFact[] = [];
+  if (params.status === "waiting_user") {
+    facts.push({
+      source: "waiting_user",
+      code: "user_input_required",
+      label: "需要人工输入事实",
+      detail:
+        params.waitingUser?.reason?.trim() ||
+        "检测到 waiting_user 只读阻塞事实。",
+    });
+    facts.push({
+      source: "status",
+      code: "run_not_terminal",
+      label: "运行尚未终局",
+      detail: "当前运行仍停留在只读阻塞态。",
+    });
+  }
+  if (params.checkpointCandidate) {
+    facts.push({
+      source: "checkpoint_candidate",
+      code: "checkpoint_observed",
+      label: "已观测到 checkpoint candidate",
+      detail: "仅表示存在检查点事实，不表示系统已支持恢复动作。",
+    });
+  }
+  if (
+    params.status === "failed" ||
+    params.status === "cancelled" ||
+    params.status === "completed"
+  ) {
+    facts.push({
+      source: "terminal_state",
+      code: "terminal_state",
+      label: "运行已终局",
+      detail: "终局状态不构成可恢复阻塞承诺。",
+    });
+  }
+  if (facts.length === 0) {
+    facts.push({
+      source: "unknown",
+      code: "unknown",
+      label: "恢复前提未知",
+      detail: "当前只读观测不足以推断更多恢复前提事实。",
+    });
+  }
+  return facts;
+}
+
+function deriveBlockingContract(params: {
+  status: GraphRunStatus;
+  blockingReason?: GraphRunBlockingReason;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunBlockingContract | undefined {
+  if (params.status !== "waiting_user" || !params.blockingReason) {
+    return undefined;
+  }
+  const inputType = inferBlockingInputRequirementType(params.waitingUser);
+  const detail = params.waitingUser?.reason?.trim();
+  return {
+    kind: "waiting_user",
+    reason: params.blockingReason,
+    requiresHumanInput: true,
+    inputRequirement: {
+      required: true,
+      type: inputType,
+      ...(detail ? { detail } : {}),
+    },
+    recoveryPrerequisites: deriveRecoveryPrerequisites({
+      status: params.status,
+      waitingUser: params.waitingUser,
+      checkpointCandidate: params.checkpointCandidate,
+    }),
+  };
+}
+
+function deriveRecoveryEligibilityFact(params: {
+  status: GraphRunStatus;
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
+}): GraphRunRecoveryEligibilityFact {
+  if (params.status === "cancelled" || params.status === "failed") {
+    return {
+      status: "ineligible",
+      source: "terminal_state",
+      label: "当前不具备恢复资格事实",
+      detail: "cancelled / failed 仅表示终局结果，不应视为可恢复阻塞。",
+    };
+  }
+  if (params.status === "completed") {
+    return {
+      status: "ineligible",
+      source: "terminal_state",
+      label: "当前不具备恢复资格事实",
+      detail: "completed 为终局结果，不属于恢复阻塞。",
+    };
+  }
+  if (params.checkpointCandidate) {
+    return {
+      status: "eligible",
+      source: "checkpoint_candidate",
+      label: "存在恢复资格事实",
+      detail:
+        "仅基于 checkpoint candidate 的只读资格归因，不代表系统已支持恢复。",
+    };
+  }
+  if (params.status === "waiting_user" || params.waitingUser) {
+    return {
+      status: "unknown",
+      source: "waiting_user",
+      label: "恢复资格未知",
+      detail: "waiting_user 仅说明阻塞与输入需求，不直接承诺恢复能力。",
+    };
+  }
+  return {
+    status: "unknown",
+    source: "unknown",
+    label: "恢复资格未知",
+    detail: "当前缺少足够的只读事实。",
+  };
+}
+
 function deriveRunReadModel(params: {
   status: GraphRunStatus;
   currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
   waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
 }): {
   phase: GraphRunPhase;
   phaseLabel: string;
   blockingReason?: GraphRunBlockingReason;
+  blockingContract?: GraphRunBlockingContract;
+  recoveryEligibility: GraphRunRecoveryEligibilityFact;
   terminalOutcome?: GraphRunTerminalOutcome;
 } {
   const stageLabel =
@@ -394,39 +547,62 @@ function deriveRunReadModel(params: {
           ? "执行"
           : "运行";
 
-  if (params.status === "queued") {
+  const finalizeReadModel = (readModel: {
+    phase: GraphRunPhase;
+    phaseLabel: string;
+    blockingReason?: GraphRunBlockingReason;
+    terminalOutcome?: GraphRunTerminalOutcome;
+  }) => {
+    const blockingContract = deriveBlockingContract({
+      status: params.status,
+      blockingReason: readModel.blockingReason,
+      waitingUser: params.waitingUser,
+      checkpointCandidate: params.checkpointCandidate,
+    });
     return {
+      ...readModel,
+      ...(blockingContract ? { blockingContract } : {}),
+      recoveryEligibility: deriveRecoveryEligibilityFact({
+        status: params.status,
+        waitingUser: params.waitingUser,
+        checkpointCandidate: params.checkpointCandidate,
+      }),
+    };
+  };
+
+  if (params.status === "queued") {
+    return finalizeReadModel({
       phase: "queued",
       phaseLabel: "排队中",
-    };
+    });
   }
 
   if (params.status === "completed") {
-    return {
+    return finalizeReadModel({
       phase: "terminal",
       phaseLabel: "已完成",
       terminalOutcome: "completed",
-    };
+    });
   }
 
   if (params.status === "failed") {
-    return {
+    return finalizeReadModel({
       phase: "terminal",
       phaseLabel: "已失败",
       terminalOutcome: "failed",
-    };
+    });
   }
 
   if (params.status === "cancelled") {
-    return {
+    return finalizeReadModel({
       phase: "terminal",
       phaseLabel: "已取消",
       terminalOutcome: "cancelled",
-    };
+    });
   }
 
   if (params.status === "cancelling") {
-    return {
+    return finalizeReadModel({
       phase: "blocked",
       phaseLabel: "取消中",
       blockingReason: {
@@ -435,55 +611,55 @@ function deriveRunReadModel(params: {
         label: "正在取消",
         detail: "运行收到取消信号，等待当前串行路径收束。",
       },
-    };
+    });
   }
 
   if (params.status === "waiting_user") {
     const detail = params.waitingUser?.reason?.trim();
-    return {
+    return finalizeReadModel({
       phase: "blocked",
       phaseLabel: "等待用户",
       blockingReason: {
         category: "waiting_user",
         code: "waiting_user",
-        label: "等待用户确认",
+        label: "等待用户输入",
         ...(detail ? { detail } : {}),
       },
-    };
+    });
   }
 
   if (params.status === "streaming") {
-    return {
+    return finalizeReadModel({
       phase: "executing",
       phaseLabel: `${stageLabel}中（流式）`,
-    };
+    });
   }
 
   if (params.currentStage === "validate") {
-    return {
+    return finalizeReadModel({
       phase: "validating",
       phaseLabel: "校验中",
-    };
+    });
   }
 
   if (params.currentStage === "compile") {
-    return {
+    return finalizeReadModel({
       phase: "compiling",
       phaseLabel: "编译中",
-    };
+    });
   }
 
   if (params.currentStage === "execute") {
-    return {
+    return finalizeReadModel({
       phase: "executing",
       phaseLabel: "执行中",
-    };
+    });
   }
 
-  return {
+  return finalizeReadModel({
     phase: "finishing",
     phaseLabel: `${stageLabel}收束中`,
-  };
+  });
 }
 
 function createRunState(params: {
@@ -495,6 +671,7 @@ function createRunState(params: {
   failedStage?: GraphExecutionStage;
   compileFingerprint?: string;
   waitingUser?: GraphRunArtifact["waitingUser"];
+  checkpointCandidate?: GraphRunCheckpointSummary;
 }) {
   const completedAt = Date.now();
   const readModel = deriveRunReadModel({
@@ -502,6 +679,7 @@ function createRunState(params: {
     currentStage: params.currentStage,
     failedStage: params.failedStage,
     waitingUser: params.waitingUser,
+    checkpointCandidate: params.checkpointCandidate,
   });
   return {
     runId: params.runId,
@@ -512,6 +690,10 @@ function createRunState(params: {
     ...(readModel.blockingReason
       ? { blockingReason: readModel.blockingReason }
       : {}),
+    ...(readModel.blockingContract
+      ? { blockingContract: readModel.blockingContract }
+      : {}),
+    recoveryEligibility: readModel.recoveryEligibility,
     ...(readModel.terminalOutcome
       ? { terminalOutcome: readModel.terminalOutcome }
       : {}),
@@ -573,6 +755,7 @@ function createGraphRunArtifact(params: {
     currentStage: params.currentStage,
     failedStage: params.failedStage,
     waitingUser: params.waitingUser,
+    checkpointCandidate: params.checkpointCandidate,
   });
   return {
     runId: params.runId,
@@ -583,6 +766,10 @@ function createGraphRunArtifact(params: {
     ...(readModel.blockingReason
       ? { blockingReason: readModel.blockingReason }
       : {}),
+    ...(readModel.blockingContract
+      ? { blockingContract: readModel.blockingContract }
+      : {}),
+    recoveryEligibility: readModel.recoveryEligibility,
     ...(readModel.terminalOutcome
       ? { terminalOutcome: readModel.terminalOutcome }
       : {}),
@@ -635,6 +822,7 @@ function buildRunObservation(params: {
       failedStage: params.failedStage,
       compileFingerprint: params.compileFingerprint,
       waitingUser: params.waitingUser,
+      checkpointCandidate: params.checkpointCandidate,
     }),
     runArtifact: createGraphRunArtifact({
       runId: params.requestId,
@@ -1078,6 +1266,33 @@ function cloneModuleOutput(outputs: ModuleOutput): ModuleOutput {
   return { ...outputs };
 }
 
+function createNodeRunArtifact(params: {
+  runId: string;
+  graphId: string;
+  status?: GraphRunStatus;
+  nodeId?: string;
+  moduleId?: string;
+  checkpointCandidate?: GraphRunCheckpointSummary;
+  heartbeat?: GraphRunEvent["heartbeat"];
+  partialOutput?: GraphRunEvent["partialOutput"];
+  waitingUser?: GraphRunEvent["waitingUser"];
+  eventCount: number;
+}): GraphRunArtifact {
+  return createGraphRunArtifact({
+    runId: params.runId,
+    graphId: params.graphId,
+    status: params.status ?? "running",
+    currentStage: "execute",
+    latestNodeId: params.nodeId,
+    latestNodeModuleId: params.moduleId,
+    checkpointCandidate: params.checkpointCandidate,
+    latestHeartbeat: params.heartbeat,
+    latestPartialOutput: params.partialOutput,
+    waitingUser: params.waitingUser,
+    eventCount: params.eventCount,
+  });
+}
+
 function readExperimentalReuseSkipFlag(context: ExecutionContext): boolean {
   const settings = context.settings as Record<string, unknown> | undefined;
   if (!settings || typeof settings !== "object") {
@@ -1258,12 +1473,39 @@ export async function executeCompiledGraph(
       error?: string;
     },
   ) => {
+    const artifact = createGraphRunArtifact({
+      runId: context.requestId,
+      graphId: graph.id,
+      status: params.status ?? "running",
+      currentStage: "execute",
+      latestNodeId: params.nodeId,
+      latestNodeModuleId: params.moduleId,
+      checkpointCandidate,
+      latestHeartbeat: params.heartbeat,
+      latestPartialOutput: params.partialOutput,
+      waitingUser: params.waitingUser,
+      eventCount: runEvents.length + 1,
+    });
     const event: GraphRunEvent = {
       type,
       runId: context.requestId,
       graphId: graph.id,
       timestamp: Date.now(),
       ...(params.status ? { status: params.status } : {}),
+      phase: artifact.phase,
+      phaseLabel: artifact.phaseLabel,
+      ...(artifact.blockingReason
+        ? { blockingReason: artifact.blockingReason }
+        : {}),
+      ...(artifact.blockingContract
+        ? { blockingContract: artifact.blockingContract }
+        : {}),
+      ...(artifact.recoveryEligibility
+        ? { recoveryEligibility: artifact.recoveryEligibility }
+        : {}),
+      ...(artifact.terminalOutcome
+        ? { terminalOutcome: artifact.terminalOutcome }
+        : {}),
       stage: "execute",
       ...(params.nodeId ? { nodeId: params.nodeId } : {}),
       ...(params.moduleId ? { moduleId: params.moduleId } : {}),
@@ -1275,6 +1517,7 @@ export async function executeCompiledGraph(
       ...(params.partialOutput ? { partialOutput: params.partialOutput } : {}),
       ...(params.waitingUser ? { waitingUser: params.waitingUser } : {}),
       ...(params.error ? { error: params.error } : {}),
+      artifact,
     };
     runEvents.push(event);
   };
@@ -1852,6 +2095,12 @@ export async function executeGraph(
       ...(runArtifact.blockingReason
         ? { blockingReason: runArtifact.blockingReason }
         : {}),
+      ...(runArtifact.blockingContract
+        ? { blockingContract: runArtifact.blockingContract }
+        : {}),
+      ...(runArtifact.recoveryEligibility
+        ? { recoveryEligibility: runArtifact.recoveryEligibility }
+        : {}),
       ...(runArtifact.terminalOutcome
         ? { terminalOutcome: runArtifact.terminalOutcome }
         : {}),
@@ -1987,6 +2236,15 @@ export async function executeGraph(
         phaseLabel: compileCheckpointArtifact.phaseLabel,
         ...(compileCheckpointArtifact.blockingReason
           ? { blockingReason: compileCheckpointArtifact.blockingReason }
+          : {}),
+        ...(compileCheckpointArtifact.blockingContract
+          ? { blockingContract: compileCheckpointArtifact.blockingContract }
+          : {}),
+        ...(compileCheckpointArtifact.recoveryEligibility
+          ? {
+              recoveryEligibility:
+                compileCheckpointArtifact.recoveryEligibility,
+            }
           : {}),
         ...(compileCheckpointArtifact.terminalOutcome
           ? { terminalOutcome: compileCheckpointArtifact.terminalOutcome }

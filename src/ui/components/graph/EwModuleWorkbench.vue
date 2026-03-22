@@ -84,7 +84,11 @@
               事件 {{ activeRunSummary.eventCount }}
             </span>
             <span class="ew-workbench__diagnostics-item">
-              恢复候选 {{ activeRunSummary.hasRecoveryCandidate ? "有" : "无" }}
+              阻塞契约
+              {{ activeRunSummary.hasBlockingContract ? "存在" : "无" }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              恢复资格 {{ activeRunSummary.recoveryEligibilityLabel }}
             </span>
           </div>
           <div class="ew-workbench__diagnostics-reasons">
@@ -96,19 +100,23 @@
                 节点 {{ activeRunSummary.checkpointCandidate.nodeId ?? "—" }}
               </span>
               <span class="ew-workbench__diagnostics-reason">
-                resumable
-                {{
-                  activeRunSummary.checkpointCandidate.resumable
-                    ? "true"
-                    : "false"
-                }}
+                资格事实来源 checkpoint candidate
               </span>
             </template>
             <span v-else class="ew-workbench__diagnostics-item">
-              无 checkpoint candidate
+              无 checkpoint candidate 事实
             </span>
             <span class="ew-workbench__diagnostics-reason">
               阻塞原因 {{ activeRunSummary.blockingReasonLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              阻塞类别 {{ activeRunSummary.blockingCategoryLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              人工输入 {{ activeRunSummary.requiresHumanInputLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-reason">
+              输入需求 {{ activeRunSummary.inputRequirementTypeLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
               heartbeat

@@ -28,6 +28,26 @@ import {
 import { loadLastRun, loadLastRunForChat, setLastRun } from "./settings";
 import { RunSummarySchema, type EwFlowConfig, type RunSummary } from "./types";
 
+function toActiveGraphRunArtifactForTest(
+  diagnostics: Record<string, any>,
+): { recoveryEligibility?: { status?: string } } | null {
+  const artifact = diagnostics?.bridge?.graph_run_overview;
+  if (!artifact || typeof artifact !== "object") {
+    return null;
+  }
+  const recovery = artifact.recoveryEligibility;
+  if (
+    recovery &&
+    typeof recovery === "object" &&
+    (recovery.status === "eligible" ||
+      recovery.status === "ineligible" ||
+      recovery.status === "unknown")
+  ) {
+    return { recoveryEligibility: { status: recovery.status } };
+  }
+  return { recoveryEligibility: { status: "unknown" } };
+}
+
 type MemoryStorage = {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
@@ -1505,8 +1525,32 @@ async function runValidationSpec(): Promise<void> {
         "number" &&
       typeof successResult.runArtifact?.latestPartialOutput?.length ===
         "number" &&
-      successResult.runArtifact?.waitingUser?.reason === "需要用户确认后续执行",
+      successResult.runArtifact?.waitingUser?.reason ===
+        "需要用户确认后续执行" &&
+      successResult.runArtifact?.recoveryEligibility?.status === "ineligible" &&
+      successResult.runArtifact?.recoveryEligibility?.source ===
+        "terminal_state" &&
+      !successResult.runArtifact?.blockingContract,
     `Expected success runArtifact to preserve waiting_user as read-only observation while final status remains completed. Actual: ${JSON.stringify(successResult.runArtifact)}`,
+  );
+  const waitingUserEvent = (successResult.runEvents ?? []).find(
+    (event) => event.type === "waiting_user",
+  );
+  assert(
+    waitingUserEvent?.blockingContract?.kind === "waiting_user" &&
+      waitingUserEvent.blockingContract.requiresHumanInput === true &&
+      waitingUserEvent.blockingContract.inputRequirement.type ===
+        "confirmation" &&
+      waitingUserEvent.recoveryEligibility?.status === "eligible" &&
+      waitingUserEvent.recoveryEligibility?.source === "checkpoint_candidate" &&
+      waitingUserEvent.artifact?.blockingContract?.kind === "waiting_user" &&
+      waitingUserEvent.artifact?.recoveryEligibility?.status === "eligible",
+    `Expected waiting_user event to expose blocking contract plus conservative recovery eligibility. Actual: ${JSON.stringify(waitingUserEvent)}`,
+  );
+  assert(
+    successResult.checkpointCandidate?.resumable === false &&
+      successResult.runArtifact?.checkpointCandidate?.resumable === false,
+    `Expected checkpoint candidate to remain non-promissory. Actual: ${JSON.stringify({ topLevel: successResult.checkpointCandidate, artifact: successResult.runArtifact?.checkpointCandidate })}`,
   );
   const successRunEventTypes = (successResult.runEvents ?? []).map(
     (event) => event.type,
@@ -2161,6 +2205,9 @@ async function runValidationSpec(): Promise<void> {
       handlerFailureResult.runArtifact?.failedStage === "execute" &&
       handlerFailureResult.runArtifact?.latestNodeId === "llm_call" &&
       handlerFailureResult.runArtifact?.latestNodeStatus === "failed" &&
+      handlerFailureResult.runArtifact?.recoveryEligibility?.status ===
+        "ineligible" &&
+      !handlerFailureResult.runArtifact?.blockingContract &&
       typeof handlerFailureResult.runArtifact?.errorSummary === "string",
     `Expected handler failure runArtifact to expose failed node/error summary. Actual: ${JSON.stringify(handlerFailureResult.runArtifact)}`,
   );
@@ -2336,7 +2383,10 @@ async function runValidationSpec(): Promise<void> {
     cancelledExecutionResult.runArtifact?.status === "cancelled" &&
       cancelledExecutionResult.runArtifact?.phase === "terminal" &&
       cancelledExecutionResult.runArtifact?.terminalOutcome === "cancelled" &&
-      cancelledExecutionResult.runArtifact?.failedStage === "execute",
+      cancelledExecutionResult.runArtifact?.failedStage === "execute" &&
+      cancelledExecutionResult.runArtifact?.recoveryEligibility?.status ===
+        "ineligible" &&
+      !cancelledExecutionResult.runArtifact?.blockingContract,
     `Expected cancelled execution artifact to expose cancelled lifecycle state. Actual: ${JSON.stringify(cancelledExecutionResult.runArtifact)}`,
   );
   assert(
@@ -2488,8 +2538,40 @@ async function runValidationSpec(): Promise<void> {
   assert(
     !validationFailureResult.runArtifact?.latestHeartbeat &&
       !validationFailureResult.runArtifact?.latestPartialOutput &&
-      !validationFailureResult.runArtifact?.waitingUser,
+      !validationFailureResult.runArtifact?.waitingUser &&
+      validationFailureResult.runArtifact?.recoveryEligibility?.status ===
+        "ineligible",
     `Expected validation failure artifact to keep observation fields safely absent. Actual: ${JSON.stringify(validationFailureResult.runArtifact)}`,
+  );
+
+  const degradedArtifact = toActiveGraphRunArtifactForTest({
+    bridge: {
+      graph_run_overview: {
+        runId: "run_degraded",
+        graphId: "graph_degraded",
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "等待用户",
+        blockingContract: {
+          kind: "waiting_user",
+          reason: {
+            category: "waiting_user",
+            code: "waiting_user",
+            label: "等待用户输入",
+          },
+          requiresHumanInput: true,
+          inputRequirement: {
+            required: true,
+          },
+        },
+        eventCount: 1,
+        updatedAt: 1,
+      },
+    },
+  });
+  assert(
+    degradedArtifact?.recoveryEligibility?.status === "unknown",
+    `Expected read-side fallback to degrade missing recovery eligibility fields to unknown. Actual: ${JSON.stringify(degradedArtifact)}`,
   );
 
   const executeFailureOverview =
