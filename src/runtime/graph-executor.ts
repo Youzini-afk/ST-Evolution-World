@@ -1475,12 +1475,32 @@ function createInputFingerprint(
 function createDirtySetSummary(
   entries: GraphDirtySetEntry[],
 ): GraphDirtySetSummary {
+  const reasonCounts: Record<GraphNodeDirtyReason, number> = {
+    initial_run: 0,
+    input_changed: 0,
+    upstream_dirty: 0,
+    clean: 0,
+  };
+  const dirtyNodeIds = entries
+    .filter((entry) => entry.isDirty)
+    .map((entry) => entry.nodeId);
+  const cleanNodeIds = entries
+    .filter((entry) => !entry.isDirty)
+    .map((entry) => entry.nodeId);
+
+  for (const entry of entries) {
+    reasonCounts[entry.dirtyReason] += 1;
+  }
+
   return {
     fingerprintVersion: 1,
     entries: entries.map((entry) => ({ ...entry })),
-    dirtyNodeIds: entries
-      .filter((entry) => entry.isDirty)
-      .map((entry) => entry.nodeId),
+    dirtyNodeIds,
+    cleanNodeIds,
+    totalNodeCount: entries.length,
+    dirtyNodeCount: dirtyNodeIds.length,
+    cleanNodeCount: cleanNodeIds.length,
+    reasonCounts,
   };
 }
 
@@ -1488,16 +1508,20 @@ export function buildGraphRunDiagnosticsOverview(
   result: GraphExecutionResult,
 ): GraphRunDiagnosticsOverview {
   const dirtySetSummary = result.dirtySetSummary;
-  const reasonCounts: Record<GraphNodeDirtyReason, number> = {
+  const reuseSummary = result.reuseSummary;
+  const executionDecisionSummary = result.executionDecisionSummary;
+  const dirtyReasonCounts: Record<GraphNodeDirtyReason, number> = {
     initial_run: 0,
     input_changed: 0,
     upstream_dirty: 0,
     clean: 0,
   };
 
-  if (dirtySetSummary) {
+  if (dirtySetSummary?.reasonCounts) {
+    Object.assign(dirtyReasonCounts, dirtySetSummary.reasonCounts);
+  } else if (dirtySetSummary) {
     for (const entry of dirtySetSummary.entries) {
-      reasonCounts[entry.dirtyReason] += 1;
+      dirtyReasonCounts[entry.dirtyReason] += 1;
     }
   }
 
@@ -1511,14 +1535,58 @@ export function buildGraphRunDiagnosticsOverview(
       terminalNodeCount: result.compilePlan?.terminalNodeIds.length,
     },
     dirty: {
-      totalNodeCount: dirtySetSummary?.entries.length ?? 0,
-      dirtyNodeCount: dirtySetSummary?.dirtyNodeIds.length ?? 0,
+      totalNodeCount:
+        dirtySetSummary?.totalNodeCount ?? dirtySetSummary?.entries.length ?? 0,
+      dirtyNodeCount:
+        dirtySetSummary?.dirtyNodeCount ??
+        dirtySetSummary?.dirtyNodeIds.length ??
+        0,
       cleanNodeCount:
-        (dirtySetSummary?.entries.length ?? 0) -
-        (dirtySetSummary?.dirtyNodeIds.length ?? 0),
+        dirtySetSummary?.cleanNodeCount ??
+        dirtySetSummary?.cleanNodeIds?.length ??
+        Math.max(
+          0,
+          (dirtySetSummary?.entries.length ?? 0) -
+            (dirtySetSummary?.dirtyNodeIds.length ?? 0),
+        ),
       dirtyNodeIds: [...(dirtySetSummary?.dirtyNodeIds ?? [])],
-      reasonCounts,
+      cleanNodeIds: [...(dirtySetSummary?.cleanNodeIds ?? [])],
+      reasonCounts: dirtyReasonCounts,
     },
+    ...(reuseSummary
+      ? {
+          reuse: {
+            eligibleNodeCount:
+              reuseSummary.eligibleNodeCount ??
+              reuseSummary.eligibleNodeIds.length,
+            ineligibleNodeCount:
+              reuseSummary.ineligibleNodeCount ??
+              reuseSummary.ineligibleNodeIds.length,
+            eligibleNodeIds: [...reuseSummary.eligibleNodeIds],
+            ineligibleNodeIds: [...reuseSummary.ineligibleNodeIds],
+            verdictCounts: { ...reuseSummary.verdictCounts },
+          },
+        }
+      : {}),
+    ...(executionDecisionSummary
+      ? {
+          executionDecision: {
+            featureEnabled: executionDecisionSummary.featureEnabled,
+            skippedNodeCount:
+              executionDecisionSummary.skippedNodeCount ??
+              executionDecisionSummary.skippedNodeIds.length,
+            executedNodeCount:
+              executionDecisionSummary.executedNodeCount ??
+              executionDecisionSummary.executedNodeIds.length,
+            skippedNodeIds: [...executionDecisionSummary.skippedNodeIds],
+            executedNodeIds: [...executionDecisionSummary.executedNodeIds],
+            skipReuseOutputNodeIds: [
+              ...(executionDecisionSummary.skipReuseOutputNodeIds ?? []),
+            ],
+            decisionCounts: { ...executionDecisionSummary.decisionCounts },
+          },
+        }
+      : {}),
   };
 }
 
@@ -1591,14 +1659,19 @@ function createReuseSummary(
     verdictCounts[reuseVerdict.reason] += 1;
   }
 
+  const eligibleNodeIds = verdicts
+    .filter(({ reuseVerdict }) => reuseVerdict.canReuse)
+    .map(({ nodeId }) => nodeId);
+  const ineligibleNodeIds = verdicts
+    .filter(({ reuseVerdict }) => !reuseVerdict.canReuse)
+    .map(({ nodeId }) => nodeId);
+
   return {
     fingerprintVersion: REUSE_FINGERPRINT_VERSION,
-    eligibleNodeIds: verdicts
-      .filter(({ reuseVerdict }) => reuseVerdict.canReuse)
-      .map(({ nodeId }) => nodeId),
-    ineligibleNodeIds: verdicts
-      .filter(({ reuseVerdict }) => !reuseVerdict.canReuse)
-      .map(({ nodeId }) => nodeId),
+    eligibleNodeIds,
+    ineligibleNodeIds,
+    eligibleNodeCount: eligibleNodeIds.length,
+    ineligibleNodeCount: ineligibleNodeIds.length,
     verdictCounts,
   };
 }
@@ -1721,14 +1794,27 @@ function createExecutionDecisionSummary(
     decisionCounts[executionDecision.reason] += 1;
   }
 
+  const skippedNodeIds = decisions
+    .filter(({ executionDecision }) => executionDecision.shouldSkip)
+    .map(({ nodeId }) => nodeId);
+  const executedNodeIds = decisions
+    .filter(({ executionDecision }) => executionDecision.shouldExecute)
+    .map(({ nodeId }) => nodeId);
+  const skipReuseOutputNodeIds = decisions
+    .filter(
+      ({ executionDecision }) =>
+        executionDecision.reason === "skip_reuse_outputs" &&
+        executionDecision.shouldSkip,
+    )
+    .map(({ nodeId }) => nodeId);
+
   return {
     featureEnabled,
-    skippedNodeIds: decisions
-      .filter(({ executionDecision }) => executionDecision.shouldSkip)
-      .map(({ nodeId }) => nodeId),
-    executedNodeIds: decisions
-      .filter(({ executionDecision }) => executionDecision.shouldExecute)
-      .map(({ nodeId }) => nodeId),
+    skippedNodeIds,
+    executedNodeIds,
+    skippedNodeCount: skippedNodeIds.length,
+    executedNodeCount: executedNodeIds.length,
+    skipReuseOutputNodeIds,
     decisionCounts,
   };
 }
@@ -2392,12 +2478,24 @@ export async function executeGraph(
         terminalNodeCount: compilePlan?.terminalNodeIds.length,
       },
       dirty: {
-        totalNodeCount: dirtySetSummary?.entries.length ?? 0,
-        dirtyNodeCount: dirtySetSummary?.dirtyNodeIds.length ?? 0,
+        totalNodeCount:
+          dirtySetSummary?.totalNodeCount ??
+          dirtySetSummary?.entries.length ??
+          0,
+        dirtyNodeCount:
+          dirtySetSummary?.dirtyNodeCount ??
+          dirtySetSummary?.dirtyNodeIds.length ??
+          0,
         cleanNodeCount:
-          (dirtySetSummary?.entries.length ?? 0) -
-          (dirtySetSummary?.dirtyNodeIds.length ?? 0),
+          dirtySetSummary?.cleanNodeCount ??
+          dirtySetSummary?.cleanNodeIds?.length ??
+          Math.max(
+            0,
+            (dirtySetSummary?.entries.length ?? 0) -
+              (dirtySetSummary?.dirtyNodeIds.length ?? 0),
+          ),
         dirtyNodeIds: [...(dirtySetSummary?.dirtyNodeIds ?? [])],
+        cleanNodeIds: [...(dirtySetSummary?.cleanNodeIds ?? [])],
         reasonCounts,
       },
     };

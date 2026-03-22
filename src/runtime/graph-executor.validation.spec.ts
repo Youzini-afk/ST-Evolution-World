@@ -955,6 +955,13 @@ function assertBridgeDiagnostics(
       | "legacy_merge"
       | "legacy_writeback"
       | "cancelled";
+    graphDiagnostics?: {
+      dirtyNodeCount: number;
+      cleanNodeCount: number;
+      reuseEligibleNodeCount: number;
+      reuseIneligibleNodeCount: number;
+      skipReuseOutputHitCount: number;
+    };
   },
 ): void {
   const bridge = actual.bridge;
@@ -1001,6 +1008,44 @@ function assertBridgeDiagnostics(
     bridge.failure_origin === expected.failureOrigin,
     `Expected bridge failure_origin to be ${expected.failureOrigin}. Actual: ${bridge.failure_origin}`,
   );
+
+  if (expected.graphDiagnostics) {
+    const graphRunDiagnostics = bridge.graph_run_diagnostics;
+    assert(
+      graphRunDiagnostics && typeof graphRunDiagnostics === "object",
+      `Expected bridge graph_run_diagnostics to exist. Actual: ${JSON.stringify(graphRunDiagnostics)}`,
+    );
+    assert(
+      graphRunDiagnostics.dirty?.dirtyNodeCount ===
+        expected.graphDiagnostics.dirtyNodeCount,
+      `Expected bridge graph_run_diagnostics dirtyNodeCount to be ${expected.graphDiagnostics.dirtyNodeCount}. Actual: ${graphRunDiagnostics.dirty?.dirtyNodeCount}`,
+    );
+    assert(
+      graphRunDiagnostics.dirty?.cleanNodeCount ===
+        expected.graphDiagnostics.cleanNodeCount,
+      `Expected bridge graph_run_diagnostics cleanNodeCount to be ${expected.graphDiagnostics.cleanNodeCount}. Actual: ${graphRunDiagnostics.dirty?.cleanNodeCount}`,
+    );
+    assert(
+      graphRunDiagnostics.reuse?.eligibleNodeCount ===
+        expected.graphDiagnostics.reuseEligibleNodeCount,
+      `Expected bridge graph_run_diagnostics reuse eligible count to be ${expected.graphDiagnostics.reuseEligibleNodeCount}. Actual: ${graphRunDiagnostics.reuse?.eligibleNodeCount}`,
+    );
+    assert(
+      graphRunDiagnostics.reuse?.ineligibleNodeCount ===
+        expected.graphDiagnostics.reuseIneligibleNodeCount,
+      `Expected bridge graph_run_diagnostics reuse ineligible count to be ${expected.graphDiagnostics.reuseIneligibleNodeCount}. Actual: ${graphRunDiagnostics.reuse?.ineligibleNodeCount}`,
+    );
+    assert(
+      graphRunDiagnostics.executionDecision?.skipReuseOutputNodeIds?.length ===
+        expected.graphDiagnostics.skipReuseOutputHitCount,
+      `Expected bridge graph_run_diagnostics skipReuseOutputHitCount to be ${expected.graphDiagnostics.skipReuseOutputHitCount}. Actual: ${graphRunDiagnostics.executionDecision?.skipReuseOutputNodeIds?.length}`,
+    );
+  } else {
+    assert(
+      bridge.graph_run_diagnostics === undefined,
+      `Expected bridge graph_run_diagnostics to be omitted. Actual: ${JSON.stringify(bridge.graph_run_diagnostics)}`,
+    );
+  }
 }
 
 function assertRunSummaryBridgeContract(
@@ -3004,6 +3049,43 @@ async function runValidationSpec(): Promise<void> {
       validationFailureOverview.dirty.reasonCounts.upstream_dirty === 0 &&
       validationFailureOverview.dirty.reasonCounts.clean === 0,
     `Expected validate failure overview to return zero dirty summary without trace fallback. Actual: ${JSON.stringify(validationFailureOverview)}`,
+  );
+
+  const reuseContractResult = repeatedSuccessResult;
+  const reuseDiagnostics = buildWorkflowBridgeDiagnostics({
+    selection: selectWorkflowBridgeRoute({
+      input: {
+        flow_ids: undefined,
+      },
+      settings: {
+        workbench_graphs: [makeBaseGraph()],
+      },
+    }),
+    graphRunOverview: reuseContractResult.runArtifact,
+    graphRunEvents: reuseContractResult.runEvents,
+  });
+  assertBridgeDiagnostics(reuseDiagnostics, {
+    route: "graph",
+    reason: "graph_first",
+    hasExplicitLegacyFlowSelection: false,
+    enabledGraphCount: 1,
+    selectedGraphIds: ["graph_test"],
+    graphDiagnostics: {
+      dirtyNodeCount: 0,
+      cleanNodeCount: 2,
+      reuseEligibleNodeCount: 1,
+      reuseIneligibleNodeCount: 1,
+      skipReuseOutputHitCount: 1,
+    },
+  });
+  const reuseOverview = reuseDiagnostics.bridge?.graph_run_diagnostics;
+  assert(
+    reuseOverview?.executionDecision?.featureEnabled === true &&
+      Array.isArray(reuseOverview?.executionDecision?.skipReuseOutputNodeIds) &&
+      reuseOverview.executionDecision.skipReuseOutputNodeIds.join(",") ===
+        "filter_text" &&
+      !JSON.stringify(reuseOverview).includes("cacheKeyFacts"),
+    `Expected graph bridge diagnostics to expose summary-only dirty/reuse/decision facts. Actual: ${JSON.stringify(reuseOverview)}`,
   );
 
   const validationFailureEventTypes = (

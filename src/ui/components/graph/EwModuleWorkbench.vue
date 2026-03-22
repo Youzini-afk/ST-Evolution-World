@@ -175,6 +175,9 @@
 
         <div v-if="diagnosticsSummary" class="ew-workbench__diagnostics-block">
           <div class="ew-workbench__diagnostics-heading">最近 diagnostics</div>
+          <div class="ew-workbench__diagnostics-disclaimer">
+            仅展示实验性增量执行事实/诊断；它不是系统承诺缓存、跳过动作或恢复能力。
+          </div>
           <div class="ew-workbench__diagnostics-main">
             <span
               class="ew-workbench__diagnostics-status"
@@ -197,19 +200,57 @@
             <span class="ew-workbench__diagnostics-item">
               Clean {{ diagnosticsSummary.cleanNodeCount }}
             </span>
+            <span class="ew-workbench__diagnostics-item">
+              Reuse eligible {{ diagnosticsSummary.reuseEligibleNodeCount }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              Reuse ineligible {{ diagnosticsSummary.reuseIneligibleNodeCount }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              skip_reuse_outputs
+              {{ diagnosticsSummary.skipReuseOutputHitCount }}
+            </span>
           </div>
           <div class="ew-workbench__diagnostics-reasons">
             <template v-if="diagnosticsSummary.primaryDirtyReasons.length > 0">
               <span
                 v-for="reason in diagnosticsSummary.primaryDirtyReasons"
-                :key="reason.reason"
+                :key="`dirty-${reason.reason}`"
                 class="ew-workbench__diagnostics-reason"
               >
-                {{ reason.label }} {{ reason.count }}
+                dirty · {{ reason.label }} {{ reason.count }}
               </span>
             </template>
             <span v-else class="ew-workbench__diagnostics-item">
               主要 dirty 原因：无
+            </span>
+            <template v-if="diagnosticsSummary.primaryReuseReasons.length > 0">
+              <span
+                v-for="reason in diagnosticsSummary.primaryReuseReasons"
+                :key="`reuse-${reason.reason}`"
+                class="ew-workbench__diagnostics-reason"
+              >
+                reuse ineligible · {{ reason.label }} {{ reason.count }}
+              </span>
+            </template>
+            <span v-else class="ew-workbench__diagnostics-item">
+              主要不可复用原因：无
+            </span>
+            <template
+              v-if="
+                diagnosticsSummary.primaryExecutionDecisionReasons.length > 0
+              "
+            >
+              <span
+                v-for="reason in diagnosticsSummary.primaryExecutionDecisionReasons"
+                :key="`decision-${reason.reason}`"
+                class="ew-workbench__diagnostics-reason"
+              >
+                decision · {{ reason.label }} {{ reason.count }}
+              </span>
+            </template>
+            <span v-else class="ew-workbench__diagnostics-item">
+              主要执行决策原因：无
             </span>
           </div>
         </div>
@@ -747,6 +788,12 @@ function getPortPos(nodeId: string, portId: string) {
   color: rgba(255, 255, 255, 0.62);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.ew-workbench__diagnostics-disclaimer {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(248, 250, 252, 0.72);
 }
 
 .ew-workbench__diagnostics-main,

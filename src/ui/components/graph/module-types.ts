@@ -416,6 +416,11 @@ export interface GraphDirtySetSummary {
   fingerprintVersion: 1;
   entries: GraphDirtySetEntry[];
   dirtyNodeIds: string[];
+  cleanNodeIds?: string[];
+  totalNodeCount?: number;
+  dirtyNodeCount?: number;
+  cleanNodeCount?: number;
+  reasonCounts?: Record<GraphNodeDirtyReason, number>;
 }
 
 export interface GraphRunDiagnosticsDirtyOverview {
@@ -423,6 +428,7 @@ export interface GraphRunDiagnosticsDirtyOverview {
   dirtyNodeCount: number;
   cleanNodeCount: number;
   dirtyNodeIds: string[];
+  cleanNodeIds: string[];
   reasonCounts: Record<GraphNodeDirtyReason, number>;
 }
 
@@ -452,6 +458,8 @@ export interface GraphReuseSummary {
   fingerprintVersion: 1;
   eligibleNodeIds: string[];
   ineligibleNodeIds: string[];
+  eligibleNodeCount?: number;
+  ineligibleNodeCount?: number;
   verdictCounts: Record<GraphNodeReuseReason, number>;
 }
 
@@ -479,6 +487,9 @@ export interface GraphExecutionDecisionSummary {
   featureEnabled: boolean;
   skippedNodeIds: string[];
   executedNodeIds: string[];
+  skippedNodeCount?: number;
+  executedNodeCount?: number;
+  skipReuseOutputNodeIds?: string[];
   decisionCounts: Record<GraphNodeExecutionDecisionReason, number>;
 }
 
@@ -911,6 +922,24 @@ export interface GraphRunState {
   compileFingerprint?: string;
 }
 
+export interface GraphRunDiagnosticsReuseOverview {
+  eligibleNodeCount: number;
+  ineligibleNodeCount: number;
+  eligibleNodeIds: string[];
+  ineligibleNodeIds: string[];
+  verdictCounts: Record<GraphNodeReuseReason, number>;
+}
+
+export interface GraphRunDiagnosticsExecutionDecisionOverview {
+  featureEnabled: boolean;
+  skippedNodeCount: number;
+  executedNodeCount: number;
+  skippedNodeIds: string[];
+  executedNodeIds: string[];
+  skipReuseOutputNodeIds: string[];
+  decisionCounts: Record<GraphNodeExecutionDecisionReason, number>;
+}
+
 export interface GraphRunDiagnosticsOverview {
   run: GraphRunState;
   compile: {
@@ -919,10 +948,14 @@ export interface GraphRunDiagnosticsOverview {
     terminalNodeCount?: number;
   };
   dirty: GraphRunDiagnosticsDirtyOverview;
+  reuse?: GraphRunDiagnosticsReuseOverview;
+  executionDecision?: GraphRunDiagnosticsExecutionDecisionOverview;
 }
 
-export interface GraphRunDiagnosticsReasonBadge {
-  reason: GraphNodeDirtyReason;
+export interface GraphRunDiagnosticsReasonBadge<
+  Reason extends string = string,
+> {
+  reason: Reason;
   label: string;
   count: number;
 }
@@ -936,7 +969,12 @@ export interface GraphRunDiagnosticsSummaryViewModel {
   terminalNodeCount: number;
   dirtyNodeCount: number;
   cleanNodeCount: number;
-  primaryDirtyReasons: GraphRunDiagnosticsReasonBadge[];
+  primaryDirtyReasons: GraphRunDiagnosticsReasonBadge<GraphNodeDirtyReason>[];
+  reuseEligibleNodeCount: number;
+  reuseIneligibleNodeCount: number;
+  skipReuseOutputHitCount: number;
+  primaryReuseReasons: GraphRunDiagnosticsReasonBadge<GraphNodeReuseReason>[];
+  primaryExecutionDecisionReasons: GraphRunDiagnosticsReasonBadge<GraphNodeExecutionDecisionReason>[];
 }
 
 export interface GraphCheckpointCandidateViewModel {

@@ -45,6 +45,7 @@ export type WorkflowBridgeDiagnostics = {
   };
   graph_run_overview?: GraphRunArtifact;
   graph_run_events?: GraphRunEvent[];
+  graph_run_diagnostics?: GraphRunArtifact["diagnosticsOverview"];
   failure_origin?: WorkflowBridgeFailureOrigin;
 };
 
@@ -677,6 +678,9 @@ export function buildWorkflowBridgeDiagnostics(params: {
       : {}),
     ...(graphRunOverview ? { graph_run_overview: graphRunOverview } : {}),
     ...(graphRunEvents?.length ? { graph_run_events: graphRunEvents } : {}),
+    ...(graphRunOverview?.diagnosticsOverview
+      ? { graph_run_diagnostics: graphRunOverview.diagnosticsOverview }
+      : {}),
     ...(failureOrigin ? { failure_origin: failureOrigin } : {}),
   };
 

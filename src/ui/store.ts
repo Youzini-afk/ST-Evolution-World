@@ -53,6 +53,8 @@ import type {
   GraphCheckpointCandidateViewModel,
   GraphExecutionStage,
   GraphNodeDirtyReason,
+  GraphNodeExecutionDecisionReason,
+  GraphNodeReuseReason,
   GraphRunArtifact,
   GraphRunBlockingContract,
   GraphRunBlockingInputRequirementType,
@@ -522,11 +524,18 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       : null;
     const graphOverview = graph?.overview;
     const bridgeOverview = bridge?.graph_run_overview;
+    const bridgeDiagnosticsOverview = _.isPlainObject(
+      bridge?.graph_run_diagnostics,
+    )
+      ? (bridge?.graph_run_diagnostics as Record<string, unknown>)
+      : null;
     const overview = _.isPlainObject(graphOverview)
       ? (graphOverview as Record<string, unknown>)
-      : _.isPlainObject(bridgeOverview)
-        ? (bridgeOverview as Record<string, unknown>)
-        : null;
+      : _.isPlainObject(bridgeDiagnosticsOverview)
+        ? (bridgeDiagnosticsOverview as Record<string, unknown>)
+        : _.isPlainObject(bridgeOverview)
+          ? (bridgeOverview as Record<string, unknown>)
+          : null;
 
     if (!overview || !_.isPlainObject(overview.run)) {
       return null;
@@ -542,14 +551,28 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     const reasonCountsRaw = _.isPlainObject(dirty?.reasonCounts)
       ? (dirty?.reasonCounts as Record<string, unknown>)
       : {};
+    const reuse = _.isPlainObject(overview.reuse)
+      ? (overview.reuse as Record<string, unknown>)
+      : null;
+    const executionDecision = _.isPlainObject(overview.executionDecision)
+      ? (overview.executionDecision as Record<string, unknown>)
+      : null;
+    const verdictCountsRaw = _.isPlainObject(reuse?.verdictCounts)
+      ? (reuse?.verdictCounts as Record<string, unknown>)
+      : {};
+    const decisionCountsRaw = _.isPlainObject(executionDecision?.decisionCounts)
+      ? (executionDecision?.decisionCounts as Record<string, unknown>)
+      : {};
 
     const normalizeCount = (value: unknown): number => {
       const num = Number(value);
       return Number.isFinite(num) && num >= 0 ? Math.trunc(num) : 0;
     };
 
-    const normalizeReasonCount = (reason: GraphNodeDirtyReason): number =>
-      normalizeCount(reasonCountsRaw[reason]);
+    const normalizeReasonCount = <Reason extends string>(
+      raw: Record<string, unknown>,
+      reason: Reason,
+    ): number => normalizeCount(raw[reason]);
 
     const graphRunStatuses: GraphRunStatus[] = [
       "queued",
@@ -657,13 +680,147 @@ export const useEwStore = defineStore("evolution-world-store", () => {
               .map((value) => value.trim())
               .filter(Boolean)
           : [],
+        cleanNodeIds: Array.isArray(dirty?.cleanNodeIds)
+          ? dirty!.cleanNodeIds
+              .filter((value): value is string => typeof value === "string")
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : [],
         reasonCounts: {
-          initial_run: normalizeReasonCount("initial_run"),
-          input_changed: normalizeReasonCount("input_changed"),
-          upstream_dirty: normalizeReasonCount("upstream_dirty"),
-          clean: normalizeReasonCount("clean"),
+          initial_run: normalizeReasonCount(reasonCountsRaw, "initial_run"),
+          input_changed: normalizeReasonCount(reasonCountsRaw, "input_changed"),
+          upstream_dirty: normalizeReasonCount(
+            reasonCountsRaw,
+            "upstream_dirty",
+          ),
+          clean: normalizeReasonCount(reasonCountsRaw, "clean"),
         },
       },
+      ...(reuse
+        ? {
+            reuse: {
+              eligibleNodeCount: normalizeCount(reuse.eligibleNodeCount),
+              ineligibleNodeCount: normalizeCount(reuse.ineligibleNodeCount),
+              eligibleNodeIds: Array.isArray(reuse.eligibleNodeIds)
+                ? reuse.eligibleNodeIds
+                    .filter(
+                      (value): value is string => typeof value === "string",
+                    )
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                : [],
+              ineligibleNodeIds: Array.isArray(reuse.ineligibleNodeIds)
+                ? reuse.ineligibleNodeIds
+                    .filter(
+                      (value): value is string => typeof value === "string",
+                    )
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                : [],
+              verdictCounts: {
+                eligible: normalizeReasonCount(verdictCountsRaw, "eligible"),
+                ineligible_dirty: normalizeReasonCount(
+                  verdictCountsRaw,
+                  "ineligible_dirty",
+                ),
+                ineligible_side_effect: normalizeReasonCount(
+                  verdictCountsRaw,
+                  "ineligible_side_effect",
+                ),
+                ineligible_capability: normalizeReasonCount(
+                  verdictCountsRaw,
+                  "ineligible_capability",
+                ),
+                ineligible_missing_baseline: normalizeReasonCount(
+                  verdictCountsRaw,
+                  "ineligible_missing_baseline",
+                ),
+              },
+            },
+          }
+        : {}),
+      ...(executionDecision
+        ? {
+            executionDecision: {
+              featureEnabled: executionDecision.featureEnabled === true,
+              skippedNodeCount: normalizeCount(
+                executionDecision.skippedNodeCount,
+              ),
+              executedNodeCount: normalizeCount(
+                executionDecision.executedNodeCount,
+              ),
+              skippedNodeIds: Array.isArray(executionDecision.skippedNodeIds)
+                ? executionDecision.skippedNodeIds
+                    .filter(
+                      (value): value is string => typeof value === "string",
+                    )
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                : [],
+              executedNodeIds: Array.isArray(executionDecision.executedNodeIds)
+                ? executionDecision.executedNodeIds
+                    .filter(
+                      (value): value is string => typeof value === "string",
+                    )
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                : [],
+              skipReuseOutputNodeIds: Array.isArray(
+                executionDecision.skipReuseOutputNodeIds,
+              )
+                ? executionDecision.skipReuseOutputNodeIds
+                    .filter(
+                      (value): value is string => typeof value === "string",
+                    )
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                : [],
+              decisionCounts: {
+                feature_disabled: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "feature_disabled",
+                ),
+                ineligible_reuse_verdict: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "ineligible_reuse_verdict",
+                ),
+                ineligible_capability: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "ineligible_capability",
+                ),
+                ineligible_side_effect: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "ineligible_side_effect",
+                ),
+                ineligible_source: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "ineligible_source",
+                ),
+                ineligible_terminal: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "ineligible_terminal",
+                ),
+                ineligible_fallback: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "ineligible_fallback",
+                ),
+                missing_baseline: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "missing_baseline",
+                ),
+                missing_reusable_outputs: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "missing_reusable_outputs",
+                ),
+                execute: normalizeReasonCount(decisionCountsRaw, "execute"),
+                skip_reuse_outputs: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "skip_reuse_outputs",
+                ),
+              },
+            },
+          }
+        : {}),
     };
   }
 
@@ -686,6 +843,29 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       upstream_dirty: "上游脏",
       clean: "干净",
     };
+    const reuseReasonLabels: Record<GraphNodeReuseReason, string> = {
+      eligible: "可复用",
+      ineligible_dirty: "输入不干净",
+      ineligible_side_effect: "存在副作用",
+      ineligible_capability: "能力不满足",
+      ineligible_missing_baseline: "缺少基线",
+    };
+    const executionDecisionLabels: Record<
+      GraphNodeExecutionDecisionReason,
+      string
+    > = {
+      feature_disabled: "实验开关关闭",
+      ineligible_reuse_verdict: "复用判定未通过",
+      ineligible_capability: "能力不满足",
+      ineligible_side_effect: "存在副作用",
+      ineligible_source: "source 节点不参与",
+      ineligible_terminal: "terminal 节点不参与",
+      ineligible_fallback: "fallback 节点不参与",
+      missing_baseline: "缺少基线",
+      missing_reusable_outputs: "缺少可复用输出",
+      execute: "正常执行",
+      skip_reuse_outputs: "命中 skip_reuse_outputs",
+    };
     const primaryDirtyReasons = (
       Object.entries(overview.dirty.reasonCounts) as Array<
         [GraphNodeDirtyReason, number]
@@ -699,6 +879,36 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         label: dirtyReasonLabels[reason],
         count,
       }));
+    const primaryReuseReasons = overview.reuse
+      ? ((
+          Object.entries(overview.reuse.verdictCounts) as Array<
+            [GraphNodeReuseReason, number]
+          >
+        )
+          .filter(([reason, count]) => reason !== "eligible" && count > 0)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([reason, count]) => ({
+            reason,
+            label: reuseReasonLabels[reason],
+            count,
+          })) as GraphRunDiagnosticsSummaryViewModel["primaryReuseReasons"])
+      : [];
+    const primaryExecutionDecisionReasons = overview.executionDecision
+      ? ((
+          Object.entries(overview.executionDecision.decisionCounts) as Array<
+            [GraphNodeExecutionDecisionReason, number]
+          >
+        )
+          .filter(([reason, count]) => reason !== "execute" && count > 0)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([reason, count]) => ({
+            reason,
+            label: executionDecisionLabels[reason],
+            count,
+          })) as GraphRunDiagnosticsSummaryViewModel["primaryExecutionDecisionReasons"])
+      : [];
 
     return {
       runStatus: overview.run.status,
@@ -717,6 +927,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       dirtyNodeCount: overview.dirty.dirtyNodeCount,
       cleanNodeCount: overview.dirty.cleanNodeCount,
       primaryDirtyReasons,
+      reuseEligibleNodeCount: overview.reuse?.eligibleNodeCount ?? 0,
+      reuseIneligibleNodeCount: overview.reuse?.ineligibleNodeCount ?? 0,
+      skipReuseOutputHitCount:
+        overview.executionDecision?.skipReuseOutputNodeIds.length ?? 0,
+      primaryReuseReasons,
+      primaryExecutionDecisionReasons,
     };
   }
 
