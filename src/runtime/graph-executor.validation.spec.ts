@@ -39,6 +39,10 @@ import {
   validateGraph,
 } from "./graph-executor";
 import {
+  createGraphHostEffectExplainArtifactEnvelope,
+  readGraphHostEffectExplainArtifactEnvelope,
+} from "./graph-host-effect-explain-artifact-codec";
+import {
   createGraphNodeInputResolutionArtifactEnvelope,
   readGraphNodeInputResolutionArtifactEnvelope,
 } from "./graph-input-resolution-artifact-codec";
@@ -4040,6 +4044,273 @@ async function runValidationSpec(): Promise<void> {
     `Expected host effect and observable output to coexist without collapsing into host_effect_only. Actual: ${JSON.stringify(hostEffectWithObservedOutputEnvelope?.artifact.nodes)}`,
   );
 
+  const hostEffectExplainEnvelope =
+    createGraphHostEffectExplainArtifactEnvelope({
+      plan: skipPilotRepeat.compilePlan,
+      runArtifact: skipPilotRepeat.runArtifact,
+      result: {
+        moduleResults: skipPilotRepeat.moduleResults,
+      },
+      compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: outputExplainEnvelope?.artifact,
+    });
+  assert(
+    hostEffectExplainEnvelope?.kind === "graph_host_effect_explain_artifact" &&
+      hostEffectExplainEnvelope.version === "v1" &&
+      hostEffectExplainEnvelope.artifact.graphId ===
+        skipPilotRepeat.runArtifact?.graphId &&
+      hostEffectExplainEnvelope.artifact.runId === skipPilotRepeat.requestId &&
+      hostEffectExplainEnvelope.artifact.compileFingerprint ===
+        skipPilotRepeat.compilePlan?.compileFingerprint &&
+      hostEffectExplainEnvelope.artifact.summary.declaredHostEffectNodeCount ===
+        1 &&
+      hostEffectExplainEnvelope.artifact.summary.observedHostEffectNodeCount ===
+        1 &&
+      hostEffectExplainEnvelope.artifact.summary
+        .commitContractObservedNodeCount === 1 &&
+      hostEffectExplainEnvelope.artifact.summary.hostEffectOnlyNodeCount ===
+        1 &&
+      hostEffectExplainEnvelope.artifact.summary
+        .compileDeclaredButUnobservedNodeCount === 0 &&
+      hostEffectExplainEnvelope.artifact.summary
+        .runtimeObservedButUndeclaredNodeCount === 0 &&
+      hostEffectExplainEnvelope.artifact.hostEffectOnlyNodeIds.join(",") ===
+        "out_reply",
+    `Expected host effect explain envelope to project stable declared/observed host effect facts. Actual: ${JSON.stringify(hostEffectExplainEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(hostEffectExplainEnvelope).includes('"outputs"') &&
+      !JSON.stringify(hostEffectExplainEnvelope).includes('"hostWrites"') &&
+      !JSON.stringify(hostEffectExplainEnvelope).includes(
+        '"hostCommitContracts"',
+      ) &&
+      !JSON.stringify(hostEffectExplainEnvelope).includes("scopeKey") &&
+      !JSON.stringify(hostEffectExplainEnvelope).includes("skip-pilot") &&
+      !JSON.stringify(hostEffectExplainEnvelope).includes("repeated"),
+    `Expected host effect explain envelope to omit payloads and runtime-only host internals. Actual: ${JSON.stringify(hostEffectExplainEnvelope)}`,
+  );
+  assert(
+    hostEffectExplainEnvelope?.artifact.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.compileDeclaredHostEffect}:${node.runtimeObservedHostEffect}:${node.runtimeObservedHostCommitContract}:${node.hostEffectOnly}:${node.outputProjectionKind}:${node.hostEffectProjectionKind}:${node.dispositionKind}:${node.hostWriteCount}:${node.hostCommitContractCount}`,
+      )
+      .join(",") ===
+      "src_text:false:false:false:false:intermediate_output:no_host_effect:no_host_effect_evidence:0:0,filter_text:false:false:false:false:intermediate_output:no_host_effect:no_host_effect_evidence:0:0,out_reply:true:true:true:true:host_effect_only:host_effect_only:declared_and_observed:1:1",
+    `Expected host effect explain artifact to align compile declaration, runtime observation, and output projection conservatively. Actual: ${JSON.stringify(hostEffectExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const declaredButUnobservedHostEffectEnvelope =
+    createGraphHostEffectExplainArtifactEnvelope({
+      plan: skipPilotRepeat.compilePlan,
+      runArtifact: skipPilotRepeat.runArtifact,
+      result: {
+        moduleResults: skipPilotRepeat.moduleResults.map((moduleResult) =>
+          moduleResult.nodeId === "out_reply"
+            ? {
+                ...moduleResult,
+                hostWrites: [],
+                hostCommitContracts: [],
+              }
+            : moduleResult,
+        ),
+      },
+      compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: outputExplainEnvelope?.artifact,
+    });
+  assert(
+    declaredButUnobservedHostEffectEnvelope?.artifact.summary
+      .declaredHostEffectNodeCount === 1 &&
+      declaredButUnobservedHostEffectEnvelope.artifact.summary
+        .observedHostEffectNodeCount === 0 &&
+      declaredButUnobservedHostEffectEnvelope.artifact.summary
+        .commitContractObservedNodeCount === 0 &&
+      declaredButUnobservedHostEffectEnvelope.artifact.summary
+        .compileDeclaredButUnobservedNodeCount === 1 &&
+      declaredButUnobservedHostEffectEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )?.hostEffectProjectionKind === "declared_only",
+    `Expected compile-declared but runtime-unobserved host effect to degrade conservatively. Actual: ${JSON.stringify(declaredButUnobservedHostEffectEnvelope?.artifact)}`,
+  );
+
+  const observedButUndeclaredPlan = {
+    ...skipPilotRepeat.compilePlan!,
+    nodes: skipPilotRepeat.compilePlan!.nodes.map((node) =>
+      node.nodeId === "out_reply"
+        ? {
+            ...node,
+            isSideEffectNode: false,
+            hostWriteSummary: undefined,
+          }
+        : node,
+    ),
+  };
+  const observedButUndeclaredHostEffectEnvelope =
+    createGraphHostEffectExplainArtifactEnvelope({
+      plan: observedButUndeclaredPlan,
+      runArtifact: skipPilotRepeat.runArtifact,
+      result: {
+        moduleResults: skipPilotRepeat.moduleResults,
+      },
+      compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: outputExplainEnvelope?.artifact,
+    });
+  assert(
+    observedButUndeclaredHostEffectEnvelope?.artifact.summary
+      .declaredHostEffectNodeCount === 0 &&
+      observedButUndeclaredHostEffectEnvelope.artifact.summary
+        .observedHostEffectNodeCount === 1 &&
+      observedButUndeclaredHostEffectEnvelope.artifact.summary
+        .runtimeObservedButUndeclaredNodeCount === 1 &&
+      observedButUndeclaredHostEffectEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )?.dispositionKind === "observed_but_undeclared",
+    `Expected runtime-observed but compile-undeclared host effect to remain observational only. Actual: ${JSON.stringify(observedButUndeclaredHostEffectEnvelope?.artifact)}`,
+  );
+
+  const hostEffectExplainRoundtrip = readGraphHostEffectExplainArtifactEnvelope(
+    {
+      bridge: {
+        graph_host_effect_explain_artifact: {
+          kind: "graph_host_effect_explain_artifact",
+          version: "v1",
+          artifact: hostEffectExplainEnvelope?.artifact,
+        },
+      },
+    },
+  );
+  assert(
+    hostEffectExplainRoundtrip?.artifact.compileFingerprint ===
+      hostEffectExplainEnvelope?.artifact.compileFingerprint &&
+      hostEffectExplainRoundtrip?.artifact.nodes.length ===
+        hostEffectExplainEnvelope?.artifact.nodes.length &&
+      JSON.stringify(hostEffectExplainRoundtrip?.artifact.summary) ===
+        JSON.stringify(hostEffectExplainEnvelope?.artifact.summary),
+    `Expected host effect explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(hostEffectExplainRoundtrip)}`,
+  );
+
+  const degradedHostEffectExplain = readGraphHostEffectExplainArtifactEnvelope({
+    bridge: {
+      graph_host_effect_explain_artifact: {
+        kind: "graph_host_effect_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          compileFingerprint: "compile_fp_sparse",
+          nodeCount: -1,
+          declaredHostEffectNodeIds: ["node_sparse", 2],
+          observedHostEffectNodeIds: ["node_sparse", { bad: true }],
+          commitContractObservedNodeIds: ["node_sparse", null],
+          hostEffectOnlyNodeIds: ["node_sparse", false],
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "out_reply_inject",
+              nodeFingerprint: "node_fp_sparse",
+              compileOrder: -2,
+              runDisposition: "invented_status",
+              isTerminal: true,
+              isSideEffect: true,
+              compileDeclaredHostEffect: true,
+              runtimeObservedHostEffect: true,
+              runtimeObservedHostCommitContract: true,
+              hostWriteCount: -3,
+              hostCommitContractCount: -4,
+              hostEffectOnly: true,
+              outputProjectionKind: "made_up_projection",
+              hostEffectProjectionKind: "made_up_kind",
+              dispositionKind: "made_up_disposition",
+              hostWriteSummaries: [
+                {
+                  kind: "write",
+                  targetType: "message",
+                  operation: "append",
+                  payload: { leak: true },
+                },
+              ],
+              hostCommitSummaries: [
+                {
+                  kind: "write",
+                  mode: "immediate",
+                  targetType: "message",
+                  operation: "append",
+                  supportsRetry: true,
+                  runtimeOnly: { leak: true },
+                },
+              ],
+              outputs: { leak: true },
+            },
+            {
+              nodeId: "broken_only",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedHostEffectExplain?.artifact.nodeCount === 0 &&
+      degradedHostEffectExplain.artifact.summary.declaredHostEffectNodeCount ===
+        1 &&
+      degradedHostEffectExplain.artifact.summary.observedHostEffectNodeCount ===
+        1 &&
+      degradedHostEffectExplain.artifact.summary
+        .commitContractObservedNodeCount === 1 &&
+      degradedHostEffectExplain.artifact.summary.hostEffectOnlyNodeCount ===
+        1 &&
+      degradedHostEffectExplain.artifact.summary
+        .compileDeclaredButUnobservedNodeCount === 0 &&
+      degradedHostEffectExplain.artifact.summary
+        .runtimeObservedButUndeclaredNodeCount === 0 &&
+      degradedHostEffectExplain.artifact.nodes.length === 1 &&
+      degradedHostEffectExplain.artifact.nodes[0]?.compileOrder === 0 &&
+      degradedHostEffectExplain.artifact.nodes[0]?.runDisposition ===
+        "not_reached" &&
+      degradedHostEffectExplain.artifact.nodes[0]?.outputProjectionKind ===
+        "no_observed_output" &&
+      degradedHostEffectExplain.artifact.nodes[0]?.hostEffectProjectionKind ===
+        "host_effect_and_output" &&
+      degradedHostEffectExplain.artifact.nodes[0]?.dispositionKind ===
+        "declared_and_observed" &&
+      degradedHostEffectExplain.artifact.nodes[0]?.hostWriteCount === 0 &&
+      degradedHostEffectExplain.artifact.nodes[0]?.hostCommitContractCount ===
+        0 &&
+      !JSON.stringify(degradedHostEffectExplain).includes('"outputs"') &&
+      !JSON.stringify(degradedHostEffectExplain).includes('"payload"') &&
+      !JSON.stringify(degradedHostEffectExplain).includes('"runtimeOnly"'),
+    `Expected malformed or sparse host effect explain payloads to conservatively degrade without leaking host payload details. Actual: ${JSON.stringify(degradedHostEffectExplain)}`,
+  );
+
+  const hostEffectWithObservedOutputExplain =
+    createGraphHostEffectExplainArtifactEnvelope({
+      plan: skipPilotRepeat.compilePlan,
+      runArtifact: skipPilotRepeat.runArtifact,
+      result: {
+        moduleResults: skipPilotRepeat.moduleResults.map((moduleResult) =>
+          moduleResult.nodeId === "out_reply"
+            ? {
+                ...moduleResult,
+                outputs: { acknowledgement: "host + output" },
+              }
+            : moduleResult,
+        ),
+      },
+      compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+      outputExplainArtifact: hostEffectWithObservedOutputEnvelope?.artifact,
+    });
+  assert(
+    hostEffectWithObservedOutputExplain?.artifact.nodes.find(
+      (node) => node.nodeId === "out_reply",
+    )?.hostEffectOnly === false &&
+      hostEffectWithObservedOutputExplain.artifact.nodes.find(
+        (node) => node.nodeId === "out_reply",
+      )?.hostEffectProjectionKind === "host_effect_and_output" &&
+      hostEffectWithObservedOutputExplain.artifact.summary
+        .hostEffectOnlyNodeCount === 0,
+    `Expected host-effect-only classification to align with output explain when observable outputs exist. Actual: ${JSON.stringify(hostEffectWithObservedOutputExplain?.artifact)}`,
+  );
+
   const reuseExplainEnvelope = createGraphReuseExplainArtifactEnvelope({
     plan: skipPilotRepeat.compilePlan,
     runArtifact: skipPilotRepeat.runArtifact,
@@ -5065,6 +5336,21 @@ async function runValidationSpec(): Promise<void> {
         "out_reply",
     `Expected workflow bridge diagnostics to expose stable compile-run link artifact surface aligned with compile fingerprint and run facts. Actual: ${JSON.stringify(bridgeCompileRunLinkArtifact)}`,
   );
+  const bridgeHostEffectExplainArtifact =
+    readGraphHostEffectExplainArtifactEnvelope(
+      bridgeDiagnosticsWithCompileArtifact,
+    );
+  assert(
+    bridgeHostEffectExplainArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeHostEffectExplainArtifact.artifact.runId ===
+        skipPilotRepeat.requestId &&
+      bridgeHostEffectExplainArtifact.artifact.summary
+        .declaredHostEffectNodeCount === 1 &&
+      bridgeHostEffectExplainArtifact.artifact.summary
+        .commitContractObservedNodeCount === 1,
+    `Expected workflow bridge diagnostics to expose stable host effect explain artifact surface aligned with compile fingerprint and runtime host facts. Actual: ${JSON.stringify(bridgeHostEffectExplainArtifact)}`,
+  );
   const bridgeReuseExplainArtifact = readGraphReuseExplainArtifactEnvelope(
     bridgeDiagnosticsWithCompileArtifact,
   );
@@ -5114,6 +5400,20 @@ async function runValidationSpec(): Promise<void> {
           node.nodeId === "out_reply",
       )?.projectionKind === "host_effect_only",
     `Expected store read surface to consume graph output explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeOutputExplainArtifact)}`,
+  );
+  const activeHostEffectExplainArtifact =
+    store.activeGraphHostEffectExplainArtifact;
+  assert(
+    activeHostEffectExplainArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeHostEffectExplainArtifact.runId === skipPilotRepeat.requestId &&
+      activeHostEffectExplainArtifact.hostEffectOnlyNodeIds.join(",") ===
+        "out_reply" &&
+      activeHostEffectExplainArtifact.nodes.find(
+        (node: { nodeId: string; dispositionKind: string }) =>
+          node.nodeId === "out_reply",
+      )?.dispositionKind === "declared_and_observed",
+    `Expected store read surface to consume graph host effect explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeHostEffectExplainArtifact)}`,
   );
   const activeReuseExplainArtifact = store.activeGraphReuseExplainArtifact;
   assert(

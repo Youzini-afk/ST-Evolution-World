@@ -558,6 +558,88 @@ export interface GraphOutputExplainArtifactEnvelope {
   artifact: GraphOutputExplainArtifactV1;
 }
 
+export type GraphHostEffectExplainProjectionKindV1 =
+  | "host_effect_only"
+  | "host_effect_and_output"
+  | "declared_only"
+  | "no_host_effect"
+  | "not_reached"
+  | "failed";
+
+export type GraphHostEffectExplainDispositionKindV1 =
+  | "declared_and_observed"
+  | "declared_but_unobserved"
+  | "observed_but_undeclared"
+  | "no_host_effect_evidence";
+
+export interface GraphHostEffectExplainWriteRecordV1 {
+  kind: string;
+  targetType: string;
+  targetId?: string;
+  operation: string;
+  path?: string;
+}
+
+export interface GraphHostEffectExplainCommitRecordV1 {
+  kind: string;
+  mode: string;
+  targetType: string;
+  targetId?: string;
+  operation: string;
+  path?: string;
+  supportsRetry: boolean;
+}
+
+export interface GraphHostEffectExplainNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  runDisposition: GraphCompileRunLinkDispositionV1;
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  compileDeclaredHostEffect: boolean;
+  runtimeObservedHostEffect: boolean;
+  runtimeObservedHostCommitContract: boolean;
+  hostWriteCount: number;
+  hostCommitContractCount: number;
+  hostEffectOnly: boolean;
+  outputProjectionKind: GraphOutputExplainProjectionKindV1;
+  hostEffectProjectionKind: GraphHostEffectExplainProjectionKindV1;
+  dispositionKind: GraphHostEffectExplainDispositionKindV1;
+  hostWriteSummaries: GraphHostEffectExplainWriteRecordV1[];
+  hostCommitSummaries: GraphHostEffectExplainCommitRecordV1[];
+}
+
+export interface GraphHostEffectExplainSummaryV1 {
+  declaredHostEffectNodeCount: number;
+  observedHostEffectNodeCount: number;
+  commitContractObservedNodeCount: number;
+  hostEffectOnlyNodeCount: number;
+  compileDeclaredButUnobservedNodeCount: number;
+  runtimeObservedButUndeclaredNodeCount: number;
+}
+
+export interface GraphHostEffectExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  declaredHostEffectNodeIds: string[];
+  observedHostEffectNodeIds: string[];
+  commitContractObservedNodeIds: string[];
+  hostEffectOnlyNodeIds: string[];
+  nodes: GraphHostEffectExplainNodeRecordV1[];
+  summary: GraphHostEffectExplainSummaryV1;
+}
+
+export interface GraphHostEffectExplainArtifactEnvelope {
+  kind: "graph_host_effect_explain_artifact";
+  version: "v1";
+  artifact: GraphHostEffectExplainArtifactV1;
+}
+
 export type GraphReuseExplainFinalDispositionV1 =
   | "skipped_reuse"
   | "eligible_but_executed"
