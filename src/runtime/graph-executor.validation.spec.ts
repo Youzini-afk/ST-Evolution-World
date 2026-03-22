@@ -385,6 +385,19 @@ function assertHasDiagnosticMessage(
   );
 }
 
+function assertHasDiagnostic(
+  diagnostics: ReturnType<typeof validateGraph>["diagnostics"],
+  predicate: (
+    diagnostic: ReturnType<typeof validateGraph>["diagnostics"][number],
+  ) => boolean,
+  label: string,
+): void {
+  assert(
+    diagnostics.some(predicate),
+    `Expected validation diagnostic matching ${label}. Actual: ${diagnostics.map((diagnostic) => JSON.stringify(diagnostic)).join(" | ")}`,
+  );
+}
+
 function assertNoMessage(
   errors: GraphValidationIssue[],
   keyword: string,
@@ -1339,9 +1352,14 @@ async function runValidationSpec(): Promise<void> {
     unknownConfigKeyValidation.diagnostics,
     "未知配置键",
   );
-  assertHasDiagnosticMessage(
+  assertHasDiagnostic(
     unknownConfigKeyValidation.diagnostics,
-    "allow_with_warning",
+    (diagnostic) =>
+      diagnostic.nodeId === "reply_output_unknown_config" &&
+      diagnostic.message.includes("warning / explain") &&
+      diagnostic.message.includes("metadata fact surface") &&
+      diagnostic.message.includes("解释型告警处理"),
+    "unknown config key warning/explain contract",
   );
   assertNoMessage(unknownConfigKeyValidation.errors, "未知配置键");
 
@@ -3621,10 +3639,24 @@ async function runValidationSpec(): Promise<void> {
       outputExplainEnvelope.artifact.nodeCount ===
         skipPilotRepeat.compilePlan?.fingerprintSource?.nodeCount &&
       outputExplainEnvelope.artifact.observedOutputNodeCount === 2 &&
+      outputExplainEnvelope.artifact.summary.observedOutputNodeCount === 2 &&
+      outputExplainEnvelope.artifact.summary.latestPartialOutputNodeCount ===
+        0 &&
+      outputExplainEnvelope.artifact.summary.finalOutputNodeCount === 0 &&
+      outputExplainEnvelope.artifact.summary.intermediateOutputNodeCount ===
+        2 &&
+      outputExplainEnvelope.artifact.summary.hostEffectNodeCount === 1 &&
+      outputExplainEnvelope.artifact.summary.hostEffectOnlyNodeCount === 1 &&
+      outputExplainEnvelope.artifact.summary.noObservedOutputNodeCount === 0 &&
+      outputExplainEnvelope.artifact.summary.notReachedNodeCount === 0 &&
+      outputExplainEnvelope.artifact.summary.failedNodeCount === 0 &&
       outputExplainEnvelope.artifact.finalOutputNodeIds.join(",") === "" &&
       outputExplainEnvelope.artifact.intermediateOutputNodeIds.join(",") ===
         "src_text,filter_text",
     `Expected output explain envelope to project stable read-only output summaries and final/intermediate split. Actual: ${JSON.stringify(outputExplainEnvelope)}`,
+  );
+  const outputExplainSummaryJson = JSON.stringify(
+    outputExplainEnvelope?.artifact.summary,
   );
   assert(
     !JSON.stringify(outputExplainEnvelope).includes('"outputs"') &&
@@ -3636,7 +3668,9 @@ async function runValidationSpec(): Promise<void> {
       !JSON.stringify(outputExplainEnvelope).includes('"trace"') &&
       !JSON.stringify(outputExplainEnvelope).includes("skip-pilot") &&
       !JSON.stringify(outputExplainEnvelope).includes("repeated") &&
-      !JSON.stringify(outputExplainEnvelope).includes("host + output"),
+      !JSON.stringify(outputExplainEnvelope).includes("host + output") &&
+      !outputExplainSummaryJson.includes("preview") &&
+      !outputExplainSummaryJson.includes("sha1:"),
     `Expected output explain envelope to omit raw payloads and runtime-only internals. Actual: ${JSON.stringify(outputExplainEnvelope)}`,
   );
   assert(
@@ -3704,6 +3738,17 @@ async function runValidationSpec(): Promise<void> {
   assert(
     degradedOutputExplain?.artifact.nodeCount === 0 &&
       degradedOutputExplain.artifact.observedOutputNodeCount === 0 &&
+      degradedOutputExplain.artifact.summary.observedOutputNodeCount === 1 &&
+      degradedOutputExplain.artifact.summary.latestPartialOutputNodeCount ===
+        1 &&
+      degradedOutputExplain.artifact.summary.finalOutputNodeCount === 1 &&
+      degradedOutputExplain.artifact.summary.intermediateOutputNodeCount ===
+        0 &&
+      degradedOutputExplain.artifact.summary.hostEffectNodeCount === 1 &&
+      degradedOutputExplain.artifact.summary.hostEffectOnlyNodeCount === 0 &&
+      degradedOutputExplain.artifact.summary.noObservedOutputNodeCount === 0 &&
+      degradedOutputExplain.artifact.summary.notReachedNodeCount === 0 &&
+      degradedOutputExplain.artifact.summary.failedNodeCount === 0 &&
       degradedOutputExplain.artifact.finalOutputNodeIds.join(",") ===
         "node_sparse" &&
       degradedOutputExplain.artifact.intermediateOutputNodeIds.join(",") ===
@@ -3735,7 +3780,9 @@ async function runValidationSpec(): Promise<void> {
     outputExplainRoundtrip?.artifact.compileFingerprint ===
       outputExplainEnvelope?.artifact.compileFingerprint &&
       outputExplainRoundtrip?.artifact.nodes.length ===
-        outputExplainEnvelope?.artifact.nodes.length,
+        outputExplainEnvelope?.artifact.nodes.length &&
+      JSON.stringify(outputExplainRoundtrip?.artifact.summary) ===
+        JSON.stringify(outputExplainEnvelope?.artifact.summary),
     `Expected output explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(outputExplainRoundtrip)}`,
   );
 
@@ -3836,6 +3883,53 @@ async function runValidationSpec(): Promise<void> {
       )?.projectionKind === "no_observed_output",
     `Expected partial output evidence to remain observational only and not imply final output. Actual: ${JSON.stringify(partialEvidenceOnlyOutputExplain?.artifact.nodes)}`,
   );
+
+  const legacyOutputExplainWithoutSummary =
+    readGraphOutputExplainArtifactEnvelope({
+      graph_output_explain_artifact: {
+        graphId: "graph_legacy",
+        runId: "run_legacy",
+        compileFingerprint: "compile_fp_legacy",
+        nodeCount: 1,
+        observedOutputNodeCount: 1,
+        finalOutputNodeIds: ["node_legacy"],
+        intermediateOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "node_legacy",
+            moduleId: "src_user_input",
+            nodeFingerprint: "node_fp_legacy",
+            compileOrder: 0,
+            runDisposition: "executed",
+            isTerminal: true,
+            isSideEffect: false,
+            outputObserved: true,
+            outputValueType: "string",
+            outputPreview: "string(length=5)",
+            outputFingerprintSummary: "sha1:legacy",
+            isTruncated: false,
+            includedInFinalOutputs: true,
+            latestPartialOutputObserved: false,
+            producedHostEffect: false,
+            projectionKind: "final_output",
+            outputs: { leak: true },
+          },
+        ],
+      },
+    });
+  assert(
+    legacyOutputExplainWithoutSummary?.artifact.summary
+      .observedOutputNodeCount === 1 &&
+      legacyOutputExplainWithoutSummary.artifact.summary
+        .finalOutputNodeCount === 1 &&
+      legacyOutputExplainWithoutSummary.artifact.summary
+        .intermediateOutputNodeCount === 0 &&
+      legacyOutputExplainWithoutSummary.artifact.summary.hostEffectNodeCount ===
+        0 &&
+      !JSON.stringify(legacyOutputExplainWithoutSummary).includes('"outputs"'),
+    `Expected legacy output explain payloads without summary to derive conservative summary counts from node facts. Actual: ${JSON.stringify(legacyOutputExplainWithoutSummary)}`,
+  );
   const srcTextOutputSummary = outputExplainEnvelope?.artifact.nodes.find(
     (node: {
       nodeId: string;
@@ -3902,7 +3996,11 @@ async function runValidationSpec(): Promise<void> {
       finalOutputExplainEnvelope.artifact.nodes.find(
         (node: { nodeId: string; projectionKind: string }) =>
           node.nodeId === "src_text",
-      )?.projectionKind === "intermediate_output",
+      )?.projectionKind === "intermediate_output" &&
+      finalOutputExplainEnvelope.artifact.summary.finalOutputNodeCount === 1 &&
+      finalOutputExplainEnvelope.artifact.summary
+        .intermediateOutputNodeCount === 1 &&
+      finalOutputExplainEnvelope.artifact.summary.hostEffectOnlyNodeCount === 0,
     `Expected successful non-side-effect terminal path to distinguish final_output from intermediate_output. Actual: ${JSON.stringify(finalOutputExplainEnvelope?.artifact)}`,
   );
 

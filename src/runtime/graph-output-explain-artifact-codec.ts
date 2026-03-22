@@ -6,6 +6,7 @@ import type {
   GraphOutputExplainArtifactV1,
   GraphOutputExplainNodeRecordV1,
   GraphOutputExplainProjectionKindV1,
+  GraphOutputExplainSummaryV1,
   GraphRunArtifact,
   ModuleExecutionResult,
 } from "../ui/components/graph/module-types";
@@ -249,6 +250,103 @@ function normalizeNodeRecord(
   };
 }
 
+function deriveSummaryFromNodes(
+  nodes: readonly GraphOutputExplainNodeRecordV1[],
+): GraphOutputExplainSummaryV1 {
+  return nodes.reduce<GraphOutputExplainSummaryV1>(
+    (summary, node) => {
+      if (node.outputObserved) {
+        summary.observedOutputNodeCount += 1;
+      }
+      if (node.latestPartialOutputObserved) {
+        summary.latestPartialOutputNodeCount += 1;
+      }
+      if (node.projectionKind === "final_output") {
+        summary.finalOutputNodeCount += 1;
+      }
+      if (node.projectionKind === "intermediate_output") {
+        summary.intermediateOutputNodeCount += 1;
+      }
+      if (node.producedHostEffect) {
+        summary.hostEffectNodeCount += 1;
+      }
+      if (node.projectionKind === "host_effect_only") {
+        summary.hostEffectOnlyNodeCount += 1;
+      }
+      if (node.projectionKind === "no_observed_output") {
+        summary.noObservedOutputNodeCount += 1;
+      }
+      if (node.projectionKind === "not_reached") {
+        summary.notReachedNodeCount += 1;
+      }
+      if (node.projectionKind === "failed") {
+        summary.failedNodeCount += 1;
+      }
+      return summary;
+    },
+    {
+      observedOutputNodeCount: 0,
+      latestPartialOutputNodeCount: 0,
+      finalOutputNodeCount: 0,
+      intermediateOutputNodeCount: 0,
+      hostEffectNodeCount: 0,
+      hostEffectOnlyNodeCount: 0,
+      noObservedOutputNodeCount: 0,
+      notReachedNodeCount: 0,
+      failedNodeCount: 0,
+    },
+  );
+}
+
+function normalizeSummary(
+  value: unknown,
+  nodes: readonly GraphOutputExplainNodeRecordV1[],
+): GraphOutputExplainSummaryV1 {
+  const derived = deriveSummaryFromNodes(nodes);
+  if (!isRecord(value)) {
+    return derived;
+  }
+
+  return {
+    observedOutputNodeCount: toNonNegativeInt(
+      value.observedOutputNodeCount,
+      derived.observedOutputNodeCount,
+    ),
+    latestPartialOutputNodeCount: toNonNegativeInt(
+      value.latestPartialOutputNodeCount,
+      derived.latestPartialOutputNodeCount,
+    ),
+    finalOutputNodeCount: toNonNegativeInt(
+      value.finalOutputNodeCount,
+      derived.finalOutputNodeCount,
+    ),
+    intermediateOutputNodeCount: toNonNegativeInt(
+      value.intermediateOutputNodeCount,
+      derived.intermediateOutputNodeCount,
+    ),
+    hostEffectNodeCount: toNonNegativeInt(
+      value.hostEffectNodeCount,
+      derived.hostEffectNodeCount,
+    ),
+    hostEffectOnlyNodeCount: toNonNegativeInt(
+      value.hostEffectOnlyNodeCount,
+      derived.hostEffectOnlyNodeCount,
+    ),
+    noObservedOutputNodeCount: toNonNegativeInt(
+      value.noObservedOutputNodeCount,
+      derived.noObservedOutputNodeCount,
+    ),
+    notReachedNodeCount: toNonNegativeInt(
+      value.notReachedNodeCount,
+      derived.notReachedNodeCount,
+    ),
+    failedNodeCount: toNonNegativeInt(
+      value.failedNodeCount,
+      derived.failedNodeCount,
+    ),
+  };
+}
+
 function normalizeArtifact(
   value: unknown,
 ): GraphOutputExplainArtifactV1 | null {
@@ -270,6 +368,7 @@ function normalizeArtifact(
         .sort((left, right) => left.compileOrder - right.compileOrder)
     : [];
 
+  const summary = normalizeSummary(value.summary, nodes);
   const finalOutputNodeIds = toOptionalStringArray(value.finalOutputNodeIds);
   const intermediateOutputNodeIds = toOptionalStringArray(
     value.intermediateOutputNodeIds,
@@ -287,11 +386,12 @@ function normalizeArtifact(
         : toNonNegativeInt(value.nodeCount, nodes.length),
     observedOutputNodeCount:
       value.observedOutputNodeCount === undefined
-        ? nodes.filter((node) => node.outputObserved).length
+        ? summary.observedOutputNodeCount
         : toNonNegativeInt(
             value.observedOutputNodeCount,
-            nodes.filter((node) => node.outputObserved).length,
+            summary.observedOutputNodeCount,
           ),
+    summary,
     finalOutputNodeIds:
       finalOutputNodeIds.length > 0
         ? finalOutputNodeIds
@@ -438,6 +538,7 @@ export function createGraphOutputExplainArtifactEnvelope(params: {
     fingerprintVersion: 1,
     nodeCount: plan.fingerprintSource?.nodeCount ?? plan.nodes.length,
     observedOutputNodeCount: nodes.filter((node) => node.outputObserved).length,
+    summary: deriveSummaryFromNodes(nodes),
     finalOutputNodeIds,
     intermediateOutputNodeIds,
     hostEffectNodeIds,

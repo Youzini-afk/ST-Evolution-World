@@ -526,6 +526,18 @@ export interface GraphOutputExplainNodeRecordV1 {
   projectionKind: GraphOutputExplainProjectionKindV1;
 }
 
+export interface GraphOutputExplainSummaryV1 {
+  observedOutputNodeCount: number;
+  latestPartialOutputNodeCount: number;
+  finalOutputNodeCount: number;
+  intermediateOutputNodeCount: number;
+  hostEffectNodeCount: number;
+  hostEffectOnlyNodeCount: number;
+  noObservedOutputNodeCount: number;
+  notReachedNodeCount: number;
+  failedNodeCount: number;
+}
+
 export interface GraphOutputExplainArtifactV1 {
   graphId: string;
   runId: string;
@@ -533,6 +545,7 @@ export interface GraphOutputExplainArtifactV1 {
   fingerprintVersion: 1;
   nodeCount: number;
   observedOutputNodeCount: number;
+  summary: GraphOutputExplainSummaryV1;
   finalOutputNodeIds: string[];
   intermediateOutputNodeIds: string[];
   hostEffectNodeIds: string[];
