@@ -462,6 +462,43 @@ export interface GraphSchedulingExplainArtifactEnvelope {
   artifact: GraphSchedulingExplainArtifactV1;
 }
 
+export type GraphCompileRunLinkDispositionV1 =
+  | "executed"
+  | "skipped_reuse"
+  | "failed"
+  | "not_reached";
+
+export interface GraphCompileRunLinkNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  dependsOn: string[];
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  runDisposition: GraphCompileRunLinkDispositionV1;
+  includedInFinalOutputs: boolean;
+  producedHostEffect: boolean;
+  inputResolutionObserved: boolean;
+}
+
+export interface GraphCompileRunLinkArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  terminalOutputNodeIds: string[];
+  hostEffectNodeIds: string[];
+  nodes: GraphCompileRunLinkNodeRecordV1[];
+}
+
+export interface GraphCompileRunLinkArtifactEnvelope {
+  kind: "graph_compile_run_link_artifact";
+  version: "v1";
+  artifact: GraphCompileRunLinkArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;

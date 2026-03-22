@@ -1,3 +1,5 @@
+import { createPinia, setActivePinia } from "pinia";
+
 import {
   getModuleExplainContract,
   getModuleMetadataSummary,
@@ -10,11 +12,16 @@ import type {
   GraphNodeDiagnosticsView,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
+import { useEwStore } from "../ui/store";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
   createGraphCompileArtifactEnvelope,
   readGraphCompileArtifactEnvelope,
 } from "./graph-compile-artifact-codec";
+import {
+  createGraphCompileRunLinkArtifactEnvelope,
+  readGraphCompileRunLinkArtifactEnvelope,
+} from "./graph-compile-run-link-artifact-codec";
 import {
   buildGraphDocumentExportPayload,
   createGraphDocumentEnvelope,
@@ -1172,6 +1179,7 @@ function readPersistedScriptStorage(): Record<string, unknown> {
 
 async function runValidationSpec(): Promise<void> {
   ensureMemoryLocalStorage();
+  setActivePinia(createPinia());
   resetGraphExecutorReuseStateForTesting();
   const validGraphValidation = validateGraph(makeBaseGraph());
   assert(
@@ -3425,6 +3433,169 @@ async function runValidationSpec(): Promise<void> {
     `Expected malformed or sparse compile artifact payloads to conservatively degrade to stable defaults. Actual: ${JSON.stringify(degradedCompileArtifact)}`,
   );
 
+  const compileRunLinkEnvelope = createGraphCompileRunLinkArtifactEnvelope({
+    plan: skipPilotRepeat.compilePlan,
+    runArtifact: skipPilotRepeat.runArtifact,
+    result: skipPilotRepeat,
+  });
+  assert(
+    compileRunLinkEnvelope?.kind === "graph_compile_run_link_artifact" &&
+      compileRunLinkEnvelope.version === "v1" &&
+      compileRunLinkEnvelope.artifact.graphId ===
+        skipPilotRepeat.runArtifact?.graphId &&
+      compileRunLinkEnvelope.artifact.runId === skipPilotRepeat.requestId &&
+      compileRunLinkEnvelope.artifact.compileFingerprint ===
+        skipPilotRepeat.compilePlan?.compileFingerprint &&
+      compileRunLinkEnvelope.artifact.nodeCount ===
+        skipPilotRepeat.compilePlan?.fingerprintSource?.nodeCount &&
+      compileRunLinkEnvelope.artifact.terminalOutputNodeIds.join(",") === "" &&
+      compileRunLinkEnvelope.artifact.hostEffectNodeIds.join(",") ===
+        "out_reply",
+    `Expected compile-run link envelope to project stable compile-to-run linkage facts. Actual: ${JSON.stringify(compileRunLinkEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(compileRunLinkEnvelope).includes("scopeKey") &&
+      !JSON.stringify(compileRunLinkEnvelope).includes('"outputs"') &&
+      !JSON.stringify(compileRunLinkEnvelope).includes('"hostWrites"') &&
+      !JSON.stringify(compileRunLinkEnvelope).includes(
+        '"hostCommitContracts"',
+      ) &&
+      !JSON.stringify(compileRunLinkEnvelope).includes('"error"') &&
+      !JSON.stringify(compileRunLinkEnvelope).includes('"stack"'),
+    `Expected compile-run link envelope to omit runtime/cache/output internals. Actual: ${JSON.stringify(compileRunLinkEnvelope)}`,
+  );
+  assert(
+    compileRunLinkEnvelope?.artifact.nodes
+      .map(
+        (node: {
+          nodeId: string;
+          runDisposition: string;
+          includedInFinalOutputs: boolean;
+          producedHostEffect: boolean;
+          inputResolutionObserved: boolean;
+        }) =>
+          `${node.nodeId}:${node.runDisposition}:${node.includedInFinalOutputs}:${node.producedHostEffect}:${node.inputResolutionObserved}`,
+      )
+      .join(",") ===
+      "src_text:executed:false:false:true,filter_text:skipped_reuse:false:false:true,out_reply:executed:false:true:true",
+    `Expected compile-run link artifact to project executed/skipped_reuse and final-output/host-effect split facts. Actual: ${JSON.stringify(compileRunLinkEnvelope?.artifact.nodes)}`,
+  );
+
+  const failureCompileRunLinkEnvelope =
+    createGraphCompileRunLinkArtifactEnvelope({
+      plan: handlerFailureResult.compilePlan,
+      runArtifact: handlerFailureResult.runArtifact,
+      result: handlerFailureResult,
+    });
+  assert(
+    failureCompileRunLinkEnvelope?.artifact.compileFingerprint ===
+      handlerFailureResult.runArtifact?.compileFingerprint &&
+      failureCompileRunLinkEnvelope?.artifact.nodes
+        .map(
+          (node: { nodeId: string; runDisposition: string }) =>
+            `${node.nodeId}:${node.runDisposition}`,
+        )
+        .join(",") ===
+        "node_input:executed,node_transform:executed,node_reply:failed",
+    `Expected compile fingerprint to align between compile/run facts and failed node to project as failed. Actual: ${JSON.stringify(failureCompileRunLinkEnvelope)}`,
+  );
+
+  const notReachedCompileRunLinkEnvelope =
+    createGraphCompileRunLinkArtifactEnvelope({
+      plan: failSkipResult.compilePlan,
+      runArtifact: failSkipResult.runArtifact,
+      result: failSkipResult,
+    });
+  assert(
+    notReachedCompileRunLinkEnvelope?.artifact.nodes.some(
+      (node: { runDisposition: string }) =>
+        node.runDisposition === "not_reached",
+    ) &&
+      notReachedCompileRunLinkEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; runDisposition: string }) =>
+          node.runDisposition === "not_reached",
+      )?.nodeId === "out_reply",
+    `Expected downstream node after execute failure to project as not_reached. Actual: ${JSON.stringify(notReachedCompileRunLinkEnvelope)}`,
+  );
+
+  const compileRunLinkRoundtrip = readGraphCompileRunLinkArtifactEnvelope({
+    bridge: {
+      graph_compile_run_link_artifact: {
+        kind: "graph_compile_run_link_artifact",
+        version: "v1",
+        artifact: compileRunLinkEnvelope?.artifact,
+      },
+    },
+  });
+  assert(
+    compileRunLinkRoundtrip?.artifact.compileFingerprint ===
+      compileRunLinkEnvelope?.artifact.compileFingerprint &&
+      compileRunLinkRoundtrip?.artifact.nodes.length ===
+        compileRunLinkEnvelope?.artifact.nodes.length,
+    `Expected compile-run link envelope to roundtrip through stable read model. Actual: ${JSON.stringify(compileRunLinkRoundtrip)}`,
+  );
+
+  const degradedCompileRunLink = readGraphCompileRunLinkArtifactEnvelope({
+    bridge: {
+      graph_compile_run_link_artifact: {
+        kind: "graph_compile_run_link_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          compileFingerprint: "compile_fp_sparse",
+          nodeCount: -7,
+          terminalOutputNodeIds: ["node_sparse", 2],
+          hostEffectNodeIds: ["node_sparse", { bad: true }],
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "src_user_input",
+              nodeFingerprint: "node_fp_sparse",
+              compileOrder: -4,
+              dependsOn: ["dep_a", 9],
+              isTerminal: true,
+              isSideEffect: true,
+              runDisposition: "invented_status",
+              includedInFinalOutputs: true,
+              producedHostEffect: true,
+              inputResolutionObserved: true,
+              outputs: { leak: true },
+              scopeKey: "omit_me",
+              hostWrites: [{ leak: true }],
+              hostCommitContracts: [{ leak: true }],
+              error: "omit_me",
+            },
+            {
+              nodeId: "broken_only",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedCompileRunLink?.artifact.nodeCount === 0 &&
+      degradedCompileRunLink.artifact.terminalOutputNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedCompileRunLink.artifact.hostEffectNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedCompileRunLink.artifact.nodes.length === 1 &&
+      degradedCompileRunLink.artifact.nodes[0]?.compileOrder === 0 &&
+      degradedCompileRunLink.artifact.nodes[0]?.dependsOn.join(",") ===
+        "dep_a" &&
+      degradedCompileRunLink.artifact.nodes[0]?.runDisposition ===
+        "not_reached" &&
+      !JSON.stringify(degradedCompileRunLink).includes('"outputs"') &&
+      !JSON.stringify(degradedCompileRunLink).includes("scopeKey") &&
+      !JSON.stringify(degradedCompileRunLink).includes('"hostWrites"') &&
+      !JSON.stringify(degradedCompileRunLink).includes(
+        '"hostCommitContracts"',
+      ) &&
+      !JSON.stringify(degradedCompileRunLink).includes('"error"'),
+    `Expected malformed or sparse compile-run link payloads to conservatively degrade without leaking runtime internals. Actual: ${JSON.stringify(degradedCompileRunLink)}`,
+  );
+
   const schedulingExplainEnvelope =
     createGraphSchedulingExplainArtifactEnvelope({
       plan: handlerFailureResult.compilePlan,
@@ -4008,6 +4179,7 @@ async function runValidationSpec(): Promise<void> {
     selection: graphFirstRoute,
     failureOrigin: "graph_dispatch",
     graphCompilePlan: compilePlanFixture,
+    graphExecutionResult: skipPilotRepeat,
   });
   assertBridgeDiagnostics(bridgeDiagnosticsWithCompileArtifact, {
     route: "graph",
@@ -4046,6 +4218,48 @@ async function runValidationSpec(): Promise<void> {
           typeof node.orderingReason?.detail === "string",
       ),
     `Expected workflow bridge diagnostics to expose stable scheduling explain artifact surface aligned with compile fingerprint. Actual: ${JSON.stringify(bridgeSchedulingExplainArtifact)}`,
+  );
+  const bridgeCompileRunLinkArtifact = readGraphCompileRunLinkArtifactEnvelope(
+    bridgeDiagnosticsWithCompileArtifact,
+  );
+  assert(
+    bridgeCompileRunLinkArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeCompileRunLinkArtifact.artifact.runId ===
+        skipPilotRepeat.requestId &&
+      bridgeCompileRunLinkArtifact.artifact.nodes.length ===
+        compilePlanFixture.nodes.length &&
+      bridgeCompileRunLinkArtifact.artifact.nodes.some(
+        (node) => node.runDisposition === "skipped_reuse",
+      ) &&
+      bridgeCompileRunLinkArtifact.artifact.hostEffectNodeIds.join(",") ===
+        "out_reply",
+    `Expected workflow bridge diagnostics to expose stable compile-run link artifact surface aligned with compile fingerprint and run facts. Actual: ${JSON.stringify(bridgeCompileRunLinkArtifact)}`,
+  );
+  const store = useEwStore();
+  setLastRun(
+    RunSummarySchema.parse({
+      at: Date.now(),
+      ok: true,
+      reason: "store compile-run link artifact",
+      request_id: skipPilotRepeat.requestId,
+      chat_id: "chat_store_compile_run_link",
+      flow_count: 1,
+      elapsed_ms: skipPilotRepeat.elapsedMs,
+      mode: "manual",
+      diagnostics: bridgeDiagnosticsWithCompileArtifact,
+    }),
+  );
+  const activeCompileRunLinkArtifact = store.activeGraphCompileRunLinkArtifact;
+  assert(
+    activeCompileRunLinkArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeCompileRunLinkArtifact.runId === skipPilotRepeat.requestId &&
+      activeCompileRunLinkArtifact.nodes.some(
+        (node: { runDisposition: string }) =>
+          node.runDisposition === "skipped_reuse",
+      ),
+    `Expected store read surface to consume graph compile-run link artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeCompileRunLinkArtifact)}`,
   );
   assertBridgeDiagnostics(
     buildWorkflowBridgeDiagnostics({ selection: legacyFallbackRoute }),

@@ -2,6 +2,7 @@ import { klona } from "klona";
 import _ from "lodash";
 import { createDefaultApiPreset, createDefaultFlow } from "./factory";
 import { migrateAllFlows } from "./flow-migrator";
+import { readGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import {
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
@@ -525,6 +526,9 @@ type WorkflowBridgeFacts = {
   enabled_graph_count?: number;
   selected_graph_ids?: string[];
   failure_origin?: string;
+  graph_compile_run_link_artifact?: ReturnType<
+    typeof readGraphCompileRunLinkArtifactEnvelope
+  >;
 };
 
 function normalizeWorkflowBridgeDiagnostics(
@@ -584,6 +588,13 @@ function normalizeWorkflowBridgeDiagnostics(
     if (normalizedFailureOrigin) {
       normalized.failure_origin = normalizedFailureOrigin;
     }
+  }
+
+  const graphCompileRunLinkArtifact = readGraphCompileRunLinkArtifactEnvelope({
+    bridge: bridgeRecord,
+  });
+  if (graphCompileRunLinkArtifact) {
+    normalized.graph_compile_run_link_artifact = graphCompileRunLinkArtifact;
   }
 
   return normalized;

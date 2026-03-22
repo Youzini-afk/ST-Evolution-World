@@ -23,6 +23,7 @@ import {
   type FloorSnapshot,
 } from "../runtime/floor-binding";
 import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artifact-codec";
+import { readGraphCompileRunLinkArtifactEnvelope } from "../runtime/graph-compile-run-link-artifact-codec";
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
 import { readGraphNodeInputResolutionArtifactEnvelope } from "../runtime/graph-input-resolution-artifact-codec";
 import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
@@ -62,6 +63,7 @@ import type {
   GraphActiveRunSummaryViewModel,
   GraphCheckpointCandidateViewModel,
   GraphCompileArtifactV1,
+  GraphCompileRunLinkArtifactV1,
   GraphExecutionStage,
   GraphNodeDiagnosticsView,
   GraphNodeDiagnosticsViewModel,
@@ -1211,6 +1213,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphCompileRunLinkArtifact(
+    diagnostics: unknown,
+  ): GraphCompileRunLinkArtifactV1 | null {
+    return (
+      readGraphCompileRunLinkArtifactEnvelope(diagnostics)?.artifact ?? null
+    );
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1785,6 +1795,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphNodeInputResolutionArtifact = computed(() =>
     toActiveGraphNodeInputResolutionArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphCompileRunLinkArtifact = computed(() =>
+    toActiveGraphCompileRunLinkArtifact(lastRun.value?.diagnostics),
   );
 
   const activeGraphSchedulingExplainArtifact = computed(() =>
@@ -2723,6 +2737,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeWorkbenchNodeDiagnostics,
     activeGraphCompileArtifact,
     activeGraphNodeInputResolutionArtifact,
+    activeGraphCompileRunLinkArtifact,
     activeGraphSchedulingExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,

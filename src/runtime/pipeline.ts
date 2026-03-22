@@ -1,5 +1,7 @@
 import type {
   GraphCompilePlan,
+  GraphCompileRunLinkArtifactEnvelope,
+  GraphExecutionResult,
   GraphNodeInputResolutionArtifactEnvelope,
   GraphRunArtifact,
   GraphRunEvent,
@@ -13,6 +15,7 @@ import { FlowTriggerV1 } from "./contracts";
 import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
 import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-codec";
+import { createGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphNodeInputResolutionArtifactEnvelope } from "./graph-input-resolution-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
@@ -54,6 +57,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_compile_artifact?: ReturnType<
     typeof createGraphCompileArtifactEnvelope
   >;
+  graph_compile_run_link_artifact?: GraphCompileRunLinkArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
   graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
@@ -679,6 +683,14 @@ export function buildWorkflowBridgeDiagnostics(params: {
   graphRunOverview?: GraphRunArtifact;
   graphRunEvents?: GraphRunEvent[];
   graphCompilePlan?: GraphCompilePlan;
+  graphExecutionResult?: Pick<
+    GraphExecutionResult,
+    | "runArtifact"
+    | "moduleResults"
+    | "finalOutputs"
+    | "nodeTraces"
+    | "inputResolutionArtifact"
+  >;
   graphInputResolutionArtifact?: GraphNodeInputResolutionArtifactEnvelope["artifact"];
 }): Record<string, any> {
   const {
@@ -687,12 +699,15 @@ export function buildWorkflowBridgeDiagnostics(params: {
     graphRunOverview,
     graphRunEvents,
     graphCompilePlan,
+    graphExecutionResult,
     graphInputResolutionArtifact,
   } = params;
+  const effectiveGraphRunOverview =
+    graphRunOverview ?? graphExecutionResult?.runArtifact;
   const graphRunSnapshot = createGraphRunSnapshotEnvelope({
-    overview: graphRunOverview,
+    overview: effectiveGraphRunOverview,
     events: graphRunEvents,
-    diagnosticsOverview: graphRunOverview?.diagnosticsOverview,
+    diagnosticsOverview: effectiveGraphRunOverview?.diagnosticsOverview,
   });
   const graphCompileArtifact = createGraphCompileArtifactEnvelope({
     plan: graphCompilePlan ?? null,
@@ -706,11 +721,44 @@ export function buildWorkflowBridgeDiagnostics(params: {
       result: graphInputResolutionArtifact
         ? {
             requestId: graphInputResolutionArtifact.runId,
-            runArtifact: graphRunOverview,
+            runArtifact: effectiveGraphRunOverview,
             inputResolutionArtifact: graphInputResolutionArtifact,
           }
-        : null,
+        : graphExecutionResult && effectiveGraphRunOverview
+          ? {
+              requestId: effectiveGraphRunOverview.runId,
+              runArtifact: effectiveGraphRunOverview,
+              inputResolutionArtifact:
+                graphExecutionResult.inputResolutionArtifact,
+            }
+          : null,
     });
+  const graphCompileRunLinkArtifact = createGraphCompileRunLinkArtifactEnvelope(
+    {
+      plan: graphCompilePlan ?? null,
+      runArtifact: effectiveGraphRunOverview ?? null,
+      result:
+        graphExecutionResult && effectiveGraphRunOverview
+          ? {
+              moduleResults: graphExecutionResult.moduleResults,
+              finalOutputs: graphExecutionResult.finalOutputs,
+              nodeTraces: graphExecutionResult.nodeTraces,
+              inputResolutionArtifact:
+                graphNodeInputResolutionArtifact?.artifact ??
+                graphExecutionResult.inputResolutionArtifact,
+            }
+          : graphNodeInputResolutionArtifact?.artifact &&
+              effectiveGraphRunOverview
+            ? {
+                moduleResults: [],
+                finalOutputs: {},
+                nodeTraces: [],
+                inputResolutionArtifact:
+                  graphNodeInputResolutionArtifact.artifact,
+              }
+            : null,
+    },
+  );
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -738,6 +786,11 @@ export function buildWorkflowBridgeDiagnostics(params: {
       ? {
           graph_node_input_resolution_artifact:
             graphNodeInputResolutionArtifact,
+        }
+      : {}),
+    ...(graphCompileRunLinkArtifact
+      ? {
+          graph_compile_run_link_artifact: graphCompileRunLinkArtifact,
         }
       : {}),
     ...(graphRunSnapshot ? { graph_run_snapshot: graphRunSnapshot } : {}),
@@ -947,6 +1000,7 @@ async function runGraphWorkflow(
           graphRunOverview: latestGraphRunOverview,
           graphRunEvents: latestGraphRunEvents,
           graphCompilePlan: latestGraphCompilePlan,
+          graphExecutionResult: graphResult,
           graphInputResolutionArtifact: latestGraphInputResolutionArtifact,
         });
         const failure = buildWorkflowFailureDiagnostic({
