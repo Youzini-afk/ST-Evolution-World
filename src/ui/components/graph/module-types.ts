@@ -499,6 +499,64 @@ export interface GraphCompileRunLinkArtifactEnvelope {
   artifact: GraphCompileRunLinkArtifactV1;
 }
 
+export type GraphReuseExplainFinalDispositionV1 =
+  | "skipped_reuse"
+  | "eligible_but_executed"
+  | "ineligible_executed"
+  | "not_applicable";
+
+export interface GraphReuseExplainFingerprintSummaryV1 {
+  available: boolean;
+  fingerprint?: string;
+}
+
+export interface GraphReuseExplainNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  dirtyReason?: GraphNodeDirtyReason;
+  reuseVerdict?: GraphNodeReuseVerdict["reason"];
+  baselineInputFingerprint?: GraphReuseExplainFingerprintSummaryV1;
+  currentInputFingerprint?: GraphReuseExplainFingerprintSummaryV1;
+  executionDecision?: GraphNodeExecutionDecisionReason;
+  reusableOutputsObserved: boolean;
+  finalReuseDisposition: GraphReuseExplainFinalDispositionV1;
+}
+
+export interface GraphReuseExplainSummaryV1 {
+  eligibleNodeCount: number;
+  ineligibleNodeCount: number;
+  skippedReuseNodeCount: number;
+  eligibleButExecutedNodeCount: number;
+  ineligibleExecutedNodeCount: number;
+  notApplicableNodeCount: number;
+  verdictCounts: Record<GraphNodeReuseReason, number>;
+  decisionCounts: Record<GraphNodeExecutionDecisionReason, number>;
+  finalDispositionCounts: Record<GraphReuseExplainFinalDispositionV1, number>;
+}
+
+export interface GraphReuseExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  featureEnabled: boolean;
+  nodeCount: number;
+  eligibleNodeIds: string[];
+  skippedReuseNodeIds: string[];
+  nodes: GraphReuseExplainNodeRecordV1[];
+  summary: GraphReuseExplainSummaryV1;
+}
+
+export interface GraphReuseExplainArtifactEnvelope {
+  kind: "graph_reuse_explain_artifact";
+  version: "v1";
+  artifact: GraphReuseExplainArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;

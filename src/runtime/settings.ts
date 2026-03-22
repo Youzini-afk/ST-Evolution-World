@@ -7,6 +7,7 @@ import {
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
 } from "./graph-document-codec";
+import { readGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
 import { simpleHash } from "./helpers";
 import {
   readSharedSettings,
@@ -529,6 +530,9 @@ type WorkflowBridgeFacts = {
   graph_compile_run_link_artifact?: ReturnType<
     typeof readGraphCompileRunLinkArtifactEnvelope
   >;
+  graph_reuse_explain_artifact?: ReturnType<
+    typeof readGraphReuseExplainArtifactEnvelope
+  >;
 };
 
 function normalizeWorkflowBridgeDiagnostics(
@@ -595,6 +599,13 @@ function normalizeWorkflowBridgeDiagnostics(
   });
   if (graphCompileRunLinkArtifact) {
     normalized.graph_compile_run_link_artifact = graphCompileRunLinkArtifact;
+  }
+
+  const graphReuseExplainArtifact = readGraphReuseExplainArtifactEnvelope({
+    bridge: bridgeRecord,
+  });
+  if (graphReuseExplainArtifact) {
+    normalized.graph_reuse_explain_artifact = graphReuseExplainArtifact;
   }
 
   return normalized;

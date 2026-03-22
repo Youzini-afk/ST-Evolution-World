@@ -3,6 +3,7 @@ import type {
   GraphCompileRunLinkArtifactEnvelope,
   GraphExecutionResult,
   GraphNodeInputResolutionArtifactEnvelope,
+  GraphReuseExplainArtifactEnvelope,
   GraphRunArtifact,
   GraphRunEvent,
   GraphRunSnapshotEnvelope,
@@ -18,6 +19,7 @@ import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-cod
 import { createGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphNodeInputResolutionArtifactEnvelope } from "./graph-input-resolution-artifact-codec";
+import { createGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
 import { createGraphSchedulingExplainArtifactEnvelope } from "./graph-scheduling-explain-artifact-codec";
 import { uuidv4 } from "./helpers";
@@ -58,6 +60,7 @@ export type WorkflowBridgeDiagnostics = {
     typeof createGraphCompileArtifactEnvelope
   >;
   graph_compile_run_link_artifact?: GraphCompileRunLinkArtifactEnvelope;
+  graph_reuse_explain_artifact?: GraphReuseExplainArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
   graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
@@ -690,6 +693,8 @@ export function buildWorkflowBridgeDiagnostics(params: {
     | "finalOutputs"
     | "nodeTraces"
     | "inputResolutionArtifact"
+    | "reuseSummary"
+    | "executionDecisionSummary"
   >;
   graphInputResolutionArtifact?: GraphNodeInputResolutionArtifactEnvelope["artifact"];
 }): Record<string, any> {
@@ -759,6 +764,19 @@ export function buildWorkflowBridgeDiagnostics(params: {
             : null,
     },
   );
+  const graphReuseExplainArtifact = createGraphReuseExplainArtifactEnvelope({
+    plan: graphCompilePlan ?? null,
+    runArtifact: effectiveGraphRunOverview ?? null,
+    result: graphExecutionResult
+      ? {
+          nodeTraces: graphExecutionResult.nodeTraces,
+          reuseSummary: graphExecutionResult.reuseSummary,
+          executionDecisionSummary:
+            graphExecutionResult.executionDecisionSummary,
+        }
+      : null,
+    compileRunLinkArtifact: graphCompileRunLinkArtifact?.artifact ?? null,
+  });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -780,6 +798,11 @@ export function buildWorkflowBridgeDiagnostics(params: {
     ...(graphSchedulingExplainArtifact
       ? {
           graph_scheduling_explain_artifact: graphSchedulingExplainArtifact,
+        }
+      : {}),
+    ...(graphReuseExplainArtifact
+      ? {
+          graph_reuse_explain_artifact: graphReuseExplainArtifact,
         }
       : {}),
     ...(graphNodeInputResolutionArtifact

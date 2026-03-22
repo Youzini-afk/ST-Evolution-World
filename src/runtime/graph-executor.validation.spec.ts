@@ -43,6 +43,10 @@ import {
   readGraphNodeInputResolutionArtifactEnvelope,
 } from "./graph-input-resolution-artifact-codec";
 import {
+  createGraphReuseExplainArtifactEnvelope,
+  readGraphReuseExplainArtifactEnvelope,
+} from "./graph-reuse-explain-artifact-codec";
+import {
   createGraphRunSnapshotEnvelope,
   readGraphRunSnapshotEnvelope,
 } from "./graph-run-artifact-codec";
@@ -3596,6 +3600,391 @@ async function runValidationSpec(): Promise<void> {
     `Expected malformed or sparse compile-run link payloads to conservatively degrade without leaking runtime internals. Actual: ${JSON.stringify(degradedCompileRunLink)}`,
   );
 
+  const reuseExplainEnvelope = createGraphReuseExplainArtifactEnvelope({
+    plan: skipPilotRepeat.compilePlan,
+    runArtifact: skipPilotRepeat.runArtifact,
+    result: skipPilotRepeat,
+    compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+  });
+  assert(
+    reuseExplainEnvelope?.kind === "graph_reuse_explain_artifact" &&
+      reuseExplainEnvelope.version === "v1" &&
+      reuseExplainEnvelope.artifact.graphId ===
+        skipPilotRepeat.runArtifact?.graphId &&
+      reuseExplainEnvelope.artifact.runId === skipPilotRepeat.requestId &&
+      reuseExplainEnvelope.artifact.compileFingerprint ===
+        skipPilotRepeat.compilePlan?.compileFingerprint &&
+      reuseExplainEnvelope.artifact.nodeCount ===
+        skipPilotRepeat.compilePlan?.fingerprintSource?.nodeCount &&
+      reuseExplainEnvelope.artifact.eligibleNodeIds.join(",") ===
+        "filter_text" &&
+      reuseExplainEnvelope.artifact.skippedReuseNodeIds.join(",") ===
+        "filter_text",
+    `Expected reuse explain envelope to project stable reuse eligibility and final disposition facts. Actual: ${JSON.stringify(reuseExplainEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(reuseExplainEnvelope).includes("scopeKey") &&
+      !JSON.stringify(reuseExplainEnvelope).includes(
+        "previous reusable outputs",
+      ) &&
+      !JSON.stringify(reuseExplainEnvelope).includes('"outputs"') &&
+      !JSON.stringify(reuseExplainEnvelope).includes('"hostWrites"') &&
+      !JSON.stringify(reuseExplainEnvelope).includes('"hostCommitContracts"') &&
+      !JSON.stringify(reuseExplainEnvelope).includes('"cacheKey"'),
+    `Expected reuse explain envelope to omit cache/runtime/output internals. Actual: ${JSON.stringify(reuseExplainEnvelope)}`,
+  );
+  assert(
+    reuseExplainEnvelope?.artifact.nodes
+      .map(
+        (node) =>
+          `${node.nodeId}:${node.reuseVerdict ?? "none"}:${node.executionDecision ?? "none"}:${node.reusableOutputsObserved}:${node.finalReuseDisposition}`,
+      )
+      .join(",") ===
+      "src_text:ineligible_capability:ineligible_source:false:ineligible_executed,filter_text:eligible:skip_reuse_outputs:true:skipped_reuse,out_reply:ineligible_side_effect:ineligible_side_effect:false:ineligible_executed",
+    `Expected reuse explain artifact to distinguish eligible skip, ineligible executed, and stable final dispositions. Actual: ${JSON.stringify(reuseExplainEnvelope?.artifact.nodes)}`,
+  );
+  assert(
+    reuseExplainEnvelope?.artifact.summary.finalDispositionCounts
+      .skipped_reuse === 1 &&
+      reuseExplainEnvelope.artifact.summary.finalDispositionCounts
+        .ineligible_executed === 2 &&
+      reuseExplainEnvelope.artifact.summary.finalDispositionCounts
+        .eligible_but_executed === 0 &&
+      reuseExplainEnvelope.artifact.summary.finalDispositionCounts
+        .not_applicable === 0,
+    `Expected reuse explain summary to expose stable disposition distribution. Actual: ${JSON.stringify(reuseExplainEnvelope?.artifact.summary)}`,
+  );
+  assert(
+    reuseExplainEnvelope?.artifact.nodes.find(
+      (node) => node.nodeId === "filter_text",
+    )?.baselineInputFingerprint?.available === true &&
+      reuseExplainEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "filter_text",
+      )?.currentInputFingerprint?.available === true,
+    `Expected reuse explain artifact to retain conservative fingerprint summaries for reuse reasoning. Actual: ${JSON.stringify(reuseExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const reuseExplainRoundtrip = readGraphReuseExplainArtifactEnvelope({
+    bridge: {
+      graph_reuse_explain_artifact: {
+        kind: "graph_reuse_explain_artifact",
+        version: "v1",
+        artifact: reuseExplainEnvelope?.artifact,
+      },
+    },
+  });
+  assert(
+    reuseExplainRoundtrip?.artifact.compileFingerprint ===
+      reuseExplainEnvelope?.artifact.compileFingerprint &&
+      reuseExplainRoundtrip?.artifact.nodes.length ===
+        reuseExplainEnvelope?.artifact.nodes.length,
+    `Expected reuse explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(reuseExplainRoundtrip)}`,
+  );
+
+  const degradedReuseExplain = readGraphReuseExplainArtifactEnvelope({
+    bridge: {
+      graph_reuse_explain_artifact: {
+        kind: "graph_reuse_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          compileFingerprint: "compile_fp_sparse",
+          nodeCount: -8,
+          eligibleNodeIds: ["node_sparse", 3],
+          skippedReuseNodeIds: ["node_sparse", { bad: true }],
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "flt_mvu_strip",
+              nodeFingerprint: "node_fp_sparse",
+              compileOrder: -9,
+              isTerminal: true,
+              isSideEffect: false,
+              dirtyReason: "input_changed",
+              reuseVerdict: "eligible",
+              baselineInputFingerprint: {
+                available: true,
+                fingerprint: "baseline_fp",
+                scopeKey: "omit_me",
+              },
+              currentInputFingerprint: {
+                available: true,
+                fingerprint: "current_fp",
+                payload: { omit: true },
+              },
+              executionDecision: "skip_reuse_outputs",
+              reusableOutputsObserved: true,
+              finalReuseDisposition: "invented",
+              outputs: { leak: true },
+              scopeKey: "omit_me",
+            },
+            {
+              nodeId: "broken_only",
+            },
+          ],
+          summary: {
+            skippedReuseNodeCount: -4,
+            finalDispositionCounts: {
+              skipped_reuse: 99,
+            },
+          },
+        },
+      },
+    },
+  });
+  assert(
+    degradedReuseExplain?.artifact.nodeCount === 0 &&
+      degradedReuseExplain.artifact.eligibleNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedReuseExplain.artifact.skippedReuseNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedReuseExplain.artifact.nodes.length === 1 &&
+      degradedReuseExplain.artifact.nodes[0]?.compileOrder === 0 &&
+      degradedReuseExplain.artifact.nodes[0]?.finalReuseDisposition ===
+        "skipped_reuse" &&
+      degradedReuseExplain.artifact.summary.finalDispositionCounts
+        .skipped_reuse === 99 &&
+      !JSON.stringify(degradedReuseExplain).includes("scopeKey") &&
+      !JSON.stringify(degradedReuseExplain).includes('"outputs"') &&
+      !JSON.stringify(degradedReuseExplain).includes('"payload"'),
+    `Expected malformed or sparse reuse explain payloads to conservatively degrade without leaking internals. Actual: ${JSON.stringify(degradedReuseExplain)}`,
+  );
+
+  const eligibleButExecutedGraph = makePlanExecutionGraph();
+  const eligibleButExecutedPlan = compileGraphPlan(eligibleButExecutedGraph);
+  const eligibleButExecutedTrace = eligibleButExecutedPlan.nodes.find(
+    (node) => node.nodeId === "filter_text",
+  );
+  const eligibleButExecutedReuseExplain =
+    createGraphReuseExplainArtifactEnvelope({
+      plan: eligibleButExecutedPlan,
+      runArtifact: {
+        runId: "run_eligible_executed",
+        graphId: eligibleButExecutedGraph.id,
+        compileFingerprint: eligibleButExecutedPlan.compileFingerprint,
+        status: "completed",
+        phase: "terminal",
+        phaseLabel: "完成",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      },
+      result: {
+        nodeTraces: [
+          {
+            nodeId: "src_text",
+            moduleId: "src_user_input",
+            nodeFingerprint:
+              eligibleButExecutedPlan.nodes[0]?.nodeFingerprint ?? "src_fp",
+            dirtyReason: "clean",
+            reuseVerdict: {
+              canReuse: false,
+              reason: "ineligible_capability",
+              currentInputFingerprint: "src_current",
+            },
+            executionDecision: {
+              shouldExecute: true,
+              shouldSkip: false,
+              reason: "ineligible_source",
+              reusableOutputHit: false,
+            },
+          },
+          {
+            nodeId: "filter_text",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint:
+              eligibleButExecutedTrace?.nodeFingerprint ?? "filter_fp",
+            inputFingerprint: "filter_current",
+            dirtyReason: "clean",
+            reuseVerdict: {
+              canReuse: true,
+              reason: "eligible",
+              baselineInputFingerprint: "filter_baseline",
+              currentInputFingerprint: "filter_current",
+            },
+            executionDecision: {
+              shouldExecute: true,
+              shouldSkip: false,
+              reason: "execute",
+              reusableOutputHit: false,
+            },
+          },
+          {
+            nodeId: "out_reply",
+            moduleId: "out_reply_inject",
+            nodeFingerprint:
+              eligibleButExecutedPlan.nodes[2]?.nodeFingerprint ?? "reply_fp",
+            dirtyReason: "clean",
+            reuseVerdict: {
+              canReuse: false,
+              reason: "ineligible_side_effect",
+              currentInputFingerprint: "reply_current",
+            },
+            executionDecision: {
+              shouldExecute: true,
+              shouldSkip: false,
+              reason: "ineligible_side_effect",
+              reusableOutputHit: false,
+            },
+          },
+        ],
+        reuseSummary: {
+          fingerprintVersion: 1,
+          eligibleNodeIds: ["filter_text"],
+          ineligibleNodeIds: ["src_text", "out_reply"],
+          eligibleNodeCount: 1,
+          ineligibleNodeCount: 2,
+          verdictCounts: {
+            eligible: 1,
+            ineligible_dirty: 0,
+            ineligible_side_effect: 1,
+            ineligible_capability: 1,
+            ineligible_missing_baseline: 0,
+          },
+        },
+        executionDecisionSummary: {
+          featureEnabled: true,
+          skippedNodeIds: [],
+          executedNodeIds: ["src_text", "filter_text", "out_reply"],
+          skippedNodeCount: 0,
+          executedNodeCount: 3,
+          skipReuseOutputNodeIds: [],
+          decisionCounts: {
+            feature_disabled: 0,
+            ineligible_reuse_verdict: 0,
+            ineligible_capability: 0,
+            ineligible_side_effect: 1,
+            ineligible_source: 1,
+            ineligible_terminal: 0,
+            ineligible_fallback: 0,
+            missing_baseline: 0,
+            missing_reusable_outputs: 0,
+            execute: 1,
+            skip_reuse_outputs: 0,
+          },
+        },
+      },
+      compileRunLinkArtifact: {
+        graphId: eligibleButExecutedGraph.id,
+        runId: "run_eligible_executed",
+        compileFingerprint: eligibleButExecutedPlan.compileFingerprint,
+        fingerprintVersion: 1,
+        nodeCount: 3,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: ["out_reply"],
+        nodes: eligibleButExecutedPlan.nodes.map((node) => ({
+          nodeId: node.nodeId,
+          moduleId: node.moduleId,
+          nodeFingerprint: node.nodeFingerprint,
+          compileOrder: node.order,
+          dependsOn: [...node.dependsOn],
+          isTerminal: node.isTerminal,
+          isSideEffect: node.isSideEffectNode,
+          runDisposition: "executed",
+          includedInFinalOutputs: false,
+          producedHostEffect: node.nodeId === "out_reply",
+          inputResolutionObserved: true,
+        })),
+      },
+    });
+  assert(
+    eligibleButExecutedReuseExplain?.artifact.nodes.find(
+      (node) => node.nodeId === "filter_text",
+    )?.finalReuseDisposition === "eligible_but_executed" &&
+      eligibleButExecutedReuseExplain.artifact.nodes.find(
+        (node) => node.nodeId === "src_text",
+      )?.finalReuseDisposition === "ineligible_executed",
+    `Expected reuse explain artifact to distinguish eligible_but_executed from ineligible_executed. Actual: ${JSON.stringify(eligibleButExecutedReuseExplain?.artifact.nodes)}`,
+  );
+
+  const featureDisabledReuseExplain = createGraphReuseExplainArtifactEnvelope({
+    plan: eligibleButExecutedPlan,
+    runArtifact: {
+      runId: "run_feature_disabled",
+      graphId: eligibleButExecutedGraph.id,
+      compileFingerprint: eligibleButExecutedPlan.compileFingerprint,
+      status: "completed",
+      phase: "terminal",
+      phaseLabel: "完成",
+      eventCount: 0,
+      updatedAt: Date.now(),
+    },
+    result: {
+      nodeTraces: [
+        {
+          nodeId: "filter_text",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint:
+            eligibleButExecutedTrace?.nodeFingerprint ?? "filter_fp",
+          dirtyReason: "clean",
+          reuseVerdict: {
+            canReuse: true,
+            reason: "eligible",
+            baselineInputFingerprint: "filter_baseline",
+            currentInputFingerprint: "filter_current",
+          },
+          executionDecision: {
+            shouldExecute: true,
+            shouldSkip: false,
+            reason: "feature_disabled",
+            reusableOutputHit: false,
+          },
+        },
+      ],
+      reuseSummary: {
+        fingerprintVersion: 1,
+        eligibleNodeIds: ["filter_text"],
+        ineligibleNodeIds: ["src_text", "out_reply"],
+        eligibleNodeCount: 1,
+        ineligibleNodeCount: 2,
+        verdictCounts: {
+          eligible: 1,
+          ineligible_dirty: 0,
+          ineligible_side_effect: 1,
+          ineligible_capability: 1,
+          ineligible_missing_baseline: 0,
+        },
+      },
+      executionDecisionSummary: {
+        featureEnabled: false,
+        skippedNodeIds: [],
+        executedNodeIds: ["filter_text"],
+        skippedNodeCount: 0,
+        executedNodeCount: 1,
+        skipReuseOutputNodeIds: [],
+        decisionCounts: {
+          feature_disabled: 1,
+          ineligible_reuse_verdict: 0,
+          ineligible_capability: 0,
+          ineligible_side_effect: 0,
+          ineligible_source: 0,
+          ineligible_terminal: 0,
+          ineligible_fallback: 0,
+          missing_baseline: 0,
+          missing_reusable_outputs: 0,
+          execute: 0,
+          skip_reuse_outputs: 0,
+        },
+      },
+    },
+  });
+  assert(
+    featureDisabledReuseExplain?.artifact.nodes.find(
+      (node) => node.nodeId === "filter_text",
+    )?.finalReuseDisposition === "not_applicable",
+    `Expected feature-disabled reuse decisions to conservatively project as not_applicable. Actual: ${JSON.stringify(featureDisabledReuseExplain?.artifact.nodes)}`,
+  );
+
+  assert(
+    reuseExplainEnvelope?.artifact.nodes.find(
+      (node) => node.nodeId === "filter_text",
+    )?.finalReuseDisposition === "skipped_reuse" &&
+      compileRunLinkEnvelope?.artifact.nodes.find(
+        (node) => node.nodeId === "filter_text",
+      )?.runDisposition === "skipped_reuse",
+    `Expected reuse explain skipped_reuse projection to stay aligned with compile-run linkage. Actual: ${JSON.stringify({ reuse: reuseExplainEnvelope?.artifact.nodes, linkage: compileRunLinkEnvelope?.artifact.nodes })}`,
+  );
+
   const schedulingExplainEnvelope =
     createGraphSchedulingExplainArtifactEnvelope({
       plan: handlerFailureResult.compilePlan,
@@ -4236,6 +4625,20 @@ async function runValidationSpec(): Promise<void> {
         "out_reply",
     `Expected workflow bridge diagnostics to expose stable compile-run link artifact surface aligned with compile fingerprint and run facts. Actual: ${JSON.stringify(bridgeCompileRunLinkArtifact)}`,
   );
+  const bridgeReuseExplainArtifact = readGraphReuseExplainArtifactEnvelope(
+    bridgeDiagnosticsWithCompileArtifact,
+  );
+  assert(
+    bridgeReuseExplainArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeReuseExplainArtifact.artifact.runId === skipPilotRepeat.requestId &&
+      bridgeReuseExplainArtifact.artifact.nodes.some(
+        (node) => node.finalReuseDisposition === "skipped_reuse",
+      ) &&
+      bridgeReuseExplainArtifact.artifact.summary.finalDispositionCounts
+        .skipped_reuse === 1,
+    `Expected workflow bridge diagnostics to expose stable reuse explain artifact surface aligned with compile fingerprint and reuse facts. Actual: ${JSON.stringify(bridgeReuseExplainArtifact)}`,
+  );
   const store = useEwStore();
   setLastRun(
     RunSummarySchema.parse({
@@ -4260,6 +4663,19 @@ async function runValidationSpec(): Promise<void> {
           node.runDisposition === "skipped_reuse",
       ),
     `Expected store read surface to consume graph compile-run link artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeCompileRunLinkArtifact)}`,
+  );
+  const activeReuseExplainArtifact = store.activeGraphReuseExplainArtifact;
+  assert(
+    activeReuseExplainArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeReuseExplainArtifact.runId === skipPilotRepeat.requestId &&
+      activeReuseExplainArtifact.skippedReuseNodeIds.join(",") ===
+        "filter_text" &&
+      activeReuseExplainArtifact.nodes.find(
+        (node: { nodeId: string; finalReuseDisposition: string }) =>
+          node.nodeId === "filter_text",
+      )?.finalReuseDisposition === "skipped_reuse",
+    `Expected store read surface to consume graph reuse explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeReuseExplainArtifact)}`,
   );
   assertBridgeDiagnostics(
     buildWorkflowBridgeDiagnostics({ selection: legacyFallbackRoute }),

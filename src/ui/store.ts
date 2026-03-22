@@ -26,6 +26,7 @@ import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artif
 import { readGraphCompileRunLinkArtifactEnvelope } from "../runtime/graph-compile-run-link-artifact-codec";
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
 import { readGraphNodeInputResolutionArtifactEnvelope } from "../runtime/graph-input-resolution-artifact-codec";
+import { readGraphReuseExplainArtifactEnvelope } from "../runtime/graph-reuse-explain-artifact-codec";
 import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
 import { readGraphSchedulingExplainArtifactEnvelope } from "../runtime/graph-scheduling-explain-artifact-codec";
 import { runWorkflow } from "../runtime/pipeline";
@@ -71,6 +72,7 @@ import type {
   GraphNodeExecutionDecisionReason,
   GraphNodeInputResolutionArtifactV1,
   GraphNodeReuseReason,
+  GraphReuseExplainArtifactV1,
   GraphRunArtifact,
   GraphRunBlockingContract,
   GraphRunBlockingInputRequirementType,
@@ -1221,6 +1223,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphReuseExplainArtifact(
+    diagnostics: unknown,
+  ): GraphReuseExplainArtifactV1 | null {
+    return readGraphReuseExplainArtifactEnvelope(diagnostics)?.artifact ?? null;
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1799,6 +1807,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphCompileRunLinkArtifact = computed(() =>
     toActiveGraphCompileRunLinkArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphReuseExplainArtifact = computed(() =>
+    toActiveGraphReuseExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeGraphSchedulingExplainArtifact = computed(() =>
@@ -2738,6 +2750,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphCompileArtifact,
     activeGraphNodeInputResolutionArtifact,
     activeGraphCompileRunLinkArtifact,
+    activeGraphReuseExplainArtifact,
     activeGraphSchedulingExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
