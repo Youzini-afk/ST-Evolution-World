@@ -449,6 +449,53 @@
               </div>
             </div>
           </div>
+          <div
+            v-if="selectedNodeDiagnostics"
+            class="ew-workbench__module-explain ew-workbench__node-diagnostics"
+          >
+            <div class="ew-workbench__module-explain-heading">
+              <span>节点诊断 · {{ selectedNodeDiagnostics.title }}</span>
+              <span>{{ selectedNodeDiagnostics.disclaimer }}</span>
+            </div>
+            <div class="ew-workbench__module-explain-tags">
+              <span class="ew-workbench__module-explain-tag">
+                dirty {{ selectedNodeDiagnostics.dirtyReasonLabel }}
+              </span>
+              <span class="ew-workbench__module-explain-tag">
+                reuse {{ selectedNodeDiagnostics.reuseVerdictLabel }}
+              </span>
+              <span class="ew-workbench__module-explain-tag">
+                decision {{ selectedNodeDiagnostics.executionDecisionLabel }}
+              </span>
+            </div>
+            <div class="ew-workbench__module-explain-sections">
+              <div class="ew-workbench__module-explain-section">
+                <div class="ew-workbench__module-explain-title">输入源概要</div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.inputSourcesSummary }}
+                </div>
+              </div>
+              <div class="ew-workbench__module-explain-section">
+                <div class="ew-workbench__module-explain-title">
+                  Cache Key Facts 概要
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.cacheKeyFactsSummary }}
+                </div>
+              </div>
+              <div class="ew-workbench__module-explain-section">
+                <div class="ew-workbench__module-explain-title">
+                  只读命中事实
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.reusableOutputsFactLabel }}
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.skipReuseOutputsFactLabel }}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Property panel -->
@@ -469,6 +516,7 @@ import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
 import { MODULE_REGISTRY, getModuleExplainContract } from "./module-registry";
 import type {
   GraphActiveRunSummaryViewModel,
+  GraphNodeDiagnosticsViewModel,
   GraphRunDiagnosticsSummaryViewModel,
   ModuleExplainContract,
   ModulePortDef,
@@ -585,6 +633,21 @@ const selectedModuleLabel = computed(() => {
   );
   return selectedNode ? getModuleLabel(selectedNode.moduleId) : "";
 });
+const selectedNodeDiagnostics = computed<GraphNodeDiagnosticsViewModel | null>(
+  () => {
+    if (!selectedNodeId.value) {
+      return null;
+    }
+    const activeNodeDiagnostics = props.activeRunSummary?.nodeDiagnostics;
+    if (
+      activeNodeDiagnostics &&
+      activeNodeDiagnostics.nodeId === selectedNodeId.value
+    ) {
+      return activeNodeDiagnostics;
+    }
+    return null;
+  },
+);
 let draggingNodeId: string | null = null;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
@@ -888,6 +951,11 @@ function getPortPos(nodeId: string, portId: string) {
 .ew-workbench__module-explain-sections {
   display: grid;
   gap: 10px;
+}
+
+.ew-workbench__node-diagnostics {
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: none;
 }
 
 .ew-workbench__module-explain-section {

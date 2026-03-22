@@ -440,6 +440,35 @@ export interface GraphNodeCacheKeyFacts {
   fingerprintVersion: 1;
 }
 
+export interface GraphNodeDiagnosticsInputSourceSummary {
+  sourceNodeId: string;
+  sourcePort: string;
+  targetPort: string;
+}
+
+export interface GraphNodeDiagnosticsCacheKeySummary {
+  compileFingerprint?: string;
+  nodeFingerprint?: string;
+  inputFingerprint?: string;
+  fingerprintVersion?: 1;
+}
+
+export interface GraphNodeDiagnosticsView {
+  nodeId: string;
+  moduleId: string;
+  title?: string;
+  dirtyReason?: GraphNodeDirtyReason;
+  reuseVerdict?: Pick<GraphNodeReuseVerdict, "canReuse" | "reason">;
+  executionDecision?: Pick<
+    GraphNodeExecutionDecision,
+    "shouldExecute" | "shouldSkip" | "reason" | "reusableOutputHit"
+  >;
+  inputSources: GraphNodeDiagnosticsInputSourceSummary[];
+  cacheKey?: GraphNodeDiagnosticsCacheKeySummary;
+  reusableOutputsHit: boolean;
+  skipReuseOutputsHit: boolean;
+}
+
 export type GraphNodeReuseReason =
   | "eligible"
   | "ineligible_dirty"
@@ -950,6 +979,7 @@ export interface GraphRunDiagnosticsOverview {
   dirty: GraphRunDiagnosticsDirtyOverview;
   reuse?: GraphRunDiagnosticsReuseOverview;
   executionDecision?: GraphRunDiagnosticsExecutionDecisionOverview;
+  nodeDiagnostics?: GraphNodeDiagnosticsView[];
 }
 
 export interface GraphRunDiagnosticsReasonBadge<
@@ -975,6 +1005,32 @@ export interface GraphRunDiagnosticsSummaryViewModel {
   skipReuseOutputHitCount: number;
   primaryReuseReasons: GraphRunDiagnosticsReasonBadge<GraphNodeReuseReason>[];
   primaryExecutionDecisionReasons: GraphRunDiagnosticsReasonBadge<GraphNodeExecutionDecisionReason>[];
+}
+
+export interface GraphNodeDiagnosticsViewModelItem {
+  nodeId: string;
+  moduleId: string;
+  title: string;
+  dirtyReasonLabel: string;
+  reuseVerdictLabel: string;
+  executionDecisionLabel: string;
+  inputSourcesSummary: string;
+  cacheKeyFactsSummary: string;
+  reusableOutputsFactLabel: string;
+  skipReuseOutputsFactLabel: string;
+}
+
+export interface GraphNodeDiagnosticsViewModel {
+  nodeId: string;
+  title: string;
+  disclaimer: string;
+  dirtyReasonLabel: string;
+  reuseVerdictLabel: string;
+  executionDecisionLabel: string;
+  inputSourcesSummary: string;
+  cacheKeyFactsSummary: string;
+  reusableOutputsFactLabel: string;
+  skipReuseOutputsFactLabel: string;
 }
 
 export interface GraphCheckpointCandidateViewModel {
@@ -1037,6 +1093,7 @@ export interface GraphActiveRunSummaryViewModel {
   waitingUser: GraphRunWaitingUserSummary | null;
   waitingUserLabel: string;
   diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null;
+  nodeDiagnostics: GraphNodeDiagnosticsViewModel | null;
 }
 
 /** Result of executing the entire graph */
@@ -1058,6 +1115,7 @@ export interface GraphExecutionResult {
   dirtySetSummary?: GraphDirtySetSummary;
   reuseSummary?: GraphReuseSummary;
   executionDecisionSummary?: GraphExecutionDecisionSummary;
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
   hostWrites?: HostWriteDescriptor[];
   hostCommitContracts?: HostCommitContract[];
 }

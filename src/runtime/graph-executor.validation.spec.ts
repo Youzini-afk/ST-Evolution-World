@@ -7,6 +7,7 @@ import type {
   ExecutionContext,
   GraphCompilePlan,
   GraphExecutionStage,
+  GraphNodeDiagnosticsView,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
@@ -57,6 +58,7 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
     disclaimer?: string;
     capabilityBoundary?: string;
   };
+  diagnosticsOverview?: { nodeDiagnostics?: GraphNodeDiagnosticsView[] };
 } | null {
   const artifact = diagnostics?.bridge?.graph_run_overview;
   if (!artifact || typeof artifact !== "object") {
@@ -76,6 +78,11 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
   const constraintSummary =
     artifact.constraintSummary && typeof artifact.constraintSummary === "object"
       ? artifact.constraintSummary
+      : null;
+  const diagnosticsOverview =
+    artifact.diagnosticsOverview &&
+    typeof artifact.diagnosticsOverview === "object"
+      ? artifact.diagnosticsOverview
       : null;
   return {
     recoveryEligibility:
@@ -212,6 +219,16 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
           disclaimer: "",
           capabilityBoundary: "",
         },
+    diagnosticsOverview: diagnosticsOverview
+      ? {
+          nodeDiagnostics: Array.isArray(
+            (diagnosticsOverview as Record<string, unknown>).nodeDiagnostics,
+          )
+            ? ((diagnosticsOverview as Record<string, unknown>)
+                .nodeDiagnostics as GraphNodeDiagnosticsView[])
+            : [],
+        }
+      : { nodeDiagnostics: [] },
   };
 }
 
@@ -3079,6 +3096,8 @@ async function runValidationSpec(): Promise<void> {
     },
   });
   const reuseOverview = reuseDiagnostics.bridge?.graph_run_diagnostics;
+  const reuseNodeDiagnostics = reuseDiagnostics.bridge
+    ?.graph_node_diagnostics as GraphNodeDiagnosticsView[] | undefined;
   assert(
     reuseOverview?.executionDecision?.featureEnabled === true &&
       Array.isArray(reuseOverview?.executionDecision?.skipReuseOutputNodeIds) &&
@@ -3086,6 +3105,28 @@ async function runValidationSpec(): Promise<void> {
         "filter_text" &&
       !JSON.stringify(reuseOverview).includes("cacheKeyFacts"),
     `Expected graph bridge diagnostics to expose summary-only dirty/reuse/decision facts. Actual: ${JSON.stringify(reuseOverview)}`,
+  );
+  assert(
+    Array.isArray(reuseOverview?.nodeDiagnostics) &&
+      Array.isArray(reuseNodeDiagnostics) &&
+      reuseNodeDiagnostics.length === 2 &&
+      reuseNodeDiagnostics.every(
+        (item) => !("scopeKey" in (item as unknown as Record<string, unknown>)),
+      ) &&
+      reuseNodeDiagnostics.some(
+        (item) =>
+          item.nodeId === "filter_text" &&
+          item.executionDecision?.reason === "skip_reuse_outputs" &&
+          item.skipReuseOutputsHit === true &&
+          item.reusableOutputsHit === true,
+      ) &&
+      reuseNodeDiagnostics.some(
+        (item) =>
+          item.nodeId === "src_text" &&
+          item.executionDecision?.reason === "ineligible_source" &&
+          item.reuseVerdict?.reason === "ineligible_capability",
+      ),
+    `Expected bridge roundtrip to preserve stable node diagnostics surface without leaking cache internals. Actual: ${JSON.stringify(reuseNodeDiagnostics)}`,
   );
 
   const validationFailureEventTypes = (
@@ -3140,8 +3181,10 @@ async function runValidationSpec(): Promise<void> {
       degradedArtifact?.continuationContract?.recoveryEvidence?.trust ===
         "unknown" &&
       Array.isArray(degradedArtifact?.continuationContract?.manualInputSlots) &&
-      degradedArtifact?.continuationContract?.manualInputSlots.length === 0,
-    `Expected read-side fallback to degrade missing recovery eligibility and continuation fields to unknown. Actual: ${JSON.stringify(degradedArtifact)}`,
+      degradedArtifact?.continuationContract?.manualInputSlots.length === 0 &&
+      Array.isArray(degradedArtifact?.diagnosticsOverview?.nodeDiagnostics) &&
+      degradedArtifact?.diagnosticsOverview?.nodeDiagnostics.length === 0,
+    `Expected read-side fallback to degrade missing recovery eligibility, continuation fields, and node diagnostics to conservative empty/unknown values. Actual: ${JSON.stringify(degradedArtifact)}`,
   );
 
   const executeFailureOverview =

@@ -28,6 +28,7 @@ import type {
   GraphExecutionResult,
   GraphExecutionStage,
   GraphNodeCacheKeyFacts,
+  GraphNodeDiagnosticsView,
   GraphNodeDirtyReason,
   GraphNodeExecutionDecision,
   GraphNodeExecutionDecisionReason,
@@ -1504,6 +1505,54 @@ function createDirtySetSummary(
   };
 }
 
+function createNodeDiagnosticsView(trace: {
+  nodeId: string;
+  moduleId: string;
+  inputSources?: GraphNodeInputSource[];
+  dirtyReason?: GraphNodeDirtyReason;
+  cacheKeyFacts?: GraphNodeCacheKeyFacts;
+  reuseVerdict?: GraphNodeReuseVerdict;
+  executionDecision?: GraphNodeExecutionDecision;
+}): GraphNodeDiagnosticsView {
+  return {
+    nodeId: trace.nodeId,
+    moduleId: trace.moduleId,
+    title: getModuleBlueprint(trace.moduleId)?.label,
+    dirtyReason: trace.dirtyReason,
+    reuseVerdict: trace.reuseVerdict
+      ? {
+          canReuse: trace.reuseVerdict.canReuse,
+          reason: trace.reuseVerdict.reason,
+        }
+      : undefined,
+    executionDecision: trace.executionDecision
+      ? {
+          shouldExecute: trace.executionDecision.shouldExecute,
+          shouldSkip: trace.executionDecision.shouldSkip,
+          reason: trace.executionDecision.reason,
+          reusableOutputHit: trace.executionDecision.reusableOutputHit,
+        }
+      : undefined,
+    inputSources: (trace.inputSources ?? []).map((source) => ({
+      sourceNodeId: source.sourceNodeId,
+      sourcePort: source.sourcePort,
+      targetPort: source.targetPort,
+    })),
+    cacheKey: trace.cacheKeyFacts
+      ? {
+          compileFingerprint: trace.cacheKeyFacts.compileFingerprint,
+          nodeFingerprint: trace.cacheKeyFacts.nodeFingerprint,
+          inputFingerprint: trace.cacheKeyFacts.inputFingerprint,
+          fingerprintVersion: trace.cacheKeyFacts.fingerprintVersion,
+        }
+      : undefined,
+    reusableOutputsHit: trace.executionDecision?.reusableOutputHit === true,
+    skipReuseOutputsHit:
+      trace.executionDecision?.reason === "skip_reuse_outputs" &&
+      trace.executionDecision.shouldSkip === true,
+  };
+}
+
 export function buildGraphRunDiagnosticsOverview(
   result: GraphExecutionResult,
 ): GraphRunDiagnosticsOverview {
@@ -1524,6 +1573,18 @@ export function buildGraphRunDiagnosticsOverview(
       dirtyReasonCounts[entry.dirtyReason] += 1;
     }
   }
+
+  const nodeDiagnosticsSource =
+    result.trace?.nodeTraces?.filter((trace) => trace.stage === "execute") ??
+    result.moduleResults.map((moduleResult) => ({
+      nodeId: moduleResult.nodeId,
+      moduleId: moduleResult.moduleId,
+      inputSources: moduleResult.inputSources,
+      dirtyReason: moduleResult.dirtyReason,
+      cacheKeyFacts: moduleResult.cacheKeyFacts,
+      reuseVerdict: moduleResult.reuseVerdict,
+      executionDecision: moduleResult.executionDecision,
+    }));
 
   return {
     run: { ...result.runState },
@@ -1587,6 +1648,7 @@ export function buildGraphRunDiagnosticsOverview(
           },
         }
       : {}),
+    nodeDiagnostics: nodeDiagnosticsSource.map(createNodeDiagnosticsView),
   };
 }
 
@@ -2873,6 +2935,7 @@ export async function executeGraph(
       dirtySetSummary: execution.dirtySetSummary,
       reuseSummary: execution.reuseSummary,
       executionDecisionSummary: execution.executionDecisionSummary,
+      diagnosticsOverview,
       elapsedMs: Date.now() - startedAt,
       compilePlan,
       nodeTraces,

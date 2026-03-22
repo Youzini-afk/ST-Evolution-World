@@ -52,6 +52,8 @@ import type {
   GraphActiveRunSummaryViewModel,
   GraphCheckpointCandidateViewModel,
   GraphExecutionStage,
+  GraphNodeDiagnosticsView,
+  GraphNodeDiagnosticsViewModel,
   GraphNodeDirtyReason,
   GraphNodeExecutionDecisionReason,
   GraphNodeReuseReason,
@@ -529,6 +531,9 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     )
       ? (bridge?.graph_run_diagnostics as Record<string, unknown>)
       : null;
+    const bridgeNodeDiagnostics = Array.isArray(bridge?.graph_node_diagnostics)
+      ? bridge.graph_node_diagnostics
+      : null;
     const overview = _.isPlainObject(graphOverview)
       ? (graphOverview as Record<string, unknown>)
       : _.isPlainObject(bridgeDiagnosticsOverview)
@@ -633,6 +638,132 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         ? runStatus
         : undefined;
     const blockingReason = toBlockingReason(run.blockingReason);
+
+    const toNodeDiagnostics = (value: unknown): GraphNodeDiagnosticsView[] => {
+      if (!Array.isArray(value)) {
+        return [];
+      }
+      return value
+        .filter((item): item is Record<string, unknown> =>
+          _.isPlainObject(item),
+        )
+        .map((item): GraphNodeDiagnosticsView => {
+          const reuseVerdict = _.isPlainObject(item.reuseVerdict)
+            ? (item.reuseVerdict as Record<string, unknown>)
+            : null;
+          const executionDecision = _.isPlainObject(item.executionDecision)
+            ? (item.executionDecision as Record<string, unknown>)
+            : null;
+          const cacheKey = _.isPlainObject(item.cacheKey)
+            ? (item.cacheKey as Record<string, unknown>)
+            : null;
+          const inputSources = Array.isArray(item.inputSources)
+            ? item.inputSources
+                .filter((source): source is Record<string, unknown> =>
+                  _.isPlainObject(source),
+                )
+                .map((source) => ({
+                  sourceNodeId:
+                    typeof source.sourceNodeId === "string"
+                      ? source.sourceNodeId.trim()
+                      : "",
+                  sourcePort:
+                    typeof source.sourcePort === "string"
+                      ? source.sourcePort.trim()
+                      : "",
+                  targetPort:
+                    typeof source.targetPort === "string"
+                      ? source.targetPort.trim()
+                      : "",
+                }))
+                .filter(
+                  (source) =>
+                    source.sourceNodeId &&
+                    source.sourcePort &&
+                    source.targetPort,
+                )
+            : [];
+          const dirtyReason: GraphNodeDiagnosticsView["dirtyReason"] =
+            item.dirtyReason === "initial_run" ||
+            item.dirtyReason === "input_changed" ||
+            item.dirtyReason === "upstream_dirty" ||
+            item.dirtyReason === "clean"
+              ? item.dirtyReason
+              : undefined;
+          const reuseReason =
+            reuseVerdict?.reason === "eligible" ||
+            reuseVerdict?.reason === "ineligible_dirty" ||
+            reuseVerdict?.reason === "ineligible_side_effect" ||
+            reuseVerdict?.reason === "ineligible_capability" ||
+            reuseVerdict?.reason === "ineligible_missing_baseline"
+              ? reuseVerdict.reason
+              : "ineligible_missing_baseline";
+          const executionReason =
+            executionDecision?.reason === "feature_disabled" ||
+            executionDecision?.reason === "ineligible_reuse_verdict" ||
+            executionDecision?.reason === "ineligible_capability" ||
+            executionDecision?.reason === "ineligible_side_effect" ||
+            executionDecision?.reason === "ineligible_source" ||
+            executionDecision?.reason === "ineligible_terminal" ||
+            executionDecision?.reason === "ineligible_fallback" ||
+            executionDecision?.reason === "missing_baseline" ||
+            executionDecision?.reason === "missing_reusable_outputs" ||
+            executionDecision?.reason === "execute" ||
+            executionDecision?.reason === "skip_reuse_outputs"
+              ? executionDecision.reason
+              : "execute";
+          return {
+            nodeId: typeof item.nodeId === "string" ? item.nodeId.trim() : "",
+            moduleId:
+              typeof item.moduleId === "string" ? item.moduleId.trim() : "",
+            title:
+              typeof item.title === "string" && item.title.trim()
+                ? item.title.trim()
+                : undefined,
+            dirtyReason,
+            reuseVerdict: reuseVerdict
+              ? {
+                  canReuse: reuseVerdict.canReuse === true,
+                  reason: reuseReason,
+                }
+              : undefined,
+            executionDecision: executionDecision
+              ? {
+                  shouldExecute: executionDecision.shouldExecute === true,
+                  shouldSkip: executionDecision.shouldSkip === true,
+                  reason: executionReason,
+                  reusableOutputHit:
+                    executionDecision.reusableOutputHit === true,
+                }
+              : undefined,
+            inputSources,
+            cacheKey: cacheKey
+              ? {
+                  compileFingerprint:
+                    typeof cacheKey.compileFingerprint === "string" &&
+                    cacheKey.compileFingerprint.trim()
+                      ? cacheKey.compileFingerprint.trim()
+                      : undefined,
+                  nodeFingerprint:
+                    typeof cacheKey.nodeFingerprint === "string" &&
+                    cacheKey.nodeFingerprint.trim()
+                      ? cacheKey.nodeFingerprint.trim()
+                      : undefined,
+                  inputFingerprint:
+                    typeof cacheKey.inputFingerprint === "string" &&
+                    cacheKey.inputFingerprint.trim()
+                      ? cacheKey.inputFingerprint.trim()
+                      : undefined,
+                  fingerprintVersion:
+                    Number(cacheKey.fingerprintVersion) === 1 ? 1 : undefined,
+                }
+              : undefined,
+            reusableOutputsHit: item.reusableOutputsHit === true,
+            skipReuseOutputsHit: item.skipReuseOutputsHit === true,
+          };
+        })
+        .filter((item) => item.nodeId && item.moduleId);
+    };
 
     return {
       run: {
@@ -821,6 +952,9 @@ export const useEwStore = defineStore("evolution-world-store", () => {
             },
           }
         : {}),
+      nodeDiagnostics: toNodeDiagnostics(
+        overview.nodeDiagnostics ?? bridgeNodeDiagnostics,
+      ),
     };
   }
 
@@ -1279,9 +1413,104 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     };
   }
 
+  function toNodeDiagnosticsViewModel(
+    overview: GraphRunDiagnosticsOverview | null,
+    artifact: GraphRunArtifact | null,
+  ): GraphNodeDiagnosticsViewModel | null {
+    const selectedNodeId = artifact?.latestNodeId?.trim();
+    if (!selectedNodeId) {
+      return null;
+    }
+    const nodeDiagnostics = overview?.nodeDiagnostics?.find(
+      (item) => item.nodeId === selectedNodeId,
+    );
+    if (!nodeDiagnostics) {
+      return null;
+    }
+
+    const dirtyReasonLabels: Record<GraphNodeDirtyReason, string> = {
+      initial_run: "初次运行",
+      input_changed: "输入变化",
+      upstream_dirty: "上游脏",
+      clean: "干净",
+    };
+    const reuseReasonLabels: Record<GraphNodeReuseReason, string> = {
+      eligible: "可复用",
+      ineligible_dirty: "输入不干净",
+      ineligible_side_effect: "存在副作用",
+      ineligible_capability: "能力不满足",
+      ineligible_missing_baseline: "缺少基线",
+    };
+    const executionDecisionLabels: Record<
+      GraphNodeExecutionDecisionReason,
+      string
+    > = {
+      feature_disabled: "实验开关关闭",
+      ineligible_reuse_verdict: "复用判定未通过",
+      ineligible_capability: "能力不满足",
+      ineligible_side_effect: "存在副作用",
+      ineligible_source: "source 节点不参与",
+      ineligible_terminal: "terminal 节点不参与",
+      ineligible_fallback: "fallback 节点不参与",
+      missing_baseline: "缺少基线",
+      missing_reusable_outputs: "缺少可复用输出",
+      execute: "正常执行",
+      skip_reuse_outputs: "命中 skip_reuse_outputs",
+    };
+    const fingerprintShort = (value?: string): string => {
+      if (!value) {
+        return "—";
+      }
+      return value.length > 12
+        ? `${value.slice(0, 6)}…${value.slice(-4)}`
+        : value;
+    };
+
+    return {
+      nodeId: nodeDiagnostics.nodeId,
+      title:
+        nodeDiagnostics.title?.trim() ||
+        getModuleExplainContract(nodeDiagnostics.moduleId)?.help?.summary ||
+        nodeDiagnostics.moduleId,
+      disclaimer: "这是运行事实与决策解释，不是缓存、跳过或恢复能力承诺。",
+      dirtyReasonLabel: nodeDiagnostics.dirtyReason
+        ? dirtyReasonLabels[nodeDiagnostics.dirtyReason]
+        : "无 dirty 事实",
+      reuseVerdictLabel: nodeDiagnostics.reuseVerdict
+        ? `${nodeDiagnostics.reuseVerdict.canReuse ? "可复用" : "不可复用"} · ${reuseReasonLabels[nodeDiagnostics.reuseVerdict.reason]}`
+        : "无 reuse 事实",
+      executionDecisionLabel: nodeDiagnostics.executionDecision
+        ? `${nodeDiagnostics.executionDecision.shouldSkip ? "跳过" : nodeDiagnostics.executionDecision.shouldExecute ? "执行" : "观察中"} · ${executionDecisionLabels[nodeDiagnostics.executionDecision.reason]}`
+        : "无 execution decision 事实",
+      inputSourcesSummary:
+        nodeDiagnostics.inputSources.length > 0
+          ? nodeDiagnostics.inputSources
+              .map(
+                (source) =>
+                  `${source.targetPort} ← ${source.sourceNodeId}.${source.sourcePort}`,
+              )
+              .join("；")
+          : "无上游输入源事实",
+      cacheKeyFactsSummary: nodeDiagnostics.cacheKey
+        ? [
+            `compile ${fingerprintShort(nodeDiagnostics.cacheKey.compileFingerprint)}`,
+            `node ${fingerprintShort(nodeDiagnostics.cacheKey.nodeFingerprint)}`,
+            `input ${fingerprintShort(nodeDiagnostics.cacheKey.inputFingerprint)}`,
+          ].join(" · ")
+        : "无 cache key facts",
+      reusableOutputsFactLabel: nodeDiagnostics.reusableOutputsHit
+        ? "命中 reusable outputs"
+        : "未命中 reusable outputs",
+      skipReuseOutputsFactLabel: nodeDiagnostics.skipReuseOutputsHit
+        ? "命中 skip_reuse_outputs"
+        : "未命中 skip_reuse_outputs",
+    };
+  }
+
   function toActiveGraphRunSummaryViewModel(
     artifact: GraphRunArtifact | null,
     diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null,
+    nodeDiagnostics: GraphNodeDiagnosticsViewModel | null,
   ): GraphActiveRunSummaryViewModel | null {
     if (!artifact) {
       return null;
@@ -1498,6 +1727,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       controlPreconditionsLabel,
       constraintSummaryLabel,
       diagnosticsSummary,
+      nodeDiagnostics,
     };
   }
 
@@ -1513,10 +1743,18 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     toActiveGraphRunArtifact(lastRun.value?.diagnostics),
   );
 
+  const activeWorkbenchNodeDiagnostics = computed(() =>
+    toNodeDiagnosticsViewModel(
+      activeWorkbenchDiagnosticsOverview.value,
+      activeGraphRunArtifact.value,
+    ),
+  );
+
   const activeGraphRunSummary = computed(() =>
     toActiveGraphRunSummaryViewModel(
       activeGraphRunArtifact.value,
       activeWorkbenchDiagnosticsSummary.value,
+      activeWorkbenchNodeDiagnostics.value,
     ),
   );
 
@@ -2384,6 +2622,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     lastIo,
     activeWorkbenchDiagnosticsOverview,
     activeWorkbenchDiagnosticsSummary,
+    activeWorkbenchNodeDiagnostics,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,
