@@ -440,6 +440,10 @@ export function migrateAllFlows(flows: EwFlowConfig[]): WorkbenchGraph[] {
 /**
  * Auto-migrate: if settings.workbench_graphs is empty but flows exist,
  * migrate them and return the graphs. Otherwise return existing graphs.
+ *
+ * NOTE: For unified codec-based normalization, callers should prefer
+ * `readGraphDocumentAsWorkbenchGraphs()` from graph-document-codec.ts.
+ * This function remains as a direct fallback to avoid circular dependencies.
  */
 export function autoMigrateIfNeeded(settings: {
   flows?: EwFlowConfig[];
@@ -452,7 +456,7 @@ export function autoMigrateIfNeeded(settings: {
   if (flows.length === 0) return [];
 
   console.info(
-    `[EW Migration] Auto-migrating ${flows.length} legacy flows to workbench graphs…`,
+    `[EW Migration] Auto-migrating ${flows.length} legacy flows to workbench graphs`,
   );
   return migrateAllFlows(flows);
 }

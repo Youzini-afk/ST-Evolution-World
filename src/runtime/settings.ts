@@ -2,6 +2,10 @@ import { klona } from "klona";
 import _ from "lodash";
 import { createDefaultApiPreset, createDefaultFlow } from "./factory";
 import { migrateAllFlows } from "./flow-migrator";
+import {
+  createGraphDocumentEnvelope,
+  readGraphDocumentAsWorkbenchGraphs,
+} from "./graph-document-codec";
 import { simpleHash } from "./helpers";
 import {
   readSharedSettings,
@@ -34,7 +38,7 @@ type WorkflowRoundCounterEntry = {
 };
 
 type ScriptStorageShape = {
-  settings?: EwSettings;
+  settings?: unknown;
   last_run?: RunSummary | null;
   last_io?: LastIoSummary | null;
   last_run_by_chat?: Record<string, RunSummary | null | undefined>;
@@ -117,8 +121,37 @@ function writeScriptStorage(
   }
 }
 
+function normalizePersistedWorkbenchGraphs(raw: unknown): unknown {
+  if (!_.isPlainObject(raw)) {
+    return raw;
+  }
+
+  const next = { ...(raw as Record<string, unknown>) };
+  if (!("workbench_graphs" in next)) {
+    return next;
+  }
+
+  next.workbench_graphs =
+    readGraphDocumentAsWorkbenchGraphs(next.workbench_graphs) ?? [];
+  return next;
+}
+
+function encodeSettingsForPersist(
+  settings: EwSettings,
+): Record<string, unknown> {
+  const next = klona(settings) as unknown as Record<string, unknown>;
+  next.workbench_graphs = createGraphDocumentEnvelope({
+    graphs: settings.workbench_graphs ?? [],
+    source: "settings_persist",
+  });
+  return next;
+}
+
 function persistLocalSettings(settings: EwSettings) {
-  writeScriptStorage((previous) => ({ ...previous, settings }));
+  writeScriptStorage((previous) => ({
+    ...previous,
+    settings: encodeSettingsForPersist(settings),
+  }));
 }
 
 function normalizeWorkflowRoundCounterEntry(
@@ -190,7 +223,9 @@ function queueSharedSettingsPersist(settings: EwSettings) {
     sharedSettingsWritePromise = sharedSettingsWritePromise
       .catch(() => undefined)
       .then(async () => {
-        await writeSharedSettings(nextSettings);
+        await writeSharedSettings(
+          encodeSettingsForPersist(nextSettings) as EwSettings,
+        );
       })
       .catch((error) => {
         console.warn(
@@ -340,9 +375,15 @@ function migratePromptItems(flow: EwFlowConfig): EwFlowConfig {
 }
 
 function normalizeSettings(raw: unknown): EwSettings {
+  const normalizedRaw = normalizePersistedWorkbenchGraphs(raw);
+
   // Migrate legacy controller_entry_name → controller_entry_prefix.
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-    const obj = raw as Record<string, unknown>;
+  if (
+    normalizedRaw &&
+    typeof normalizedRaw === "object" &&
+    !Array.isArray(normalizedRaw)
+  ) {
+    const obj = normalizedRaw as Record<string, unknown>;
     if (
       typeof obj["controller_entry_name"] === "string" &&
       !obj["controller_entry_prefix"]
@@ -361,7 +402,7 @@ function normalizeSettings(raw: unknown): EwSettings {
     }
   }
 
-  const parsed = EwSettingsSchema.safeParse(raw);
+  const parsed = EwSettingsSchema.safeParse(normalizedRaw);
   const base = parsed.success ? parsed.data : EwSettingsSchema.parse({});
   const apiPresets = normalizeApiPresets(base.api_presets ?? []);
   const usedPresetNames = new Set(apiPresets.map((preset) => preset.name));
@@ -449,17 +490,26 @@ function normalizeSettings(raw: unknown): EwSettings {
   });
 
   // Auto-migrate legacy flows → WorkbenchGraphs whenever graphs are still empty.
-  // `graph_canvas_slots` is UI canvas state and may legitimately be populated even
-  // when legacy-flow users still rely on runtime `workbench_graphs` hydration.
-  // Gating on slots here can silently skip migration and break graph runtime
-  // compatibility after settings hydration/normalization.
+  // Uses the graph document codec's unified read path for consistent normalization,
+  // with a direct migrateAllFlows fallback if codec absorption fails.
   if (normalizedFlows.length > 0 && !(result as any).workbench_graphs?.length) {
     try {
-      // Direct import — flow-migrator is bundled by webpack
-      (result as any).workbench_graphs = migrateAllFlows(normalizedFlows);
-      console.info(
-        `[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs`,
-      );
+      const codecGraphs = readGraphDocumentAsWorkbenchGraphs({
+        ew_flow_export: true,
+        flows: normalizedFlows,
+      });
+      if (codecGraphs && codecGraphs.length > 0) {
+        (result as any).workbench_graphs = codecGraphs;
+        console.info(
+          `[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs via codec`,
+        );
+      } else {
+        // Fallback to direct migration
+        (result as any).workbench_graphs = migrateAllFlows(normalizedFlows);
+        console.info(
+          `[Evolution World] Auto-migrated ${normalizedFlows.length} legacy flows to workbench graphs (direct)`,
+        );
+      }
     } catch (e) {
       console.debug("[Evolution World] Auto-migration skipped:", e);
     }
@@ -670,7 +720,9 @@ export async function hydrateSharedSettings(): Promise<EwSettings> {
       }
 
       cachedSettings = localNormalized;
-      await writeSharedSettings(localNormalized);
+      await writeSharedSettings(
+        encodeSettingsForPersist(localNormalized) as EwSettings,
+      );
       persistLocalSettings(localNormalized);
       hydrationComplete = true;
       console.info(

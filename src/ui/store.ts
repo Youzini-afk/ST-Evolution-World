@@ -1,4 +1,9 @@
 import {
+  GraphDocumentEnvelope,
+  buildGraphDocumentExportPayload,
+} from "@/runtime/graph-document-codec";
+import _ from "lodash";
+import {
   clearCharFlowDraft,
   readCharFlowDraft,
   readCharFlows,
@@ -17,6 +22,8 @@ import {
   rollbackToFloor,
   type FloorSnapshot,
 } from "../runtime/floor-binding";
+import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
+import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
 import { runWorkflow } from "../runtime/pipeline";
 import {
   previewPrompt,
@@ -76,6 +83,7 @@ import type {
   GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
   ModuleExplainContract,
+  WorkbenchGraph,
 } from "./components/graph/module-types";
 import { convertStPresetToFlow, isSillyTavernPreset } from "./convertStPreset";
 import type { TabKey } from "./help-meta";
@@ -1177,16 +1185,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
-    if (!_.isPlainObject(diagnostics)) {
-      return null;
-    }
-    const diagnosticsRecord = diagnostics as Record<string, unknown>;
-    const bridge = _.isPlainObject(diagnosticsRecord.bridge)
-      ? (diagnosticsRecord.bridge as Record<string, unknown>)
-      : null;
-    const artifact = _.isPlainObject(bridge?.graph_run_overview)
-      ? (bridge?.graph_run_overview as Record<string, unknown>)
-      : null;
+    const snapshot = readGraphRunSnapshotEnvelope(diagnostics);
+    const artifact = snapshot?.snapshot.overview;
     if (!artifact) {
       return null;
     }
@@ -1374,7 +1374,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           : undefined,
       diagnosticsOverview:
         toGraphDiagnosticsOverview({
-          graph: { overview: artifact.diagnosticsOverview },
+          graph: {
+            overview:
+              snapshot?.snapshot.diagnosticsOverview ??
+              artifact.diagnosticsOverview,
+          },
+          bridge: {
+            graph_node_diagnostics: snapshot?.snapshot.nodeDiagnostics,
+          },
         }) ?? undefined,
       errorSummary:
         typeof artifact.errorSummary === "string"
@@ -2058,6 +2065,16 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     return { ew_flow_export: true, version: 1, flows: safeFlows };
   }
 
+  /**
+   * Build a graph document export payload using the stable codec envelope.
+   * Strips sensitive fields from node configs.
+   */
+  function buildGraphExportPayload(
+    graphs: WorkbenchGraph[],
+  ): GraphDocumentEnvelope {
+    return buildGraphDocumentExportPayload(graphs);
+  }
+
   function sanitizeFilename(name: string) {
     return name.replace(/[<>:"/\\|?*]/g, "_").trim() || "flow";
   }
@@ -2078,6 +2095,33 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     const parsed = JSON.parse(jsonText);
 
     let validated: EwFlowConfig[];
+
+    // Try graph document envelope first (new stable format)
+    const graphEnvelope = readGraphDocumentEnvelope(parsed);
+    if (graphEnvelope && graphEnvelope.graphs.length > 0) {
+      // Graph document format detected — store graphs directly into workbench_graphs
+      // rather than converting back to flows. This preserves the graph structure.
+      const next = klona(settings.value);
+      const existingGraphIds = new Set(
+        ((next as any).workbench_graphs ?? []).map((g: any) => g.id),
+      );
+      const newGraphs = graphEnvelope.graphs.filter(
+        (g) => !existingGraphIds.has(g.id),
+      );
+      if (newGraphs.length === 0) {
+        throw new Error("导入的图文档中所有图表 ID 已存在");
+      }
+      (next as any).workbench_graphs = [
+        ...((next as any).workbench_graphs ?? []),
+        ...newGraphs,
+      ];
+      settings.value = next;
+      toastr.success(
+        `已通过图文档 codec 导入 ${newGraphs.length} 个工作流图`,
+        "Evolution World",
+      );
+      return []; // Empty array signals no legacy flow import needed
+    }
 
     if (
       parsed &&
@@ -2120,11 +2164,20 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   }
 
   function exportAllFlows() {
-    if (settings.value.flows.length === 0) {
+    exportGraphDocument();
+  }
+
+  /**
+   * Export all workbench graphs as a stable graph document envelope.
+   */
+  function exportGraphDocument() {
+    const graphs: WorkbenchGraph[] =
+      (settings.value as any).workbench_graphs ?? [];
+    if (graphs.length === 0) {
       toastr.warning("没有工作流可导出", "Evolution World");
       return;
     }
-    const payload = buildFlowExportPayload(settings.value.flows);
+    const payload = buildGraphExportPayload(graphs);
     downloadJson(payload, `ew_flows_all_${settings.value.flows.length}.json`);
     toastr.success(
       `已导出全部 ${settings.value.flows.length} 条工作流`,
@@ -2140,6 +2193,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
     try {
       const validated = parseImportedFlows(jsonText, filename);
+      // Empty array means graph document was handled inline by parseImportedFlows
+      if (validated.length === 0) {
+        return;
+      }
       const existingIds = new Set(settings.value.flows.map((f) => f.id));
       ensureUniqueFlowIds(validated, existingIds);
 
@@ -2662,6 +2719,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     importConfig,
     exportSingleFlow,
     exportAllFlows,
+    exportGraphDocument,
     importFlowsFromText,
     exportSingleCharFlow,
     exportAllCharFlows,

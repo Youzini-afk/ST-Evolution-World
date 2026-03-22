@@ -1,21 +1,22 @@
-import { EwSettings } from './types';
+import { readGraphDocumentAsWorkbenchGraphs } from "./graph-document-codec";
+import { EwSettings } from "./types";
 
-const SHARED_SETTINGS_FILE_NAME = 'ew__assistant_settings.shared.json';
+const SHARED_SETTINGS_FILE_NAME = "ew__assistant_settings.shared.json";
 
 type SharedSettingsPayload = {
-  version: 'ew-settings/v1';
+  version: "ew-settings/v1";
   updated_at: number;
   settings: EwSettings;
 };
 
 async function getHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
-  if (typeof SillyTavern !== 'undefined' && SillyTavern.getRequestHeaders) {
+  if (typeof SillyTavern !== "undefined" && SillyTavern.getRequestHeaders) {
     const stHeaders = SillyTavern.getRequestHeaders();
-    if (stHeaders && typeof stHeaders === 'object') {
+    if (stHeaders && typeof stHeaders === "object") {
       Object.assign(headers, stHeaders);
     }
   }
@@ -33,38 +34,54 @@ export async function readSharedSettings(): Promise<SharedSettingsPayload | null
     const data = await response.json();
     if (
       data &&
-      data.version === 'ew-settings/v1' &&
-      typeof data.updated_at === 'number' &&
+      data.version === "ew-settings/v1" &&
+      typeof data.updated_at === "number" &&
       _.isPlainObject(data.settings)
     ) {
-      return data as SharedSettingsPayload;
+      const payload = data as SharedSettingsPayload;
+      const normalizedSettings = {
+        ...payload.settings,
+        workbench_graphs:
+          readGraphDocumentAsWorkbenchGraphs(
+            payload.settings.workbench_graphs,
+          ) ?? [],
+      };
+      return {
+        ...payload,
+        settings: normalizedSettings,
+      };
     }
 
-    console.warn('[Evolution World] Invalid shared settings payload:', data);
+    console.warn("[Evolution World] Invalid shared settings payload:", data);
     return null;
   } catch (error) {
-    console.warn('[Evolution World] Failed to read shared settings:', error);
+    console.warn("[Evolution World] Failed to read shared settings:", error);
     return null;
   }
 }
 
 export async function writeSharedSettings(settings: EwSettings): Promise<void> {
   const payload: SharedSettingsPayload = {
-    version: 'ew-settings/v1',
+    version: "ew-settings/v1",
     updated_at: Date.now(),
     settings,
   };
   const jsonContent = JSON.stringify(payload);
   const base64Content = btoa(unescape(encodeURIComponent(jsonContent)));
 
-  const response = await fetch('/api/files/upload', {
-    method: 'POST',
+  const response = await fetch("/api/files/upload", {
+    method: "POST",
     headers: await getHeaders(),
-    body: JSON.stringify({ name: SHARED_SETTINGS_FILE_NAME, data: base64Content }),
+    body: JSON.stringify({
+      name: SHARED_SETTINGS_FILE_NAME,
+      data: base64Content,
+    }),
   });
 
   if (!response.ok) {
-    throw new Error(`[Evolution World] Failed to write shared settings: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `[Evolution World] Failed to write shared settings: ${response.status} ${response.statusText}`,
+    );
   }
 }
 

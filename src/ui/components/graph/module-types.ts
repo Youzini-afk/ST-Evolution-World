@@ -823,6 +823,75 @@ export interface GraphRunCheckpointSummary {
   createdAt: number;
 }
 
+export interface GraphRunOverviewRecordV1 {
+  runId: string;
+  graphId: string;
+  compileFingerprint?: string;
+  status: GraphRunStatus;
+  phase: GraphRunPhase;
+  phaseLabel: string;
+  blockingReason?: GraphRunBlockingReason;
+  blockingContract?: GraphRunBlockingContract;
+  continuationContract?: GraphRunContinuationContract;
+  controlPreconditionsContract?: GraphRunControlPreconditionsContract;
+  constraintSummary?: GraphRunConstraintSummaryViewModel;
+  recoveryEligibility?: GraphRunRecoveryEligibilityFact;
+  terminalOutcome?: GraphRunTerminalOutcome;
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  latestNodeId?: string;
+  latestNodeModuleId?: string;
+  latestNodeStatus?: "started" | "finished" | "failed" | "skipped";
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  errorSummary?: string;
+  checkpointCandidate?: GraphRunCheckpointSummary;
+  latestHeartbeat?: GraphRunHeartbeatSummary;
+  latestPartialOutput?: GraphRunPartialOutputSummary;
+  waitingUser?: GraphRunWaitingUserSummary;
+  eventCount: number;
+  updatedAt: number;
+}
+
+export interface GraphRunEventRecordV1 {
+  type: GraphRunEventType;
+  runId: string;
+  graphId: string;
+  status?: GraphRunStatus;
+  phase?: GraphRunPhase;
+  phaseLabel?: string;
+  blockingReason?: GraphRunBlockingReason;
+  blockingContract?: GraphRunBlockingContract;
+  continuationContract?: GraphRunContinuationContract;
+  controlPreconditionsContract?: GraphRunControlPreconditionsContract;
+  constraintSummary?: GraphRunConstraintSummaryViewModel;
+  recoveryEligibility?: GraphRunRecoveryEligibilityFact;
+  terminalOutcome?: GraphRunTerminalOutcome;
+  stage?: GraphExecutionStage;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+  checkpoint?: GraphRunCheckpointSummary;
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  heartbeat?: GraphRunHeartbeatSummary;
+  partialOutput?: GraphRunPartialOutputSummary;
+  waitingUser?: GraphRunWaitingUserSummary;
+  error?: string;
+  timestamp: number;
+}
+
+export interface GraphRunSnapshotV1 {
+  overview: GraphRunOverviewRecordV1;
+  events: GraphRunEventRecordV1[];
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  nodeDiagnostics?: GraphNodeDiagnosticsView[];
+}
+
+export interface GraphRunSnapshotEnvelope {
+  kind: "graph_run_snapshot";
+  version: "v1";
+  snapshot: GraphRunSnapshotV1;
+}
+
 export interface GraphRunArtifact {
   runId: string;
   graphId: string;

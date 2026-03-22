@@ -12,6 +12,13 @@ import type {
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
+  buildGraphDocumentExportPayload,
+  createGraphDocumentEnvelope,
+  readGraphDocumentAsWorkbenchGraphs,
+  readGraphDocumentEnvelope,
+  toWorkbenchGraphs,
+} from "./graph-document-codec";
+import {
   buildGraphRunDiagnosticsOverview,
   clearGraphExecutorReusableOutputsForTesting,
   compileGraphPlan,
@@ -20,6 +27,10 @@ import {
   resetGraphExecutorReuseStateForTesting,
   validateGraph,
 } from "./graph-executor";
+import {
+  createGraphRunSnapshotEnvelope,
+  readGraphRunSnapshotEnvelope,
+} from "./graph-run-artifact-codec";
 import {
   buildWorkflowBridgeDiagnostics,
   selectWorkflowBridgeRoute,
@@ -60,7 +71,9 @@ function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
   };
   diagnosticsOverview?: { nodeDiagnostics?: GraphNodeDiagnosticsView[] };
 } | null {
-  const artifact = diagnostics?.bridge?.graph_run_overview;
+  const artifact =
+    readGraphRunSnapshotEnvelope(diagnostics)?.snapshot.overview ??
+    diagnostics?.bridge?.graph_run_overview;
   if (!artifact || typeof artifact !== "object") {
     return null;
   }
@@ -3302,6 +3315,144 @@ async function runValidationSpec(): Promise<void> {
     `Expected failedStage and node-level error trace to be consistent. failedStage=${failSkipResult.failedStage}, trace.failedStage=${failSkipResult.trace?.failedStage}, nodeStatus=${failedNodeTrace?.status}`,
   );
 
+  const snapshotEnvelope = createGraphRunSnapshotEnvelope({
+    overview: handlerFailureResult.runArtifact,
+    events: handlerFailureResult.runEvents,
+    diagnosticsOverview: handlerFailureResult.diagnosticsOverview,
+  });
+  assert(
+    snapshotEnvelope?.kind === "graph_run_snapshot" &&
+      snapshotEnvelope.version === "v1" &&
+      snapshotEnvelope.snapshot.overview.runId ===
+        handlerFailureResult.requestId &&
+      snapshotEnvelope.snapshot.overview.graphId ===
+        handlerFailureResult.runArtifact?.graphId &&
+      snapshotEnvelope.snapshot.events.length ===
+        (handlerFailureResult.runEvents?.length ?? 0) &&
+      snapshotEnvelope.snapshot.diagnosticsOverview?.nodeDiagnostics?.length ===
+        (handlerFailureResult.diagnosticsOverview?.nodeDiagnostics?.length ??
+          0),
+    `Expected runtime graph run artifact to project into stable snapshot envelope. Actual: ${JSON.stringify(snapshotEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(snapshotEnvelope).includes("scopeKey") &&
+      !JSON.stringify(snapshotEnvelope).includes('"trace"') &&
+      !JSON.stringify(snapshotEnvelope).includes('"nodeTraces"'),
+    `Expected graph run snapshot envelope to omit runtime-only trace and scope internals. Actual: ${JSON.stringify(snapshotEnvelope)}`,
+  );
+
+  const roundtripEnvelope = readGraphRunSnapshotEnvelope({
+    bridge: {
+      graph_run_snapshot: {
+        kind: "graph_run_snapshot",
+        version: "v1",
+        snapshot: snapshotEnvelope?.snapshot,
+      },
+    },
+  });
+  assert(
+    roundtripEnvelope?.snapshot.overview.runId ===
+      snapshotEnvelope?.snapshot.overview.runId &&
+      roundtripEnvelope?.snapshot.events.length ===
+        snapshotEnvelope?.snapshot.events.length,
+    `Expected graph run snapshot envelope to roundtrip through stable read model. Actual: ${JSON.stringify(roundtripEnvelope)}`,
+  );
+
+  const legacyEnvelope = readGraphRunSnapshotEnvelope({
+    bridge: {
+      graph_run_overview: {
+        runId: "legacy_run",
+        graphId: "legacy_graph",
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "阻塞中",
+        blockingContract: {
+          kind: "waiting_user",
+          reason: {
+            category: "waiting_user",
+            code: "waiting_user",
+            label: "等待用户输入",
+          },
+          requiresHumanInput: true,
+          inputRequirement: {
+            required: true,
+          },
+          recoveryPrerequisites: [],
+        },
+        eventCount: 1,
+        updatedAt: 7,
+      },
+      graph_run_events: [
+        {
+          type: "waiting_user",
+          runId: "legacy_run",
+          graphId: "legacy_graph",
+          phase: "blocked",
+          phaseLabel: "阻塞中",
+          timestamp: 8,
+          artifact: {
+            trace: "should_be_ignored",
+          },
+        },
+      ],
+      graph_node_diagnostics: [
+        {
+          nodeId: "node_waiting",
+          moduleId: "src_user_input",
+          title: "等待用户输入",
+        },
+      ],
+    },
+  });
+  assert(
+    legacyEnvelope?.snapshot.overview.runId === "legacy_run" &&
+      legacyEnvelope.snapshot.events.length === 1 &&
+      legacyEnvelope.snapshot.nodeDiagnostics?.[0]?.nodeId === "node_waiting" &&
+      !JSON.stringify(legacyEnvelope).includes("should_be_ignored"),
+    `Expected legacy bridge graph run fields to upgrade into stable snapshot envelope without leaking nested runtime artifact payloads. Actual: ${JSON.stringify(legacyEnvelope)}`,
+  );
+
+  const degradedEnvelope = readGraphRunSnapshotEnvelope({
+    bridge: {
+      graph_run_snapshot: {
+        kind: "graph_run_snapshot",
+        version: "v1",
+        snapshot: {
+          overview: {
+            runId: "degraded_run",
+            graphId: "degraded_graph",
+            status: "waiting_user",
+            phaseLabel: "等待用户",
+            eventCount: -3,
+            updatedAt: -9,
+          },
+          events: [
+            {
+              type: "heartbeat",
+              runId: "degraded_run",
+              graphId: "degraded_graph",
+              timestamp: -1,
+            },
+            {
+              type: "unknown_event_type",
+              runId: "degraded_run",
+              graphId: "degraded_graph",
+              timestamp: 2,
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedEnvelope?.snapshot.overview.phase === "blocked" &&
+      degradedEnvelope.snapshot.overview.eventCount === 0 &&
+      degradedEnvelope.snapshot.overview.updatedAt === 0 &&
+      degradedEnvelope.snapshot.events.length === 1 &&
+      degradedEnvelope.snapshot.events[0]?.timestamp === 0,
+    `Expected malformed or sparse snapshot envelope fields to conservatively degrade to stable defaults. Actual: ${JSON.stringify(degradedEnvelope)}`,
+  );
+
   const migratedGraph = migrateFlowToGraph(makeLegacyFlowFixture());
   assert(
     migratedGraph.id === "migrated_legacy_flow_1",
@@ -4568,6 +4719,279 @@ async function runValidationSpec(): Promise<void> {
   assert(
     hasRegisteredHandler("src_user_input"),
     `Expected src_user_input to be re-registered after execution`,
+  );
+  // ═══════════════════════════════════════════════════════════════════════════
+  // §G: Graph Document Codec — stable envelope contract tests
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // G.1: Roundtrip — createGraphDocumentEnvelope → readGraphDocumentEnvelope
+  const baseGraph = makeBaseGraph();
+  const docEnvelope = createGraphDocumentEnvelope({
+    graphs: [baseGraph],
+    source: "test",
+  });
+  assert(
+    docEnvelope.kind === "graph_document" &&
+      docEnvelope.version === "v1" &&
+      docEnvelope.graphs.length === 1 &&
+      docEnvelope.graphs[0].id === "graph_test" &&
+      docEnvelope.metadata?.source === "test",
+    `G.1: Expected graph document envelope to roundtrip through create. Actual: ${JSON.stringify(docEnvelope)}`,
+  );
+
+  const roundtripDocEnvelope = readGraphDocumentEnvelope(docEnvelope);
+  assert(
+    roundtripDocEnvelope?.kind === "graph_document" &&
+      roundtripDocEnvelope.version === "v1" &&
+      roundtripDocEnvelope.graphs.length === 1 &&
+      roundtripDocEnvelope.graphs[0].id === "graph_test" &&
+      roundtripDocEnvelope.graphs[0].nodes.length === baseGraph.nodes.length &&
+      roundtripDocEnvelope.graphs[0].edges.length === baseGraph.edges.length,
+    `G.1: Expected graph document envelope to roundtrip through read. Actual: ${JSON.stringify(roundtripDocEnvelope)}`,
+  );
+
+  // G.2: Roundtrip back to WorkbenchGraph[]
+  const roundtripGraphs = toWorkbenchGraphs(roundtripDocEnvelope!);
+  assert(
+    roundtripGraphs.length === 1 &&
+      roundtripGraphs[0].id === "graph_test" &&
+      roundtripGraphs[0].nodes.length === baseGraph.nodes.length &&
+      roundtripGraphs[0].edges.length === baseGraph.edges.length &&
+      roundtripGraphs[0].viewport.zoom === baseGraph.viewport.zoom,
+    `G.2: Expected workbench graph roundtrip to preserve structure. Actual: ${JSON.stringify(roundtripGraphs[0])}`,
+  );
+
+  // G.3: Legacy flow absorption via readGraphDocumentEnvelope
+  const legacyFlowPayload = {
+    ew_flow_export: true,
+    version: 1,
+    flows: [makeLegacyFlowFixture()],
+  };
+  const legacyDocEnvelope = readGraphDocumentEnvelope(legacyFlowPayload);
+  assert(
+    legacyDocEnvelope?.kind === "graph_document" &&
+      legacyDocEnvelope.version === "v1" &&
+      legacyDocEnvelope.graphs.length === 1 &&
+      legacyDocEnvelope.graphs[0].id.startsWith("migrated_") &&
+      legacyDocEnvelope.graphs[0].nodes.length > 0 &&
+      legacyDocEnvelope.metadata?.source === "legacy_flow_migration" &&
+      legacyDocEnvelope.metadata?.legacyFlowCount === 1,
+    `G.3: Expected legacy flow export to be absorbed into graph document envelope. Actual: ${JSON.stringify(legacyDocEnvelope)}`,
+  );
+
+  // G.4: readGraphDocumentAsWorkbenchGraphs unified path
+  const unifiedGraphs = readGraphDocumentAsWorkbenchGraphs(legacyFlowPayload);
+  assert(
+    unifiedGraphs !== null &&
+      unifiedGraphs.length === 1 &&
+      unifiedGraphs[0].nodes.some((node) => node.moduleId === "exe_llm_call") &&
+      unifiedGraphs[0].nodes.some((node) => node.moduleId === "out_floor_bind"),
+    `G.4: Expected unified read path to produce executable workbench graphs from legacy flows. Actual: ${JSON.stringify(unifiedGraphs?.map((g) => g.id))}`,
+  );
+
+  // G.5: Unknown module preservation
+  const unknownModuleGraphDoc: WorkbenchGraph = {
+    ...baseGraph,
+    id: "graph_unknown_module_test",
+    nodes: [
+      ...baseGraph.nodes,
+      {
+        id: "node_totally_unknown",
+        moduleId: "__future_plugin_module__",
+        position: { x: 500, y: 100 },
+        config: { custom_param: "preserved_value" },
+        collapsed: false,
+      },
+    ],
+  };
+  const unknownEnvelope = createGraphDocumentEnvelope({
+    graphs: [unknownModuleGraphDoc],
+  });
+  const unknownRoundtrip = readGraphDocumentEnvelope(unknownEnvelope);
+  const unknownNode = unknownRoundtrip?.graphs[0]?.nodes.find(
+    (n) => n.moduleId === "__future_plugin_module__",
+  );
+  assert(
+    unknownNode?.id === "node_totally_unknown" &&
+      unknownNode?.config?.custom_param === "preserved_value",
+    `G.5: Expected unknown module nodes to be preserved through codec roundtrip. Actual: ${JSON.stringify(unknownNode)}`,
+  );
+
+  // G.6: Field omission / conservative degradation
+  const sparseDocEnvelope = readGraphDocumentEnvelope({
+    kind: "graph_document",
+    version: "v1",
+    graphs: [
+      {
+        id: "sparse_graph",
+        // name, enabled, timing, priority are all missing
+        nodes: [
+          {
+            id: "n1",
+            moduleId: "src_user_input",
+            // position missing
+            // config missing
+            // collapsed missing
+          },
+        ],
+        edges: [],
+        // viewport missing
+      },
+    ],
+  });
+  assert(
+    sparseDocEnvelope?.graphs[0]?.name === "" &&
+      sparseDocEnvelope.graphs[0].enabled === true &&
+      sparseDocEnvelope.graphs[0].timing === "default" &&
+      sparseDocEnvelope.graphs[0].priority === 0 &&
+      sparseDocEnvelope.graphs[0].viewport.x === 0 &&
+      sparseDocEnvelope.graphs[0].viewport.y === 0 &&
+      sparseDocEnvelope.graphs[0].viewport.zoom === 1 &&
+      sparseDocEnvelope.graphs[0].nodes[0]?.position.x === 0 &&
+      sparseDocEnvelope.graphs[0].nodes[0]?.position.y === 0 &&
+      sparseDocEnvelope.graphs[0].nodes[0]?.collapsed === false &&
+      Object.keys(sparseDocEnvelope.graphs[0].nodes[0]?.config ?? {}).length ===
+        0,
+    `G.6: Expected sparse graph document to degrade with safe defaults. Actual: ${JSON.stringify(sparseDocEnvelope?.graphs[0])}`,
+  );
+
+  // G.7: Viewport node edge conservative degradation
+  const viewportEdgeDoc = readGraphDocumentEnvelope({
+    kind: "graph_document",
+    version: "v1",
+    graphs: [
+      {
+        id: "vp_test",
+        nodes: [
+          { id: "a", moduleId: "src_user_input", position: { x: 10, y: 20 } },
+          {
+            id: "b",
+            moduleId: "flt_custom_regex",
+            position: { x: 100, y: 200 },
+          },
+        ],
+        edges: [
+          {
+            id: "e1",
+            source: "a",
+            sourcePort: "out",
+            target: "b",
+            targetPort: "in",
+          },
+          // Invalid edge (missing fields) — should be filtered out
+          { id: "e_bad" },
+        ],
+        viewport: { x: -50, y: 100, zoom: 0.5 },
+      },
+    ],
+  });
+  assert(
+    viewportEdgeDoc?.graphs[0]?.viewport.x === -50 &&
+      viewportEdgeDoc.graphs[0].viewport.y === 100 &&
+      viewportEdgeDoc.graphs[0].viewport.zoom === 0.5 &&
+      viewportEdgeDoc.graphs[0].nodes.length === 2 &&
+      viewportEdgeDoc.graphs[0].edges.length === 1 &&
+      viewportEdgeDoc.graphs[0].edges[0]?.id === "e1",
+    `G.7: Expected viewport and edge conservative degradation. Invalid edges should be dropped. Actual: ${JSON.stringify(viewportEdgeDoc?.graphs[0])}`,
+  );
+
+  // G.8: Raw WorkbenchGraph[] array absorption
+  const rawArrayGraphs = readGraphDocumentAsWorkbenchGraphs([baseGraph]);
+  assert(
+    rawArrayGraphs !== null &&
+      rawArrayGraphs.length === 1 &&
+      rawArrayGraphs[0].id === "graph_test",
+    `G.8: Expected raw graph array to be absorbed into workbench graphs. Actual: ${JSON.stringify(rawArrayGraphs?.map((g) => g.id))}`,
+  );
+
+  // G.9: Null / invalid input returns null
+  const nullResult = readGraphDocumentEnvelope(null);
+  const undefinedResult = readGraphDocumentEnvelope(undefined);
+  const numberResult = readGraphDocumentEnvelope(42);
+  const emptyArrayResult = readGraphDocumentEnvelope([]);
+  assert(
+    nullResult === null &&
+      undefinedResult === null &&
+      numberResult === null &&
+      emptyArrayResult === null,
+    `G.9: Expected null/invalid inputs to return null. Actual: null=${nullResult}, undefined=${undefinedResult}, number=${numberResult}, emptyArray=${emptyArrayResult}`,
+  );
+
+  // G.10: Export payload strips sensitive fields
+  const sensitiveGraph: WorkbenchGraph = {
+    ...baseGraph,
+    id: "graph_sensitive",
+    nodes: [
+      {
+        id: "n_sensitive",
+        moduleId: "cfg_api_preset",
+        position: { x: 0, y: 0 },
+        config: {
+          api_key: "SECRET_KEY",
+          api_url: "https://secret.api/v1",
+          headers_json: '{"Authorization": "Bearer secret"}',
+          model: "gpt-4",
+        },
+        collapsed: false,
+      },
+    ],
+  };
+  const exportPayload = buildGraphDocumentExportPayload([sensitiveGraph]);
+  const exportedNode = exportPayload.graphs[0]?.nodes[0];
+  assert(
+    exportedNode &&
+      !("api_key" in exportedNode.config) &&
+      !("api_url" in exportedNode.config) &&
+      !("headers_json" in exportedNode.config) &&
+      exportedNode.config.model === "gpt-4",
+    `G.10: Expected export payload to strip sensitive fields but preserve non-sensitive ones. Actual: ${JSON.stringify(exportedNode?.config)}`,
+  );
+
+  // G.11: Settings-level workbench_graphs extraction
+  const settingsExtraction = readGraphDocumentEnvelope({
+    workbench_graphs: [baseGraph],
+  });
+  assert(
+    settingsExtraction?.graphs.length === 1 &&
+      settingsExtraction.graphs[0].id === "graph_test" &&
+      settingsExtraction.metadata?.source === "settings_extraction",
+    `G.11: Expected settings-level workbench_graphs to be extracted. Actual: ${JSON.stringify(settingsExtraction)}`,
+  );
+
+  // G.12: Dangling edges are filtered against normalized node ids
+  const danglingEdgeGraph = readGraphDocumentEnvelope({
+    kind: "graph_document",
+    version: "v1",
+    graphs: [
+      {
+        ...baseGraph,
+        id: "graph_dangling_edges",
+        nodes: [baseGraph.nodes[0]],
+        edges: [
+          baseGraph.edges[0],
+          {
+            id: "edge_dangling_target",
+            source: baseGraph.nodes[0].id,
+            sourcePort: "out",
+            target: "missing_target",
+            targetPort: "in",
+          },
+        ],
+      },
+    ],
+  });
+  assert(
+    danglingEdgeGraph?.graphs[0]?.edges.length === 0,
+    `G.12: Expected dangling edges to be silently filtered after node normalization. Actual: ${JSON.stringify(danglingEdgeGraph?.graphs[0]?.edges)}`,
+  );
+
+  // G.13: Single graph object absorption
+  const singleGraphRead = readGraphDocumentEnvelope(baseGraph);
+  assert(
+    singleGraphRead?.graphs.length === 1 &&
+      singleGraphRead.graphs[0].id === "graph_test" &&
+      singleGraphRead.metadata?.source === "single_graph",
+    `G.13: Expected single graph object to be absorbed. Actual: ${JSON.stringify(singleGraphRead)}`,
   );
 }
 

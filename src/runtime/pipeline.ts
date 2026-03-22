@@ -1,6 +1,7 @@
 import type {
   GraphRunArtifact,
   GraphRunEvent,
+  GraphRunSnapshotEnvelope,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { getEffectiveFlows } from "./char-flows";
@@ -9,6 +10,7 @@ import { FlowTriggerV1 } from "./contracts";
 import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
 import { executeGraph, validateGraph } from "./graph-executor";
+import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
 import { uuidv4 } from "./helpers";
 import { injectReplyInstructionOnce } from "./injection";
 import { mergeFlowResults } from "./merger";
@@ -43,6 +45,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_context?: {
     selected_graph_ids: string[];
   };
+  graph_run_snapshot?: GraphRunSnapshotEnvelope;
   graph_run_overview?: GraphRunArtifact;
   graph_run_events?: GraphRunEvent[];
   graph_run_diagnostics?: GraphRunArtifact["diagnosticsOverview"];
@@ -666,6 +669,11 @@ export function buildWorkflowBridgeDiagnostics(params: {
   graphRunEvents?: GraphRunEvent[];
 }): Record<string, any> {
   const { selection, failureOrigin, graphRunOverview, graphRunEvents } = params;
+  const graphRunSnapshot = createGraphRunSnapshotEnvelope({
+    overview: graphRunOverview,
+    events: graphRunEvents,
+    diagnosticsOverview: graphRunOverview?.diagnosticsOverview,
+  });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -681,6 +689,7 @@ export function buildWorkflowBridgeDiagnostics(params: {
           },
         }
       : {}),
+    ...(graphRunSnapshot ? { graph_run_snapshot: graphRunSnapshot } : {}),
     ...(graphRunOverview ? { graph_run_overview: graphRunOverview } : {}),
     ...(graphRunEvents?.length ? { graph_run_events: graphRunEvents } : {}),
     ...(graphRunOverview?.diagnosticsOverview
