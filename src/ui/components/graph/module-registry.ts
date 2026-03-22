@@ -5,8 +5,10 @@ import type {
   HostWriteSummary,
   ModuleBlueprint,
   ModuleMetadataConfigSummary,
+  ModuleMetadataConstraintSummary,
   ModuleMetadataDiagnosticsSummary,
   ModuleMetadataHelpSummary,
+  ModuleMetadataSchemaFieldSummary,
   ModuleMetadataSemanticSummary,
   ModuleMetadataUiSummary,
   ModulePortDef,
@@ -40,14 +42,53 @@ const withHostTargetHint = (
   },
 });
 
+function formatDefaultValueHint(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value.length > 0 ? value : '""';
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function buildSchemaFieldSummaries(
+  module: Pick<
+    ModuleBlueprint,
+    "configSchema" | "defaultConfig" | "configMetadata"
+  >,
+): ModuleMetadataSchemaFieldSummary[] {
+  if (module.configMetadata?.schemaFields?.length) {
+    return [...module.configMetadata.schemaFields];
+  }
+  return (module.configSchema ?? []).map((field) => ({
+    key: field.key,
+    label: field.label,
+    defaultValueHint: formatDefaultValueHint(module.defaultConfig[field.key]),
+    description: field.description,
+  }));
+}
+
 function buildConfigSummary(
-  module: Pick<ModuleBlueprint, "configSchema">,
+  module: Pick<
+    ModuleBlueprint,
+    "configSchema" | "defaultConfig" | "configMetadata"
+  >,
 ): ModuleMetadataConfigSummary {
-  const schemaFieldKeys = (module.configSchema ?? []).map((field) => field.key);
+  const schemaFields = buildSchemaFieldSummaries(module);
+  const schemaFieldKeys = schemaFields.map((field) => field.key);
   return {
     schemaFieldKeys,
     schemaFieldCount: schemaFieldKeys.length,
     hasSchema: schemaFieldKeys.length > 0,
+    schemaFields,
   };
 }
 
@@ -91,6 +132,7 @@ function withMetadataSurface(
   module: ModuleBlueprint,
   options: {
     semantic?: Partial<ModuleMetadataSemanticSummary>;
+    constraints?: ModuleMetadataConstraintSummary;
     help?: ModuleMetadataHelpSummary;
     ui?: ModuleMetadataUiSummary;
   },
@@ -119,6 +161,7 @@ function withMetadataSurface(
     metadata: {
       semantic,
       config: buildConfigSummary(module),
+      constraints: options.constraints,
       help: options.help,
       ui: options.ui,
       diagnostics: buildDiagnosticsSummary(semantic),
@@ -266,6 +309,9 @@ const SOURCE_MODULES: ModuleBlueprint[] = [
     description: "当前触发工作流的用户输入文本",
     ports: [textOut("text", "用户输入")],
     defaultConfig: {},
+    configMetadata: {
+      schemaFields: [],
+    },
   },
   {
     moduleId: "src_flow_context",
@@ -352,6 +398,9 @@ const FILTER_MODULES: ModuleBlueprint[] = [
     description: "移除文本中的 MVU XML 块和产物",
     ports: [textIn(), textOut()],
     defaultConfig: {},
+    configMetadata: {
+      schemaFields: [],
+    },
   },
   {
     moduleId: "flt_mvu_detect",
@@ -816,6 +865,9 @@ const OUTPUT_MODULES: ModuleBlueprint[] = [
       description: "向 AI 的下一次回复注入指令文本",
       ports: [textIn("instruction", "指令文本")],
       defaultConfig: {},
+      configMetadata: {
+        schemaFields: [],
+      },
     },
     {
       kind: "host_write",
@@ -1101,32 +1153,75 @@ const MODULE_METADATA_PILOT_BY_ID: Readonly<
   Record<
     string,
     {
+      constraints: ModuleMetadataConstraintSummary;
       help: ModuleMetadataHelpSummary;
       ui: ModuleMetadataUiSummary;
     }
   >
 > = {
   src_user_input: {
+    constraints: {
+      outputs: [
+        {
+          portId: "text",
+          direction: "out",
+          summary:
+            "输出当前触发事件携带的单段用户输入文本；为空时保守降级为空字符串。",
+        },
+      ],
+    },
     help: {
       summary: "读取当前触发图执行的用户输入文本。",
       whenToUse: "作为文本处理链路的起点，适合接到过滤或拼接节点。",
       caution: "仅暴露当前触发输入，不承担历史对话聚合。",
+      runtimeUsage:
+        "运行时从执行上下文读取 userInput，并向 diagnostics 暴露 source/reads_host 语义摘要。",
     },
     ui: { badge: "Source", accent: "info" },
   },
   flt_mvu_strip: {
+    constraints: {
+      inputs: [
+        {
+          portId: "text_in",
+          direction: "in",
+          summary:
+            "期望单段文本输入；若上游缺失或非字符串，运行时保守按空文本处理。",
+        },
+      ],
+      outputs: [
+        {
+          portId: "text_out",
+          direction: "out",
+          summary: "输出剥离 MVU XML 块后的净化文本，不引入新的宿主副作用。",
+        },
+      ],
+    },
     help: {
       summary: "剥离文本中的 MVU XML 块与相关产物。",
       whenToUse: "接在用户输入或模型输出后，做轻量净化。",
       caution: "仅做文本清洗，不负责宿主写入或状态控制。",
+      runtimeUsage: "运行时只消费说明性输入约束，不把它提升为新的强类型系统。",
     },
     ui: { badge: "Pure", accent: "success" },
   },
   out_reply_inject: {
+    constraints: {
+      inputs: [
+        {
+          portId: "instruction",
+          direction: "in",
+          summary:
+            "需要可序列化为字符串的指令文本；终端节点自身不产生数据流输出。",
+        },
+      ],
+    },
     help: {
       summary: "把指令文本写入宿主 reply instruction。",
       whenToUse: "作为终端输出节点，把处理后的文本交给宿主回复注入。",
       caution: "会产生宿主写入，不应视为纯计算节点。",
+      runtimeUsage:
+        "运行时沿用 internal-only host write descriptor，并复用 metadata summary 供 explain/diagnostics 展示。",
     },
     ui: { badge: "Host Write", accent: "warning" },
   },
@@ -1144,6 +1239,7 @@ const ALL_MODULES: ModuleBlueprint[] = ALL_MODULES_BASE.map((module) => {
       sideEffect: module.runtimeMeta?.sideEffect,
       hostWriteHint: module.runtimeMeta?.hostTargetHint,
     },
+    constraints: pilotMetadata.constraints,
     help: pilotMetadata.help,
     ui: pilotMetadata.ui,
   });
@@ -1175,7 +1271,11 @@ export function getModuleMetadataSummary(moduleId: string): {
       ? S
       : never
     : never;
+  configFields?: readonly ModuleMetadataSchemaFieldSummary[];
+  inputConstraintSummary?: readonly string[];
+  outputConstraintSummary?: readonly string[];
   helpSummary?: string;
+  runtimeUsage?: string;
   diagnosticsLabel?: string;
 } | null {
   const metadata = getModuleMetadataSurface(moduleId);
@@ -1184,7 +1284,15 @@ export function getModuleMetadataSummary(moduleId: string): {
   }
   return {
     semantic: metadata.semantic,
+    configFields: metadata.config?.schemaFields,
+    inputConstraintSummary: metadata.constraints?.inputs?.map(
+      (constraint) => `${constraint.portId}:${constraint.summary}`,
+    ),
+    outputConstraintSummary: metadata.constraints?.outputs?.map(
+      (constraint) => `${constraint.portId}:${constraint.summary}`,
+    ),
     helpSummary: metadata.help?.summary,
+    runtimeUsage: metadata.help?.runtimeUsage,
     diagnosticsLabel: metadata.diagnostics?.hostWriteLabel,
   };
 }

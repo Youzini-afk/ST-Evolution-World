@@ -116,7 +116,17 @@ export interface NodeHandlerDescriptor {
   sideEffect?: WorkbenchSideEffectLevel;
   metadataSummary?: {
     semantic: ModuleMetadataSemanticSummary;
+    configFields?: readonly {
+      key: string;
+      label: string;
+      required?: boolean;
+      defaultValueHint?: string;
+      description?: string;
+    }[];
+    inputConstraintSummary?: readonly string[];
+    outputConstraintSummary?: readonly string[];
     helpSummary?: string;
+    runtimeUsage?: string;
     diagnosticsLabel?: string;
   } | null;
   kind: "builtin" | "fallback";

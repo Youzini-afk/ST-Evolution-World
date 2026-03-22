@@ -131,16 +131,37 @@ export interface ModuleMetadataSemanticSummary {
   hostWriteHint?: HostWriteSummary;
 }
 
+export interface ModuleMetadataSchemaFieldSummary {
+  key: string;
+  label: string;
+  required?: boolean;
+  defaultValueHint?: string;
+  description?: string;
+}
+
 export interface ModuleMetadataConfigSummary {
   schemaFieldKeys: readonly string[];
   schemaFieldCount: number;
   hasSchema: boolean;
+  schemaFields?: readonly ModuleMetadataSchemaFieldSummary[];
+}
+
+export interface ModuleMetadataPortConstraintSummary {
+  portId: string;
+  direction: "in" | "out";
+  summary: string;
+}
+
+export interface ModuleMetadataConstraintSummary {
+  inputs?: readonly ModuleMetadataPortConstraintSummary[];
+  outputs?: readonly ModuleMetadataPortConstraintSummary[];
 }
 
 export interface ModuleMetadataHelpSummary {
   summary: string;
   whenToUse?: string;
   caution?: string;
+  runtimeUsage?: string;
 }
 
 export interface ModuleMetadataUiSummary {
@@ -157,6 +178,7 @@ export interface ModuleMetadataDiagnosticsSummary {
 export interface ModuleMetadataSurface {
   semantic: ModuleMetadataSemanticSummary;
   config?: ModuleMetadataConfigSummary;
+  constraints?: ModuleMetadataConstraintSummary;
   help?: ModuleMetadataHelpSummary;
   ui?: ModuleMetadataUiSummary;
   diagnostics?: ModuleMetadataDiagnosticsSummary;
@@ -182,6 +204,10 @@ export interface ModuleBlueprint {
   defaultConfig: Record<string, any>;
   /** Optional schema for config field rendering */
   configSchema?: ConfigFieldSchema[];
+  /** Optional lightweight schema metadata summary kept compatible with configSchema */
+  configMetadata?: {
+    schemaFields?: ModuleMetadataSchemaFieldSummary[];
+  };
   /** If true, this is a composite module (contains sub-graph) */
   isComposite?: boolean;
   /** For composite modules: the pre-wired sub-graph template */

@@ -12,7 +12,10 @@
  * runtime-node-registry.ts (plugin contract v1).
  */
 
-import { getModuleBlueprint } from "../ui/components/graph/module-registry";
+import {
+  getModuleBlueprint,
+  getModuleMetadataSummary,
+} from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
   GraphCompilePlan,
@@ -1244,24 +1247,17 @@ function getNodeLegacySideEffect(
 function getHostWriteSummary(
   node: WorkbenchNode,
 ): HostWriteSummary | undefined {
-  if (node.moduleId !== "out_reply_inject") {
-    return undefined;
-  }
-  const blueprint = getModuleBlueprint(node.moduleId);
   const capability = getNodeCapability(node);
   if (capability !== "writes_host") {
     return undefined;
   }
-  const hostTargetHint = blueprint.runtimeMeta?.hostTargetHint;
-  if (
-    !hostTargetHint ||
-    hostTargetHint.targetType !== "reply_instruction" ||
-    hostTargetHint.operation !== "inject_reply_instruction" ||
-    hostTargetHint.path !== "reply.instruction"
-  ) {
-    return undefined;
+  const metadataSummary = getModuleMetadataSummary(node.moduleId);
+  const metadataHostWriteHint = metadataSummary?.semantic.hostWriteHint;
+  if (metadataHostWriteHint) {
+    return metadataHostWriteHint;
   }
-  return hostTargetHint;
+  const blueprint = getModuleBlueprint(node.moduleId);
+  return blueprint.runtimeMeta?.hostTargetHint;
 }
 
 function getHostCommitSummary(

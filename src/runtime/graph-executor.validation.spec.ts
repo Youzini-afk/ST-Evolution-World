@@ -4071,23 +4071,47 @@ async function runValidationSpec(): Promise<void> {
   const outputMetadata = getModuleMetadataSurface("out_reply_inject");
   assert(
     sourceMetadata?.semantic.capability === "source" &&
-      sourceMetadata.help?.summary === "读取当前触发图执行的用户输入文本。",
+      sourceMetadata.help?.summary === "读取当前触发图执行的用户输入文本。" &&
+      sourceMetadata.constraints?.outputs?.[0]?.summary?.includes(
+        "用户输入文本",
+      ),
     `Expected src_user_input metadata pilot summary to be exposed via blueprint. Actual: ${JSON.stringify(sourceMetadata)}`,
   );
   assert(
     filterMetadata?.semantic.sideEffect === "pure" &&
-      filterMetadata.help?.summary === "剥离文本中的 MVU XML 块与相关产物。",
-    `Expected flt_mvu_strip metadata pilot summary to be exposed via blueprint. Actual: ${JSON.stringify(filterMetadata)}`,
+      filterMetadata.help?.summary === "剥离文本中的 MVU XML 块与相关产物。" &&
+      Array.isArray(filterMetadata.config?.schemaFields) &&
+      filterMetadata.config.schemaFields.length === 0 &&
+      filterMetadata.constraints?.inputs?.[0]?.summary?.includes(
+        "空文本处理",
+      ) &&
+      filterMetadata.constraints?.outputs?.[0]?.summary?.includes("净化文本"),
+    `Expected flt_mvu_strip metadata pilot summary to expose config fallback and port constraints from a single source. Actual: ${JSON.stringify(filterMetadata)}`,
   );
   assert(
     outputMetadata?.semantic.capability === "writes_host" &&
       outputMetadata.semantic.hostWriteHint?.operation ===
         "inject_reply_instruction" &&
-      outputMetadata.help?.summary === "把指令文本写入宿主 reply instruction。",
+      outputMetadata.help?.summary ===
+        "把指令文本写入宿主 reply instruction。" &&
+      outputMetadata.constraints?.inputs?.[0]?.summary?.includes("指令文本"),
     `Expected out_reply_inject metadata pilot summary to carry host write hint. Actual: ${JSON.stringify(outputMetadata)}`,
   );
 
+  const sourceMetadataSummary = getModuleMetadataSummary("src_user_input");
+  const filterMetadataSummary = getModuleMetadataSummary("flt_mvu_strip");
   const outputMetadataSummary = getModuleMetadataSummary("out_reply_inject");
+  assert(
+    filterMetadataSummary?.inputConstraintSummary?.[0]?.includes(
+      "text_in:期望单段文本输入",
+    ) &&
+      filterMetadataSummary?.outputConstraintSummary?.[0]?.includes(
+        "text_out:输出剥离 MVU XML 块后的净化文本",
+      ) &&
+      filterMetadataSummary?.configFields?.length ===
+        filterMetadata?.config?.schemaFields?.length,
+    `Expected registry metadata summary helper to reuse filter config/constraint metadata instead of hardcoding a separate summary. Actual: ${JSON.stringify(filterMetadataSummary)}`,
+  );
   assert(
     outputMetadataSummary?.diagnosticsLabel ===
       "reply_instruction:inject_reply_instruction",
@@ -4097,8 +4121,11 @@ async function runValidationSpec(): Promise<void> {
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===
       sourceMetadata?.help?.summary &&
       srcUserResolve.descriptor.metadataSummary?.semantic.capability ===
-        sourceMetadata?.semantic.capability,
-    `Expected runtime descriptor to reuse source metadata summary instead of redefining it. Actual descriptor=${JSON.stringify(srcUserResolve.descriptor.metadataSummary)} blueprint=${JSON.stringify(sourceMetadata)}`,
+        sourceMetadata?.semantic.capability &&
+      srcUserResolve.descriptor.metadataSummary
+        ?.outputConstraintSummary?.[0] ===
+        sourceMetadataSummary?.outputConstraintSummary?.[0],
+    `Expected runtime descriptor to reuse source metadata summary instead of redefining it. Actual descriptor=${JSON.stringify(srcUserResolve.descriptor.metadataSummary)} blueprint=${JSON.stringify(sourceMetadata)} summary=${JSON.stringify(sourceMetadataSummary)}`,
   );
   const outReplyResolve = resolveNodeHandler("out_reply_inject");
   assert(
@@ -4106,7 +4133,9 @@ async function runValidationSpec(): Promise<void> {
       outputMetadataSummary?.diagnosticsLabel &&
       outReplyResolve.descriptor.metadataSummary?.semantic.hostWriteHint
         ?.operation ===
-        outputMetadataSummary?.semantic.hostWriteHint?.operation,
+        outputMetadataSummary?.semantic.hostWriteHint?.operation &&
+      outReplyResolve.descriptor.metadataSummary?.runtimeUsage ===
+        outputMetadata?.help?.runtimeUsage,
     `Expected runtime descriptor and registry metadata summary helper to share the same host-write summary. Actual descriptor=${JSON.stringify(outReplyResolve.descriptor.metadataSummary)} summary=${JSON.stringify(outputMetadataSummary)}`,
   );
 
@@ -4136,9 +4165,12 @@ async function runValidationSpec(): Promise<void> {
   const fallbackBlueprintMetadata = getModuleMetadataSurface(
     "pkg_prompt_assembly",
   );
+  const fallbackMetadataSummary = getModuleMetadataSummary(
+    "pkg_prompt_assembly",
+  );
   assert(
-    fallbackBlueprintMetadata === undefined,
-    `Expected fallback blueprint without pilot metadata not to grow UI/schema responsibilities. Actual: ${JSON.stringify(fallbackBlueprintMetadata)}`,
+    fallbackBlueprintMetadata === undefined && fallbackMetadataSummary === null,
+    `Expected fallback blueprint without pilot metadata not to grow UI/schema responsibilities. Actual blueprint=${JSON.stringify(fallbackBlueprintMetadata)} summary=${JSON.stringify(fallbackMetadataSummary)}`,
   );
 
   // 4. Executor success path without static handler map
