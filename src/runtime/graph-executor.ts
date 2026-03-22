@@ -30,6 +30,11 @@ import type {
   GraphNodeReuseReason,
   GraphNodeReuseVerdict,
   GraphReuseSummary,
+  GraphRunArtifact,
+  GraphRunCheckpointSummary,
+  GraphRunDiagnosticsOverview,
+  GraphRunEvent,
+  GraphRunStatus,
   GraphStageTrace,
   GraphTraceStageStatus,
   HostCommitContract,
@@ -366,22 +371,145 @@ function createCompileFingerprint(
   );
 }
 
-function createRunState(
-  requestId: string,
-  startedAt: number,
-  status: "completed" | "failed",
-  failedStage?: GraphExecutionStage,
-  compileFingerprint?: string,
-) {
+function createRunState(params: {
+  runId: string;
+  graphId: string;
+  startedAt: number;
+  status: GraphRunStatus;
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  compileFingerprint?: string;
+}) {
   const completedAt = Date.now();
   return {
-    runId: requestId,
-    status,
-    failedStage,
-    startedAt,
+    runId: params.runId,
+    graphId: params.graphId,
+    status: params.status,
+    currentStage: params.currentStage,
+    failedStage: params.failedStage,
+    startedAt: params.startedAt,
     completedAt,
-    elapsedMs: completedAt - startedAt,
-    ...(compileFingerprint ? { compileFingerprint } : {}),
+    elapsedMs: completedAt - params.startedAt,
+    ...(params.compileFingerprint
+      ? { compileFingerprint: params.compileFingerprint }
+      : {}),
+  };
+}
+
+function createCheckpointCandidate(params: {
+  runId: string;
+  graphId: string;
+  compileFingerprint?: string;
+  stage: GraphExecutionStage;
+  nodeId?: string;
+  nodeIndex?: number;
+  reason: GraphRunCheckpointSummary["reason"];
+}): GraphRunCheckpointSummary {
+  const createdAt = Date.now();
+  return {
+    checkpointId: `${params.runId}:${params.stage}:${params.nodeId ?? "none"}:${params.nodeIndex ?? -1}`,
+    runId: params.runId,
+    graphId: params.graphId,
+    compileFingerprint: params.compileFingerprint,
+    stage: params.stage,
+    nodeId: params.nodeId,
+    nodeIndex: params.nodeIndex,
+    resumable: false,
+    reason: params.reason,
+    createdAt,
+  };
+}
+
+function createGraphRunArtifact(params: {
+  runId: string;
+  graphId: string;
+  status: GraphRunStatus;
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  compileFingerprint?: string;
+  latestNodeId?: string;
+  latestNodeModuleId?: string;
+  latestNodeStatus?: GraphRunArtifact["latestNodeStatus"];
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  errorSummary?: string;
+  checkpointCandidate?: GraphRunCheckpointSummary;
+  latestHeartbeat?: GraphRunArtifact["latestHeartbeat"];
+  latestPartialOutput?: GraphRunArtifact["latestPartialOutput"];
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  eventCount: number;
+}): GraphRunArtifact {
+  return {
+    runId: params.runId,
+    graphId: params.graphId,
+    status: params.status,
+    currentStage: params.currentStage,
+    failedStage: params.failedStage,
+    compileFingerprint: params.compileFingerprint,
+    latestNodeId: params.latestNodeId,
+    latestNodeModuleId: params.latestNodeModuleId,
+    latestNodeStatus: params.latestNodeStatus,
+    diagnosticsOverview: params.diagnosticsOverview,
+    errorSummary: params.errorSummary,
+    checkpointCandidate: params.checkpointCandidate,
+    latestHeartbeat: params.latestHeartbeat,
+    latestPartialOutput: params.latestPartialOutput,
+    waitingUser: params.waitingUser,
+    eventCount: params.eventCount,
+    updatedAt: Date.now(),
+  };
+}
+
+function buildRunObservation(params: {
+  graph: WorkbenchGraph;
+  requestId: string;
+  startedAt: number;
+  status: GraphRunStatus;
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  compileFingerprint?: string;
+  latestNodeId?: string;
+  latestNodeModuleId?: string;
+  latestNodeStatus?: GraphRunArtifact["latestNodeStatus"];
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  errorSummary?: string;
+  checkpointCandidate?: GraphRunCheckpointSummary;
+  latestHeartbeat?: GraphRunArtifact["latestHeartbeat"];
+  latestPartialOutput?: GraphRunArtifact["latestPartialOutput"];
+  waitingUser?: GraphRunArtifact["waitingUser"];
+  eventCount: number;
+}): Pick<
+  GraphExecutionResult,
+  "runState" | "runArtifact" | "checkpointCandidate"
+> {
+  return {
+    runState: createRunState({
+      runId: params.requestId,
+      graphId: params.graph.id,
+      startedAt: params.startedAt,
+      status: params.status,
+      currentStage: params.currentStage,
+      failedStage: params.failedStage,
+      compileFingerprint: params.compileFingerprint,
+    }),
+    runArtifact: createGraphRunArtifact({
+      runId: params.requestId,
+      graphId: params.graph.id,
+      status: params.status,
+      currentStage: params.currentStage,
+      failedStage: params.failedStage,
+      compileFingerprint: params.compileFingerprint,
+      latestNodeId: params.latestNodeId,
+      latestNodeModuleId: params.latestNodeModuleId,
+      latestNodeStatus: params.latestNodeStatus,
+      diagnosticsOverview: params.diagnosticsOverview,
+      errorSummary: params.errorSummary,
+      checkpointCandidate: params.checkpointCandidate,
+      latestHeartbeat: params.latestHeartbeat,
+      latestPartialOutput: params.latestPartialOutput,
+      waitingUser: params.waitingUser,
+      eventCount: params.eventCount,
+    }),
+    checkpointCandidate: params.checkpointCandidate,
   };
 }
 
@@ -543,6 +671,7 @@ class GraphExecutionStageError extends Error {
   readonly nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
   readonly dirtySetSummary?: GraphDirtySetSummary;
   readonly failedNodeId?: string;
+  readonly runEvents?: GraphRunEvent[];
 
   constructor(
     stage: GraphExecutionStage,
@@ -551,6 +680,7 @@ class GraphExecutionStageError extends Error {
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"],
     failedNodeId?: string,
     dirtySetSummary?: GraphDirtySetSummary,
+    runEvents?: GraphRunEvent[],
   ) {
     super(message);
     this.name = "GraphExecutionStageError";
@@ -559,6 +689,7 @@ class GraphExecutionStageError extends Error {
     this.nodeTraces = nodeTraces;
     this.failedNodeId = failedNodeId;
     this.dirtySetSummary = dirtySetSummary;
+    this.runEvents = runEvents;
   }
 }
 
@@ -676,6 +807,44 @@ function createDirtySetSummary(
     dirtyNodeIds: entries
       .filter((entry) => entry.isDirty)
       .map((entry) => entry.nodeId),
+  };
+}
+
+export function buildGraphRunDiagnosticsOverview(
+  result: GraphExecutionResult,
+): GraphRunDiagnosticsOverview {
+  const dirtySetSummary = result.dirtySetSummary;
+  const reasonCounts: Record<GraphNodeDirtyReason, number> = {
+    initial_run: 0,
+    input_changed: 0,
+    upstream_dirty: 0,
+    clean: 0,
+  };
+
+  if (dirtySetSummary) {
+    for (const entry of dirtySetSummary.entries) {
+      reasonCounts[entry.dirtyReason] += 1;
+    }
+  }
+
+  return {
+    run: { ...result.runState },
+    compile: {
+      compileFingerprint:
+        result.compilePlan?.compileFingerprint ??
+        result.runState.compileFingerprint,
+      nodeCount: result.compilePlan?.nodeOrder.length,
+      terminalNodeCount: result.compilePlan?.terminalNodeIds.length,
+    },
+    dirty: {
+      totalNodeCount: dirtySetSummary?.entries.length ?? 0,
+      dirtyNodeCount: dirtySetSummary?.dirtyNodeIds.length ?? 0,
+      cleanNodeCount:
+        (dirtySetSummary?.entries.length ?? 0) -
+        (dirtySetSummary?.dirtyNodeIds.length ?? 0),
+      dirtyNodeIds: [...(dirtySetSummary?.dirtyNodeIds ?? [])],
+      reasonCounts,
+    },
   };
 }
 
@@ -876,6 +1045,8 @@ export async function executeCompiledGraph(
     | "hostCommitContracts"
     | "dirtySetSummary"
     | "executionDecisionSummary"
+    | "checkpointCandidate"
+    | "runEvents"
   > & {
     nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
     reuseSummary: GraphReuseSummary;
@@ -908,6 +1079,60 @@ export async function executeCompiledGraph(
     executionDecision: GraphNodeExecutionDecision;
   }> = [];
   const reuseSkipEnabled = readExperimentalReuseSkipFlag(context);
+  const runEvents: GraphRunEvent[] = [];
+  let checkpointCandidate: GraphRunCheckpointSummary | undefined;
+
+  const toTextPreview = (value: unknown): string => {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (value === null || value === undefined) {
+      return "";
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+    try {
+      return stableSerialize(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const emitNodeEvent = (
+    type: GraphRunEvent["type"],
+    params: {
+      status?: GraphRunStatus;
+      nodeId?: string;
+      moduleId?: string;
+      nodeIndex?: number;
+      checkpoint?: GraphRunCheckpointSummary;
+      heartbeat?: GraphRunEvent["heartbeat"];
+      partialOutput?: GraphRunEvent["partialOutput"];
+      waitingUser?: GraphRunEvent["waitingUser"];
+      error?: string;
+    },
+  ) => {
+    const event: GraphRunEvent = {
+      type,
+      runId: context.requestId,
+      graphId: graph.id,
+      timestamp: Date.now(),
+      ...(params.status ? { status: params.status } : {}),
+      stage: "execute",
+      ...(params.nodeId ? { nodeId: params.nodeId } : {}),
+      ...(params.moduleId ? { moduleId: params.moduleId } : {}),
+      ...(params.nodeIndex !== undefined
+        ? { nodeIndex: params.nodeIndex }
+        : {}),
+      ...(params.checkpoint ? { checkpoint: params.checkpoint } : {}),
+      ...(params.heartbeat ? { heartbeat: params.heartbeat } : {}),
+      ...(params.partialOutput ? { partialOutput: params.partialOutput } : {}),
+      ...(params.waitingUser ? { waitingUser: params.waitingUser } : {}),
+      ...(params.error ? { error: params.error } : {}),
+    };
+    runEvents.push(event);
+  };
 
   const [
     sourceImpls,
@@ -1044,6 +1269,26 @@ export async function executeCompiledGraph(
       executionDecision,
     };
 
+    emitNodeEvent("node_started", {
+      status: "running",
+      nodeId: node.id,
+      moduleId: node.moduleId,
+      nodeIndex: planNode.order,
+    });
+    emitNodeEvent("heartbeat", {
+      status: "running",
+      nodeId: node.id,
+      moduleId: node.moduleId,
+      nodeIndex: planNode.order,
+      heartbeat: {
+        timestamp: Date.now(),
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeIndex: planNode.order,
+        message: `节点 ${node.id} 已开始执行`,
+      },
+    });
+
     if (executionDecision.shouldSkip && reusableOutputs) {
       const reusedOutputs = cloneModuleOutput(reusableOutputs);
       nodeOutputs.set(node.id, reusedOutputs);
@@ -1076,6 +1321,29 @@ export async function executeCompiledGraph(
         completedAt: nodeStart,
         isFallback: false,
       });
+      checkpointCandidate = createCheckpointCandidate({
+        runId: context.requestId,
+        graphId: graph.id,
+        compileFingerprint: plan.compileFingerprint,
+        stage: "execute",
+        nodeId: node.id,
+        nodeIndex: planNode.order,
+        reason: planNode.isTerminal ? "terminal_candidate" : "node_boundary",
+      });
+      emitNodeEvent("node_skipped", {
+        status: "running",
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeIndex: planNode.order,
+        checkpoint: checkpointCandidate,
+      });
+      emitNodeEvent("checkpoint_candidate", {
+        status: "running",
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeIndex: planNode.order,
+        checkpoint: checkpointCandidate,
+      });
       continue;
     }
 
@@ -1086,6 +1354,7 @@ export async function executeCompiledGraph(
       node_id: node.id,
       stage: "execute",
       message: `正在执行模块「${getModuleBlueprint(node.moduleId).label}」…`,
+      graph_id: graph.id,
     });
 
     try {
@@ -1098,6 +1367,49 @@ export async function executeCompiledGraph(
       });
       const outputs = dispatchResult.outputs;
       nodeOutputs.set(node.id, outputs);
+
+      const partialOutputKeys = Object.keys(outputs).filter((key) => {
+        const value = outputs[key];
+        return value !== undefined && value !== null;
+      });
+      if (partialOutputKeys.length > 0) {
+        const rawPreview = toTextPreview(outputs[partialOutputKeys[0]]);
+        const preview = rawPreview.slice(0, 160);
+        emitNodeEvent("partial_output", {
+          status: "streaming",
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          partialOutput: {
+            timestamp: Date.now(),
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            preview,
+            length: rawPreview.length,
+          },
+        });
+      }
+
+      if (node.config?.observationState === "waiting_user") {
+        emitNodeEvent("waiting_user", {
+          status: "waiting_user",
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          waitingUser: {
+            timestamp: Date.now(),
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            reason:
+              typeof node.config?.waitingUserReason === "string" &&
+              node.config.waitingUserReason.trim()
+                ? node.config.waitingUserReason.trim()
+                : `节点 ${node.id} 进入 waiting_user 观测态`,
+          },
+        });
+      }
 
       const nodeHostWrites = normalizeHostWrites(dispatchResult.hostWrites);
       if (nodeHostWrites) {
@@ -1151,6 +1463,29 @@ export async function executeCompiledGraph(
         hostWrites: nodeHostWrites,
         hostCommitContracts: nodeHostCommitContracts,
       });
+      checkpointCandidate = createCheckpointCandidate({
+        runId: context.requestId,
+        graphId: graph.id,
+        compileFingerprint: plan.compileFingerprint,
+        stage: "execute",
+        nodeId: node.id,
+        nodeIndex: planNode.order,
+        reason: planNode.isTerminal ? "terminal_candidate" : "node_boundary",
+      });
+      emitNodeEvent("node_finished", {
+        status: "running",
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeIndex: planNode.order,
+        checkpoint: checkpointCandidate,
+      });
+      emitNodeEvent("checkpoint_candidate", {
+        status: "running",
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeIndex: planNode.order,
+        checkpoint: checkpointCandidate,
+      });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const elapsedMs = Date.now() - nodeStart;
@@ -1188,6 +1523,13 @@ export async function executeCompiledGraph(
         failedAt,
         isFallback: false,
       });
+      emitNodeEvent("node_failed", {
+        status: "failed",
+        nodeId: node.id,
+        moduleId: node.moduleId,
+        nodeIndex: planNode.order,
+        error: errorMsg,
+      });
 
       // Append 'skipped' traces for remaining nodes in plan order (fail-fast)
       const failedIndex = plan.nodeOrder.indexOf(node.id);
@@ -1218,6 +1560,7 @@ export async function executeCompiledGraph(
         nodeTraces,
         node.id,
         createDirtySetSummary(dirtySetEntries),
+        runEvents,
       );
     }
   }
@@ -1256,6 +1599,8 @@ export async function executeCompiledGraph(
     finalOutputs: terminalOutputs,
     hostWrites,
     hostCommitContracts,
+    checkpointCandidate,
+    runEvents,
     dirtySetSummary: createDirtySetSummary(dirtySetEntries),
     reuseSummary: createReuseSummary(reuseVerdicts),
     executionDecisionSummary: createExecutionDecisionSummary(
@@ -1273,28 +1618,145 @@ export async function executeGraph(
   const trace: GraphStageTrace[] = [];
   const nodeTraces: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"] =
     [];
+  const runEvents: GraphRunEvent[] = [];
+  let latestNodeId: string | undefined;
+  let latestNodeModuleId: string | undefined;
+  let latestNodeStatus: GraphRunArtifact["latestNodeStatus"];
+  let checkpointCandidate: GraphRunCheckpointSummary | undefined;
+  let latestHeartbeat: GraphRunArtifact["latestHeartbeat"];
+  let latestPartialOutput: GraphRunArtifact["latestPartialOutput"];
+  let waitingUser: GraphRunArtifact["waitingUser"];
+
+  const buildOverview = (
+    runState: GraphExecutionResult["runState"],
+    dirtySetSummary?: GraphDirtySetSummary,
+    compilePlan?: GraphCompilePlan,
+  ): GraphRunDiagnosticsOverview => {
+    const reasonCounts: Record<GraphNodeDirtyReason, number> = {
+      initial_run: 0,
+      input_changed: 0,
+      upstream_dirty: 0,
+      clean: 0,
+    };
+    if (dirtySetSummary) {
+      for (const entry of dirtySetSummary.entries) {
+        reasonCounts[entry.dirtyReason] += 1;
+      }
+    }
+    return {
+      run: { ...runState },
+      compile: {
+        compileFingerprint:
+          compilePlan?.compileFingerprint ?? runState.compileFingerprint,
+        nodeCount: compilePlan?.nodeOrder.length,
+        terminalNodeCount: compilePlan?.terminalNodeIds.length,
+      },
+      dirty: {
+        totalNodeCount: dirtySetSummary?.entries.length ?? 0,
+        dirtyNodeCount: dirtySetSummary?.dirtyNodeIds.length ?? 0,
+        cleanNodeCount:
+          (dirtySetSummary?.entries.length ?? 0) -
+          (dirtySetSummary?.dirtyNodeIds.length ?? 0),
+        dirtyNodeIds: [...(dirtySetSummary?.dirtyNodeIds ?? [])],
+        reasonCounts,
+      },
+    };
+  };
+
+  const emitRunEvent = (
+    type: GraphRunEvent["type"],
+    params: {
+      status?: GraphRunStatus;
+      stage?: GraphExecutionStage;
+      error?: string;
+      diagnosticsOverview?: GraphRunDiagnosticsOverview;
+    },
+  ) => {
+    const observation = buildRunObservation({
+      graph,
+      requestId: context.requestId,
+      startedAt,
+      status: params.status ?? "running",
+      currentStage: params.stage,
+      failedStage: params.status === "failed" ? params.stage : undefined,
+      compileFingerprint:
+        params.diagnosticsOverview?.compile.compileFingerprint,
+      latestNodeId,
+      latestNodeModuleId,
+      latestNodeStatus,
+      diagnosticsOverview: params.diagnosticsOverview,
+      errorSummary: params.error,
+      checkpointCandidate,
+      latestHeartbeat,
+      latestPartialOutput,
+      waitingUser,
+      eventCount: runEvents.length + 1,
+    });
+    const event: GraphRunEvent = {
+      type,
+      runId: context.requestId,
+      graphId: graph.id,
+      timestamp: Date.now(),
+      ...(params.status ? { status: params.status } : {}),
+      ...(params.stage ? { stage: params.stage } : {}),
+      ...(params.error ? { error: params.error } : {}),
+      ...(params.diagnosticsOverview
+        ? { diagnosticsOverview: params.diagnosticsOverview }
+        : {}),
+      artifact: observation.runArtifact,
+    };
+    runEvents.push(event);
+    context.onProgress?.(event);
+  };
+
+  emitRunEvent("run_queued", { status: "queued" });
+  emitRunEvent("run_started", { status: "running" });
+  emitRunEvent("stage_started", { status: "running", stage: "validate" });
 
   const validateTimer = startStage("validate");
   const validationErrors = validateGraph(graph);
   if (validationErrors.length > 0) {
-    trace.push(
-      validateTimer.finish(
-        "error",
-        formatGraphValidationErrors(validationErrors),
-      ),
-    );
+    const reason = formatGraphValidationErrors(validationErrors);
+    trace.push(validateTimer.finish("error", reason));
     trace.push({ stage: "compile", status: "skipped", elapsedMs: 0 });
     trace.push({ stage: "execute", status: "skipped", elapsedMs: 0 });
+    const runState = createRunState({
+      runId: context.requestId,
+      graphId: graph.id,
+      startedAt,
+      status: "failed",
+      currentStage: "validate",
+      failedStage: "validate",
+    });
+    const diagnosticsOverview = buildOverview(runState);
+    emitRunEvent("stage_finished", {
+      status: "failed",
+      stage: "validate",
+      error: reason,
+      diagnosticsOverview,
+    });
+    emitRunEvent("run_failed", {
+      status: "failed",
+      stage: "validate",
+      error: reason,
+      diagnosticsOverview,
+    });
     return {
       ok: false,
-      reason: formatGraphValidationErrors(validationErrors),
+      reason,
       requestId: context.requestId,
-      runState: createRunState(
-        context.requestId,
+      ...buildRunObservation({
+        graph,
+        requestId: context.requestId,
         startedAt,
-        "failed",
-        "validate",
-      ),
+        status: "failed",
+        currentStage: "validate",
+        failedStage: "validate",
+        diagnosticsOverview,
+        errorSummary: reason,
+        eventCount: runEvents.length,
+      }),
+      runEvents,
       moduleResults: [],
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
@@ -1309,7 +1771,9 @@ export async function executeGraph(
     };
   }
   trace.push(validateTimer.finish("ok"));
+  emitRunEvent("stage_finished", { status: "running", stage: "validate" });
 
+  emitRunEvent("stage_started", { status: "running", stage: "compile" });
   const compileTimer = startStage("compile");
   let compilePlan: GraphCompilePlan;
   try {
@@ -1334,20 +1798,65 @@ export async function executeGraph(
       failedStage: undefined,
       stageTrace: [...trace],
     };
+    checkpointCandidate = createCheckpointCandidate({
+      runId: context.requestId,
+      graphId: graph.id,
+      compileFingerprint: compilePlan.compileFingerprint,
+      stage: "compile",
+      reason: "stage_boundary",
+    });
+    emitRunEvent("stage_finished", { status: "running", stage: "compile" });
+    runEvents.push({
+      type: "checkpoint_candidate",
+      runId: context.requestId,
+      graphId: graph.id,
+      status: "running",
+      stage: "compile",
+      checkpoint: checkpointCandidate,
+      timestamp: Date.now(),
+    });
+    context.onProgress?.(runEvents[runEvents.length - 1]);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     trace.push(compileTimer.finish("error", reason));
     trace.push({ stage: "execute", status: "skipped", elapsedMs: 0 });
+    const runState = createRunState({
+      runId: context.requestId,
+      graphId: graph.id,
+      startedAt,
+      status: "failed",
+      currentStage: "compile",
+      failedStage: "compile",
+    });
+    const diagnosticsOverview = buildOverview(runState);
+    emitRunEvent("stage_finished", {
+      status: "failed",
+      stage: "compile",
+      error: reason,
+      diagnosticsOverview,
+    });
+    emitRunEvent("run_failed", {
+      status: "failed",
+      stage: "compile",
+      error: reason,
+      diagnosticsOverview,
+    });
     return {
       ok: false,
       reason,
       requestId: context.requestId,
-      runState: createRunState(
-        context.requestId,
+      ...buildRunObservation({
+        graph,
+        requestId: context.requestId,
         startedAt,
-        "failed",
-        "compile",
-      ),
+        status: "failed",
+        currentStage: "compile",
+        failedStage: "compile",
+        diagnosticsOverview,
+        errorSummary: reason,
+        eventCount: runEvents.length,
+      }),
+      runEvents,
       moduleResults: [],
       finalOutputs: {},
       elapsedMs: Date.now() - startedAt,
@@ -1362,28 +1871,99 @@ export async function executeGraph(
     };
   }
 
+  emitRunEvent("stage_started", { status: "running", stage: "execute" });
   const executeTimer = startStage("execute");
   try {
     const execution = await executeCompiledGraph(graph, compilePlan, context);
     if (execution.nodeTraces) {
       nodeTraces.push(...execution.nodeTraces);
     }
+    if (execution.runEvents?.length) {
+      runEvents.push(...execution.runEvents);
+      const reversedEvents = [...execution.runEvents].reverse();
+      const lastNodeEvent = reversedEvents.find((event) => event.nodeId);
+      if (lastNodeEvent?.nodeId) {
+        latestNodeId = lastNodeEvent.nodeId;
+        latestNodeModuleId = lastNodeEvent.moduleId;
+        latestNodeStatus =
+          lastNodeEvent.type === "node_started"
+            ? "started"
+            : lastNodeEvent.type === "node_failed"
+              ? "failed"
+              : lastNodeEvent.type === "node_skipped"
+                ? "skipped"
+                : "finished";
+      }
+      const lastHeartbeatEvent = reversedEvents.find(
+        (event) => event.heartbeat,
+      );
+      if (lastHeartbeatEvent?.heartbeat) {
+        latestHeartbeat = lastHeartbeatEvent.heartbeat;
+      }
+      const lastPartialOutputEvent = reversedEvents.find(
+        (event) => event.partialOutput,
+      );
+      if (lastPartialOutputEvent?.partialOutput) {
+        latestPartialOutput = lastPartialOutputEvent.partialOutput;
+      }
+      const lastWaitingUserEvent = reversedEvents.find(
+        (event) => event.waitingUser,
+      );
+      if (lastWaitingUserEvent?.waitingUser) {
+        waitingUser = lastWaitingUserEvent.waitingUser;
+      }
+    }
+    checkpointCandidate = execution.checkpointCandidate;
     trace.push(executeTimer.finish("ok"));
     compilePlan = {
       ...compilePlan,
       failedStage: undefined,
       stageTrace: [...trace],
     };
+    const runState = createRunState({
+      runId: context.requestId,
+      graphId: graph.id,
+      startedAt,
+      status: "completed",
+      currentStage: "execute",
+      compileFingerprint: compilePlan.compileFingerprint,
+    });
+    const diagnosticsOverview = buildOverview(
+      runState,
+      execution.dirtySetSummary,
+      compilePlan,
+    );
+    emitRunEvent("stage_finished", {
+      status: "completed",
+      stage: "execute",
+      diagnosticsOverview,
+    });
+    emitRunEvent("run_completed", {
+      status: "completed",
+      stage: "execute",
+      diagnosticsOverview,
+    });
     return {
       ok: true,
       requestId: context.requestId,
-      runState: createRunState(
-        context.requestId,
+      ...buildRunObservation({
+        graph,
+        requestId: context.requestId,
         startedAt,
-        "completed",
-        undefined,
-        compilePlan.compileFingerprint,
-      ),
+        status: "completed",
+        currentStage: "execute",
+        compileFingerprint: compilePlan.compileFingerprint,
+        latestNodeId,
+        latestNodeModuleId,
+        latestNodeStatus,
+        diagnosticsOverview,
+        checkpointCandidate,
+        latestHeartbeat,
+        latestPartialOutput,
+        waitingUser,
+        eventCount: runEvents.length,
+      }),
+      runEvents,
       moduleResults: execution.moduleResults,
       finalOutputs: execution.finalOutputs,
       hostWrites: execution.hostWrites,
@@ -1406,6 +1986,7 @@ export async function executeGraph(
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
+    const cancelled = /workflow cancelled by user/i.test(reason);
     trace.push(executeTimer.finish("error", reason));
     compilePlan = {
       ...compilePlan,
@@ -1414,18 +1995,90 @@ export async function executeGraph(
     };
     const executeNodeTraces =
       error instanceof GraphExecutionStageError ? (error.nodeTraces ?? []) : [];
+    if (error instanceof GraphExecutionStageError && error.runEvents?.length) {
+      runEvents.push(...error.runEvents);
+      const reversedFailureEvents = [...error.runEvents].reverse();
+      const lastHeartbeatEvent = reversedFailureEvents.find(
+        (event) => event.heartbeat,
+      );
+      if (lastHeartbeatEvent?.heartbeat) {
+        latestHeartbeat = lastHeartbeatEvent.heartbeat;
+      }
+      const lastPartialOutputEvent = reversedFailureEvents.find(
+        (event) => event.partialOutput,
+      );
+      if (lastPartialOutputEvent?.partialOutput) {
+        latestPartialOutput = lastPartialOutputEvent.partialOutput;
+      }
+      const lastWaitingUserEvent = reversedFailureEvents.find(
+        (event) => event.waitingUser,
+      );
+      if (lastWaitingUserEvent?.waitingUser) {
+        waitingUser = lastWaitingUserEvent.waitingUser;
+      }
+    }
     const combinedNodeTraces = [...nodeTraces, ...executeNodeTraces];
+    const failedNodeTrace = [...executeNodeTraces]
+      .reverse()
+      .find((item) => item.stage === "execute");
+    if (failedNodeTrace?.nodeId) {
+      latestNodeId = failedNodeTrace.nodeId;
+      latestNodeModuleId = failedNodeTrace.moduleId;
+      latestNodeStatus =
+        failedNodeTrace.status === "skipped" ? "skipped" : "failed";
+    }
+    const runState = createRunState({
+      runId: context.requestId,
+      graphId: graph.id,
+      startedAt,
+      status: cancelled ? "cancelled" : "failed",
+      currentStage: "execute",
+      failedStage: "execute",
+      compileFingerprint: compilePlan.compileFingerprint,
+    });
+    const diagnosticsOverview = buildOverview(
+      runState,
+      error instanceof GraphExecutionStageError
+        ? error.dirtySetSummary
+        : undefined,
+      compilePlan,
+    );
+    emitRunEvent("stage_finished", {
+      status: cancelled ? "cancelled" : "failed",
+      stage: "execute",
+      error: reason,
+      diagnosticsOverview,
+    });
+    emitRunEvent(cancelled ? "run_cancelled" : "run_failed", {
+      status: cancelled ? "cancelled" : "failed",
+      stage: "execute",
+      error: reason,
+      diagnosticsOverview,
+    });
     return {
       ok: false,
       reason,
       requestId: context.requestId,
-      runState: createRunState(
-        context.requestId,
+      ...buildRunObservation({
+        graph,
+        requestId: context.requestId,
         startedAt,
-        "failed",
-        "execute",
-        compilePlan.compileFingerprint,
-      ),
+        status: cancelled ? "cancelled" : "failed",
+        currentStage: "execute",
+        failedStage: "execute",
+        compileFingerprint: compilePlan.compileFingerprint,
+        latestNodeId,
+        latestNodeModuleId,
+        latestNodeStatus,
+        diagnosticsOverview,
+        errorSummary: reason,
+        checkpointCandidate,
+        latestHeartbeat,
+        latestPartialOutput,
+        waitingUser,
+        eventCount: runEvents.length,
+      }),
+      runEvents,
       moduleResults:
         error instanceof GraphExecutionStageError ? error.moduleResults : [],
       finalOutputs: {},

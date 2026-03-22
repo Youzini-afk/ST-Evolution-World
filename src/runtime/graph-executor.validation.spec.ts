@@ -6,6 +6,7 @@ import type {
 } from "../ui/components/graph/module-types";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
+  buildGraphRunDiagnosticsOverview,
   clearGraphExecutorReusableOutputsForTesting,
   compileGraphPlan,
   executeCompiledGraph,
@@ -1460,15 +1461,61 @@ async function runValidationSpec(): Promise<void> {
     `Expected finalOutputs behavior to remain conservative with writes_host terminals. Actual: ${Object.keys(dualHostExecution.finalOutputs).join(",")}`,
   );
 
+  const observationReadyGraph = {
+    ...makeBaseGraph(),
+    nodes: makeBaseGraph().nodes.map((node) =>
+      node.id === "filter_text"
+        ? {
+            ...node,
+            config: {
+              ...node.config,
+              observationState: "waiting_user",
+              waitingUserReason: "需要用户确认后续执行",
+            },
+          }
+        : node,
+    ),
+  };
+
   const successResult = await executeGraph(
-    makeBaseGraph(),
+    observationReadyGraph,
     makeExecutionContext(),
   );
   assert(successResult.ok, "Expected executeGraph to succeed for valid graph");
   assert(
     successResult.runState.status === "completed" &&
+      successResult.runState.currentStage === "execute" &&
+      successResult.runState.graphId === "graph_test" &&
       successResult.runState.runId === successResult.requestId,
-    `Expected success runState to be completed and runId=requestId. Actual: ${JSON.stringify(successResult.runState)}`,
+    `Expected success runState to remain completed even when waiting_user observation is emitted, while preserving requestId mapping. Actual: ${JSON.stringify(successResult.runState)}`,
+  );
+  assert(
+    successResult.runArtifact?.status === "completed" &&
+      successResult.runArtifact?.graphId === "graph_test" &&
+      successResult.runArtifact?.currentStage === "execute" &&
+      successResult.runArtifact?.latestNodeId === "filter_text" &&
+      successResult.runArtifact?.latestNodeStatus === "finished" &&
+      typeof successResult.runArtifact?.latestHeartbeat?.timestamp ===
+        "number" &&
+      typeof successResult.runArtifact?.latestPartialOutput?.length ===
+        "number" &&
+      successResult.runArtifact?.waitingUser?.reason === "需要用户确认后续执行",
+    `Expected success runArtifact to preserve waiting_user as read-only observation while final status remains completed. Actual: ${JSON.stringify(successResult.runArtifact)}`,
+  );
+  const successRunEventTypes = (successResult.runEvents ?? []).map(
+    (event) => event.type,
+  );
+  assert(
+    successRunEventTypes.join(",") ===
+      "run_queued,run_started,stage_started,stage_finished,stage_started,stage_finished,checkpoint_candidate,stage_started,node_started,heartbeat,partial_output,node_finished,checkpoint_candidate,node_started,heartbeat,partial_output,waiting_user,node_finished,checkpoint_candidate,stage_finished,run_completed",
+    `Expected success run event order to expose minimal lifecycle/stage/node/checkpoint semantics plus observation events. Actual: ${successRunEventTypes.join(",")}`,
+  );
+  assert(
+    successResult.checkpointCandidate?.nodeId === "filter_text" &&
+      successResult.checkpointCandidate?.stage === "execute" &&
+      successResult.checkpointCandidate?.reason === "terminal_candidate" &&
+      successResult.checkpointCandidate?.resumable === false,
+    `Expected success checkpoint candidate to retain terminal summary only. Actual: ${JSON.stringify(successResult.checkpointCandidate)}`,
   );
   assert(
     successResult.runState.failedStage === undefined,
@@ -1666,7 +1713,7 @@ async function runValidationSpec(): Promise<void> {
   );
 
   const repeatedSuccessResult = await executeGraph(
-    makeBaseGraph(),
+    observationReadyGraph,
     makeExecutionContext(),
   );
   const repeatedSourceResult = repeatedSuccessResult.moduleResults.find(
@@ -2093,10 +2140,28 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     handlerFailureResult.runState.status === "failed" &&
+      handlerFailureResult.runState.currentStage === "execute" &&
       handlerFailureResult.runState.failedStage === "execute" &&
       handlerFailureResult.runState.compileFingerprint ===
         handlerFailureResult.compilePlan?.compileFingerprint,
     `Expected handler failure runState to align with execute failure and compile plan fingerprint. Actual: ${JSON.stringify(handlerFailureResult.runState)}`,
+  );
+  assert(
+    handlerFailureResult.runArtifact?.status === "failed" &&
+      handlerFailureResult.runArtifact?.failedStage === "execute" &&
+      handlerFailureResult.runArtifact?.latestNodeId === "llm_call" &&
+      handlerFailureResult.runArtifact?.latestNodeStatus === "failed" &&
+      typeof handlerFailureResult.runArtifact?.errorSummary === "string",
+    `Expected handler failure runArtifact to expose failed node/error summary. Actual: ${JSON.stringify(handlerFailureResult.runArtifact)}`,
+  );
+  const handlerFailureEventTypes = (handlerFailureResult.runEvents ?? []).map(
+    (event) => event.type,
+  );
+  assert(
+    handlerFailureEventTypes.includes("node_failed") &&
+      handlerFailureEventTypes[handlerFailureEventTypes.length - 1] ===
+        "run_failed",
+    `Expected failure event sequence to include node_failed and end with run_failed. Actual: ${handlerFailureEventTypes.join(",")}`,
   );
   assert(
     handlerFailureResult.ok === false &&
@@ -2145,6 +2210,14 @@ async function runValidationSpec(): Promise<void> {
     handlerFailureResult.hostWrites?.length === 0 &&
       handlerFailureResult.hostCommitContracts?.length === 0,
     `Expected non-target handler failure not to expose host descriptors/contracts. Actual: ${JSON.stringify({ hostWrites: handlerFailureResult.hostWrites, hostCommitContracts: handlerFailureResult.hostCommitContracts })}`,
+  );
+
+  assert(
+    (handlerFailureResult.runArtifact?.latestHeartbeat?.timestamp ?? 0) > 0 &&
+      (handlerFailureResult.runArtifact?.latestPartialOutput?.length ?? 0) >=
+        0 &&
+      !handlerFailureResult.runArtifact?.waitingUser,
+    `Expected failure path to preserve last observable heartbeat and tolerate prior partial output summaries while safely omitting waiting_user. Actual: ${JSON.stringify(handlerFailureResult.runArtifact)}`,
   );
 
   const sideEffectFailureResult = await executeGraph(
@@ -2239,11 +2312,23 @@ async function runValidationSpec(): Promise<void> {
     makeExecutionContext({ isCancelled: () => true }),
   );
   assert(
-    cancelledExecutionResult.runState.status === "failed" &&
+    cancelledExecutionResult.runState.status === "cancelled" &&
+      cancelledExecutionResult.runState.currentStage === "execute" &&
       cancelledExecutionResult.runState.failedStage === "execute" &&
       cancelledExecutionResult.runState.compileFingerprint ===
         cancelledExecutionResult.compilePlan?.compileFingerprint,
     `Expected cancelled execution runState to align with execute failure and retain compileFingerprint. Actual: ${JSON.stringify(cancelledExecutionResult.runState)}`,
+  );
+  assert(
+    cancelledExecutionResult.runArtifact?.status === "cancelled" &&
+      cancelledExecutionResult.runArtifact?.failedStage === "execute",
+    `Expected cancelled execution artifact to expose cancelled lifecycle state. Actual: ${JSON.stringify(cancelledExecutionResult.runArtifact)}`,
+  );
+  assert(
+    (cancelledExecutionResult.runEvents ?? []).some(
+      (event) => event.type === "run_cancelled",
+    ),
+    `Expected cancellation path to emit run_cancelled event. Actual: ${JSON.stringify(cancelledExecutionResult.runEvents)}`,
   );
   assert(
     cancelledExecutionResult.ok === false &&
@@ -2275,6 +2360,135 @@ async function runValidationSpec(): Promise<void> {
   assert(
     cancelledExecutionResult.trace?.failedNodeId === undefined,
     `Expected cancellation before execution to have no failedNodeId. Actual: ${cancelledExecutionResult.trace?.failedNodeId}`,
+  );
+
+  const successOverview = buildGraphRunDiagnosticsOverview(successResult);
+  assert(
+    successOverview.run.runId === successResult.runState.runId &&
+      successOverview.run.status === "completed" &&
+      successOverview.compile.compileFingerprint ===
+        successResult.compilePlan?.compileFingerprint &&
+      successOverview.compile.nodeCount === 2 &&
+      successOverview.compile.terminalNodeCount === 1 &&
+      successOverview.dirty.totalNodeCount === 2 &&
+      successOverview.dirty.dirtyNodeCount === 2 &&
+      successOverview.dirty.cleanNodeCount === 0 &&
+      successOverview.dirty.dirtyNodeIds.join(",") === "src_text,filter_text" &&
+      successOverview.dirty.reasonCounts.initial_run === 2 &&
+      successOverview.dirty.reasonCounts.input_changed === 0 &&
+      successOverview.dirty.reasonCounts.upstream_dirty === 0 &&
+      successOverview.dirty.reasonCounts.clean === 0,
+    `Expected success overview to project stable run/compile/dirty facts only. Actual: ${JSON.stringify(successOverview)}`,
+  );
+  const successOverviewRecord = successOverview as unknown as Record<
+    string,
+    unknown
+  >;
+  const successOverviewDirtyRecord = successOverview.dirty as unknown as Record<
+    string,
+    unknown
+  >;
+  const successOverviewRunRecord = successOverview.run as unknown as Record<
+    string,
+    unknown
+  >;
+  assert(
+    !("reuseVerdict" in successOverviewDirtyRecord) &&
+      !("executionDecision" in successOverviewRunRecord) &&
+      !("executionDecisionSummary" in successOverviewRecord) &&
+      !("nodeTraces" in successOverviewRecord) &&
+      !("cacheKeyFacts" in successOverviewRecord),
+    `Expected overview not to expose reuse/execution/cache/trace internals. Actual: ${JSON.stringify(successOverview)}`,
+  );
+
+  const repeatedCleanOverview = buildGraphRunDiagnosticsOverview(
+    repeatedSuccessResult,
+  );
+  assert(
+    repeatedCleanOverview.dirty.totalNodeCount === 2 &&
+      repeatedCleanOverview.dirty.dirtyNodeCount === 0 &&
+      repeatedCleanOverview.dirty.cleanNodeCount === 2 &&
+      repeatedCleanOverview.dirty.dirtyNodeIds.length === 0 &&
+      repeatedCleanOverview.dirty.reasonCounts.clean === 2 &&
+      repeatedSuccessResult.moduleResults.length ===
+        repeatedSuccessResult.compilePlan?.nodeOrder.length,
+    `Expected repeated clean overview to stay observational while full execution still occurs. Actual: ${JSON.stringify({ overview: repeatedCleanOverview, moduleResults: repeatedSuccessResult.moduleResults.length, planNodes: repeatedSuccessResult.compilePlan?.nodeOrder.length })}`,
+  );
+
+  const changedInputOverview = buildGraphRunDiagnosticsOverview(
+    dirtyPropagationChanged,
+  );
+  assert(
+    changedInputOverview.compile.compileFingerprint ===
+      dirtyPropagationChanged.compilePlan?.compileFingerprint &&
+      changedInputOverview.dirty.totalNodeCount === 3 &&
+      changedInputOverview.dirty.dirtyNodeCount === 3 &&
+      changedInputOverview.dirty.cleanNodeCount === 0 &&
+      changedInputOverview.dirty.dirtyNodeIds.join(",") ===
+        "src_text,filter_text,out_reply" &&
+      changedInputOverview.dirty.reasonCounts.initial_run === 0 &&
+      changedInputOverview.dirty.reasonCounts.input_changed === 1 &&
+      changedInputOverview.dirty.reasonCounts.upstream_dirty === 2 &&
+      changedInputOverview.dirty.reasonCounts.clean === 0,
+    `Expected changed-input overview to summarize dirty propagation only, not skip/cache semantics. Actual: ${JSON.stringify(changedInputOverview)}`,
+  );
+  assert(
+    dirtyPropagationChanged.moduleResults.length ===
+      dirtyPropagationChanged.compilePlan?.nodeOrder.length,
+    `Expected dirty overview not to imply skip/cache hit semantics. Actual: ${JSON.stringify({ moduleResults: dirtyPropagationChanged.moduleResults.length, planNodes: dirtyPropagationChanged.compilePlan?.nodeOrder.length, overview: changedInputOverview })}`,
+  );
+
+  const validationFailureOverview = buildGraphRunDiagnosticsOverview(
+    validationFailureResult,
+  );
+  assert(
+    validationFailureOverview.run.status === "failed" &&
+      validationFailureOverview.run.failedStage === "validate" &&
+      validationFailureOverview.compile.compileFingerprint === undefined &&
+      validationFailureOverview.compile.nodeCount === undefined &&
+      validationFailureOverview.compile.terminalNodeCount === undefined &&
+      validationFailureOverview.dirty.totalNodeCount === 0 &&
+      validationFailureOverview.dirty.dirtyNodeCount === 0 &&
+      validationFailureOverview.dirty.cleanNodeCount === 0 &&
+      validationFailureOverview.dirty.dirtyNodeIds.length === 0 &&
+      validationFailureOverview.dirty.reasonCounts.initial_run === 0 &&
+      validationFailureOverview.dirty.reasonCounts.input_changed === 0 &&
+      validationFailureOverview.dirty.reasonCounts.upstream_dirty === 0 &&
+      validationFailureOverview.dirty.reasonCounts.clean === 0,
+    `Expected validate failure overview to return zero dirty summary without trace fallback. Actual: ${JSON.stringify(validationFailureOverview)}`,
+  );
+
+  const validationFailureEventTypes = (
+    validationFailureResult.runEvents ?? []
+  ).map((event) => event.type);
+  assert(
+    validationFailureEventTypes.join(",") ===
+      "run_queued,run_started,stage_started,stage_finished,run_failed",
+    `Expected validate failure to stop at minimal lifecycle events. Actual: ${validationFailureEventTypes.join(",")}`,
+  );
+  assert(
+    !validationFailureResult.runArtifact?.latestHeartbeat &&
+      !validationFailureResult.runArtifact?.latestPartialOutput &&
+      !validationFailureResult.runArtifact?.waitingUser,
+    `Expected validation failure artifact to keep observation fields safely absent. Actual: ${JSON.stringify(validationFailureResult.runArtifact)}`,
+  );
+
+  const executeFailureOverview =
+    buildGraphRunDiagnosticsOverview(handlerFailureResult);
+  assert(
+    executeFailureOverview.run.status === "failed" &&
+      executeFailureOverview.run.failedStage === "execute" &&
+      executeFailureOverview.compile.compileFingerprint ===
+        handlerFailureResult.compilePlan?.compileFingerprint &&
+      executeFailureOverview.compile.nodeCount ===
+        handlerFailureResult.compilePlan?.nodeOrder.length &&
+      executeFailureOverview.compile.terminalNodeCount ===
+        handlerFailureResult.compilePlan?.terminalNodeIds.length &&
+      executeFailureOverview.dirty.totalNodeCount === 3 &&
+      executeFailureOverview.dirty.dirtyNodeCount === 3 &&
+      executeFailureOverview.dirty.cleanNodeCount === 0 &&
+      executeFailureOverview.dirty.reasonCounts.initial_run === 3,
+    `Expected execute failure overview to preserve stable compile/run facts and partial dirty summary. Actual: ${JSON.stringify(executeFailureOverview)}`,
   );
 
   // ── P1.3 Trace Semantics ──
@@ -3439,7 +3653,7 @@ async function runValidationSpec(): Promise<void> {
   //    (already tested above via executeGraph / executeCompiledGraph,
   //     but we add an explicit assertion that executor uses registry)
   const registrySuccessResult = await executeGraph(
-    makeBaseGraph(),
+    observationReadyGraph,
     makeExecutionContext({ userInput: "registry_test" }),
   );
   assert(

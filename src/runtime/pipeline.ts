@@ -1,4 +1,8 @@
-import type { WorkbenchGraph } from "../ui/components/graph/module-types";
+import type {
+  GraphRunArtifact,
+  GraphRunEvent,
+  WorkbenchGraph,
+} from "../ui/components/graph/module-types";
 import { getEffectiveFlows } from "./char-flows";
 import { getChatId, getChatMessages } from "./compat/character";
 import { FlowTriggerV1 } from "./contracts";
@@ -39,6 +43,8 @@ export type WorkflowBridgeDiagnostics = {
   graph_context?: {
     selected_graph_ids: string[];
   };
+  graph_run_overview?: GraphRunArtifact;
+  graph_run_events?: GraphRunEvent[];
   failure_origin?: WorkflowBridgeFailureOrigin;
 };
 
@@ -650,8 +656,10 @@ export function selectWorkflowBridgeRoute(params: {
 export function buildWorkflowBridgeDiagnostics(params: {
   selection: WorkflowBridgeRouteSelection;
   failureOrigin?: WorkflowBridgeFailureOrigin;
+  graphRunOverview?: GraphRunArtifact;
+  graphRunEvents?: GraphRunEvent[];
 }): Record<string, any> {
-  const { selection, failureOrigin } = params;
+  const { selection, failureOrigin, graphRunOverview, graphRunEvents } = params;
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -667,6 +675,8 @@ export function buildWorkflowBridgeDiagnostics(params: {
           },
         }
       : {}),
+    ...(graphRunOverview ? { graph_run_overview: graphRunOverview } : {}),
+    ...(graphRunEvents?.length ? { graph_run_events: graphRunEvents } : {}),
     ...(failureOrigin ? { failure_origin: failureOrigin } : {}),
   };
 
@@ -765,6 +775,8 @@ async function runGraphWorkflow(
   startedAt: number,
 ): Promise<RunWorkflowOutput> {
   const currentChatId = String(getChatId() ?? "unknown");
+  let latestGraphRunOverview: GraphRunArtifact | undefined;
+  let latestGraphRunEvents: GraphRunEvent[] | undefined;
   const bridgeDiagnostics = buildWorkflowBridgeDiagnostics({
     selection: bridgeRoute,
   });
@@ -810,14 +822,45 @@ async function runGraphWorkflow(
         settings,
         abortSignal: input.abortSignal,
         isCancelled: input.isCancelled,
-        onProgress: input.onProgress,
+        onProgress: (update) => {
+          if ("type" in update) {
+            const graphEvent = update as GraphRunEvent;
+            latestGraphRunOverview =
+              graphEvent.artifact ?? latestGraphRunOverview;
+            latestGraphRunEvents = [
+              ...(latestGraphRunEvents ?? []),
+              graphEvent,
+            ];
+            input.onProgress?.({
+              phase:
+                graphEvent.type === "run_completed"
+                  ? "completed"
+                  : graphEvent.type === "run_failed" ||
+                      graphEvent.type === "run_cancelled"
+                    ? "failed"
+                    : graphEvent.status === "streaming"
+                      ? "streaming"
+                      : "dispatching",
+              request_id: requestId,
+              message: `图运行事件：${graphEvent.type}`,
+              graph_id: graph.id,
+            } as WorkflowProgressUpdate);
+            return;
+          }
+          input.onProgress?.(update as WorkflowProgressUpdate);
+        },
       });
+      latestGraphRunOverview =
+        graphResult.runArtifact ?? latestGraphRunOverview;
+      latestGraphRunEvents = graphResult.runEvents ?? latestGraphRunEvents;
 
       if (!graphResult.ok) {
         const reason = graphResult.reason ?? "graph workflow failed";
         const diagnostics = buildWorkflowBridgeDiagnostics({
           selection: bridgeRoute,
           failureOrigin: "graph_dispatch",
+          graphRunOverview: latestGraphRunOverview,
+          graphRunEvents: latestGraphRunEvents,
         });
         const failure = buildWorkflowFailureDiagnostic({
           stage: "dispatch",
@@ -848,6 +891,11 @@ async function runGraphWorkflow(
       }
     }
 
+    const successDiagnostics = buildWorkflowBridgeDiagnostics({
+      selection: bridgeRoute,
+      graphRunOverview: latestGraphRunOverview,
+      graphRunEvents: latestGraphRunEvents,
+    });
     persistWorkflowSummary({
       ok: true,
       reason: "",
@@ -856,13 +904,13 @@ async function runGraphWorkflow(
       flowCount: sorted.length,
       startedAt,
       mode: input.mode,
-      bridgeDiagnostics,
+      bridgeDiagnostics: successDiagnostics,
     });
 
     return {
       ok: true,
       request_id: requestId,
-      diagnostics: bridgeDiagnostics,
+      diagnostics: successDiagnostics,
       attempts: [],
       results: allResults,
       failure: null,
@@ -876,6 +924,8 @@ async function runGraphWorkflow(
     const diagnostics = buildWorkflowBridgeDiagnostics({
       selection: bridgeRoute,
       failureOrigin,
+      graphRunOverview: latestGraphRunOverview,
+      graphRunEvents: latestGraphRunEvents,
     });
     const failure = buildWorkflowFailureDiagnostic({
       stage: failureOrigin === "cancelled" ? "cancelled" : "dispatch",

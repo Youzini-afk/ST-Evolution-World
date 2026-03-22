@@ -45,6 +45,134 @@
         </div>
       </div>
 
+      <div
+        v-if="diagnosticsSummary || activeRunSummary"
+        class="ew-workbench__diagnostics"
+      >
+        <div v-if="activeRunSummary" class="ew-workbench__diagnostics-block">
+          <div class="ew-workbench__diagnostics-heading">活动运行观测</div>
+          <div class="ew-workbench__diagnostics-main">
+            <span
+              class="ew-workbench__diagnostics-status"
+              :data-status="activeRunSummary.status"
+            >
+              {{ activeRunSummary.statusLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              {{
+                activeRunSummary.hasActiveRun
+                  ? "存在活动运行"
+                  : "当前无活动运行"
+              }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              阶段 {{ activeRunSummary.currentStageLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              最近节点 {{ activeRunSummary.latestNodeLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              节点状态 {{ activeRunSummary.latestNodeStatusLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              事件 {{ activeRunSummary.eventCount }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              恢复候选 {{ activeRunSummary.hasRecoveryCandidate ? "有" : "无" }}
+            </span>
+          </div>
+          <div class="ew-workbench__diagnostics-reasons">
+            <template v-if="activeRunSummary.checkpointCandidate">
+              <span class="ew-workbench__diagnostics-reason">
+                checkpoint {{ activeRunSummary.checkpointCandidate.stage }}
+              </span>
+              <span class="ew-workbench__diagnostics-reason">
+                节点 {{ activeRunSummary.checkpointCandidate.nodeId ?? "—" }}
+              </span>
+              <span class="ew-workbench__diagnostics-reason">
+                resumable
+                {{
+                  activeRunSummary.checkpointCandidate.resumable
+                    ? "true"
+                    : "false"
+                }}
+              </span>
+            </template>
+            <span v-else class="ew-workbench__diagnostics-item">
+              无 checkpoint candidate
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              heartbeat
+              {{
+                activeRunSummary.latestHeartbeat
+                  ? activeRunSummary.latestHeartbeatLabel
+                  : "无"
+              }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              partial output
+              {{
+                activeRunSummary.latestPartialOutput
+                  ? activeRunSummary.latestPartialOutputLabel
+                  : "无"
+              }}
+            </span>
+            <span
+              class="ew-workbench__diagnostics-reason"
+              :data-waiting-user="activeRunSummary.waitingUser ? '1' : '0'"
+            >
+              waiting_user
+              {{
+                activeRunSummary.waitingUser
+                  ? activeRunSummary.waitingUserLabel
+                  : "未进入"
+              }}
+            </span>
+          </div>
+        </div>
+
+        <div v-if="diagnosticsSummary" class="ew-workbench__diagnostics-block">
+          <div class="ew-workbench__diagnostics-heading">最近 diagnostics</div>
+          <div class="ew-workbench__diagnostics-main">
+            <span
+              class="ew-workbench__diagnostics-status"
+              :data-status="diagnosticsSummary.runStatus"
+            >
+              {{ diagnosticsSummary.runStatusLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              指纹 {{ diagnosticsSummary.compileFingerprintShort }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              节点 {{ diagnosticsSummary.nodeCount }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              Terminal {{ diagnosticsSummary.terminalNodeCount }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              Dirty {{ diagnosticsSummary.dirtyNodeCount }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
+              Clean {{ diagnosticsSummary.cleanNodeCount }}
+            </span>
+          </div>
+          <div class="ew-workbench__diagnostics-reasons">
+            <template v-if="diagnosticsSummary.primaryDirtyReasons.length > 0">
+              <span
+                v-for="reason in diagnosticsSummary.primaryDirtyReasons"
+                :key="reason.reason"
+                class="ew-workbench__diagnostics-reason"
+              >
+                {{ reason.label }} {{ reason.count }}
+              </span>
+            </template>
+            <span v-else class="ew-workbench__diagnostics-item">
+              主要 dirty 原因：无
+            </span>
+          </div>
+        </div>
+      </div>
+
       <div class="ew-workbench__main">
         <!-- Module palette -->
         <EwModulePalette />
@@ -183,6 +311,8 @@ import EwModulePalette from "./EwModulePalette.vue";
 import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
 import { MODULE_REGISTRY } from "./module-registry";
 import type {
+  GraphActiveRunSummaryViewModel,
+  GraphRunDiagnosticsSummaryViewModel,
   ModulePortDef,
   WorkbenchGraph,
   WorkbenchNode,
@@ -190,6 +320,8 @@ import type {
 
 const props = defineProps<{
   graphs: WorkbenchGraph[];
+  diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null;
+  activeRunSummary: GraphActiveRunSummaryViewModel | null;
 }>();
 
 const emit = defineEmits<{
@@ -463,6 +595,72 @@ function getPortPos(nodeId: string, portId: string) {
   min-height: 300px;
   border-radius: 0 0 8px 8px;
   overflow: hidden;
+}
+
+.ew-workbench__diagnostics {
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(12, 16, 36, 0.96);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+}
+
+.ew-workbench__diagnostics-block {
+  display: grid;
+  gap: 6px;
+}
+
+.ew-workbench__diagnostics-heading {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.62);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ew-workbench__diagnostics-main,
+.ew-workbench__diagnostics-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.ew-workbench__diagnostics-status,
+.ew-workbench__diagnostics-item,
+.ew-workbench__diagnostics-reason {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ew-workbench__diagnostics-status[data-status="completed"] {
+  background: rgba(16, 185, 129, 0.2);
+  color: #bbf7d0;
+}
+
+.ew-workbench__diagnostics-status[data-status="failed"] {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+}
+
+.ew-workbench__diagnostics-status[data-status="running"],
+.ew-workbench__diagnostics-status[data-status="streaming"],
+.ew-workbench__diagnostics-status[data-status="queued"],
+.ew-workbench__diagnostics-status[data-status="waiting_user"],
+.ew-workbench__diagnostics-status[data-status="cancelling"] {
+  background: rgba(59, 130, 246, 0.18);
+  color: #bfdbfe;
+}
+
+.ew-workbench__diagnostics-status[data-status="cancelled"] {
+  background: rgba(148, 163, 184, 0.18);
+  color: #e2e8f0;
 }
 
 /* Full-screen mode: fixed overlay covering entire screen */

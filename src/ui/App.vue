@@ -771,6 +771,8 @@
             <template v-else-if="store.activeTab === 'workbench'">
               <EwModuleWorkbench
                 :graphs="workbenchGraphs"
+                :diagnostics-summary="store.activeWorkbenchDiagnosticsSummary"
+                :active-run-summary="store.activeGraphRunSummary"
                 @update:graphs="
                   (g: any[]) => {
                     (store.settings as any).workbench_graphs = g;

@@ -47,6 +47,19 @@ import {
   RunSummary,
   type ControllerEntrySnapshot,
 } from "../runtime/types";
+import type {
+  GraphActiveRunSummaryViewModel,
+  GraphCheckpointCandidateViewModel,
+  GraphExecutionStage,
+  GraphNodeDirtyReason,
+  GraphRunArtifact,
+  GraphRunDiagnosticsOverview,
+  GraphRunDiagnosticsSummaryViewModel,
+  GraphRunHeartbeatSummary,
+  GraphRunPartialOutputSummary,
+  GraphRunStatus,
+  GraphRunWaitingUserSummary,
+} from "./components/graph/module-types";
 import { convertStPresetToFlow, isSillyTavernPreset } from "./convertStPreset";
 import type { TabKey } from "./help-meta";
 import { showEwNotice } from "./notice";
@@ -279,7 +292,11 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       ];
       scheduleCharFlowRefreshWatch();
 
-      if (uiOpen && tab === "debug" && (!prevUiOpen || prevTab !== "debug")) {
+      if (
+        uiOpen &&
+        (tab === "debug" || tab === "workbench") &&
+        (!prevUiOpen || prevTab !== tab)
+      ) {
         refreshDebugRecords({ silent: true });
       }
 
@@ -292,6 +309,444 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       }
     },
     { immediate: true },
+  );
+
+  function toGraphDiagnosticsOverview(
+    diagnostics: unknown,
+  ): GraphRunDiagnosticsOverview | null {
+    if (!_.isPlainObject(diagnostics)) {
+      return null;
+    }
+
+    const diagnosticsRecord = diagnostics as Record<string, unknown>;
+    const bridge = _.isPlainObject(diagnosticsRecord.bridge)
+      ? (diagnosticsRecord.bridge as Record<string, unknown>)
+      : null;
+    const graph = _.isPlainObject(diagnosticsRecord.graph)
+      ? (diagnosticsRecord.graph as Record<string, unknown>)
+      : null;
+    const graphOverview = graph?.overview;
+    const bridgeOverview = bridge?.graph_run_overview;
+    const overview = _.isPlainObject(graphOverview)
+      ? (graphOverview as Record<string, unknown>)
+      : _.isPlainObject(bridgeOverview)
+        ? (bridgeOverview as Record<string, unknown>)
+        : null;
+
+    if (!overview || !_.isPlainObject(overview.run)) {
+      return null;
+    }
+
+    const run = overview.run as Record<string, unknown>;
+    const compile = _.isPlainObject(overview.compile)
+      ? (overview.compile as Record<string, unknown>)
+      : {};
+    const dirty = _.isPlainObject(overview.dirty)
+      ? (overview.dirty as Record<string, unknown>)
+      : null;
+    const reasonCountsRaw = _.isPlainObject(dirty?.reasonCounts)
+      ? (dirty?.reasonCounts as Record<string, unknown>)
+      : {};
+
+    const normalizeCount = (value: unknown): number => {
+      const num = Number(value);
+      return Number.isFinite(num) && num >= 0 ? Math.trunc(num) : 0;
+    };
+
+    const normalizeReasonCount = (reason: GraphNodeDirtyReason): number =>
+      normalizeCount(reasonCountsRaw[reason]);
+
+    const graphRunStatuses: GraphRunStatus[] = [
+      "queued",
+      "running",
+      "streaming",
+      "waiting_user",
+      "cancelling",
+      "cancelled",
+      "failed",
+      "completed",
+    ];
+    const runStatus = graphRunStatuses.includes(run.status as GraphRunStatus)
+      ? (run.status as GraphRunStatus)
+      : "completed";
+    const failedStage =
+      run.failedStage === "validate" ||
+      run.failedStage === "compile" ||
+      run.failedStage === "execute"
+        ? (run.failedStage as GraphExecutionStage)
+        : undefined;
+    const compileFingerprint =
+      typeof compile.compileFingerprint === "string" &&
+      compile.compileFingerprint.trim()
+        ? compile.compileFingerprint.trim()
+        : typeof run.compileFingerprint === "string" &&
+            run.compileFingerprint.trim()
+          ? run.compileFingerprint.trim()
+          : undefined;
+
+    return {
+      run: {
+        runId: typeof run.runId === "string" ? run.runId : "",
+        status: runStatus,
+        ...(failedStage ? { failedStage } : {}),
+        startedAt: normalizeCount(run.startedAt),
+        completedAt: normalizeCount(run.completedAt),
+        elapsedMs: normalizeCount(run.elapsedMs),
+        ...(compileFingerprint ? { compileFingerprint } : {}),
+      },
+      compile: {
+        ...(compileFingerprint ? { compileFingerprint } : {}),
+        nodeCount:
+          compile.nodeCount === undefined
+            ? undefined
+            : normalizeCount(compile.nodeCount),
+        terminalNodeCount:
+          compile.terminalNodeCount === undefined
+            ? undefined
+            : normalizeCount(compile.terminalNodeCount),
+      },
+      dirty: {
+        totalNodeCount: normalizeCount(dirty?.totalNodeCount),
+        dirtyNodeCount: normalizeCount(dirty?.dirtyNodeCount),
+        cleanNodeCount: normalizeCount(dirty?.cleanNodeCount),
+        dirtyNodeIds: Array.isArray(dirty?.dirtyNodeIds)
+          ? dirty!.dirtyNodeIds
+              .filter((value): value is string => typeof value === "string")
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : [],
+        reasonCounts: {
+          initial_run: normalizeReasonCount("initial_run"),
+          input_changed: normalizeReasonCount("input_changed"),
+          upstream_dirty: normalizeReasonCount("upstream_dirty"),
+          clean: normalizeReasonCount("clean"),
+        },
+      },
+    };
+  }
+
+  function toDiagnosticsSummaryViewModel(
+    overview: GraphRunDiagnosticsOverview | null,
+  ): GraphRunDiagnosticsSummaryViewModel | null {
+    if (!overview) {
+      return null;
+    }
+
+    const compileFingerprint = overview.compile.compileFingerprint?.trim();
+    const fingerprintShort = compileFingerprint
+      ? compileFingerprint.length > 12
+        ? `${compileFingerprint.slice(0, 6)}…${compileFingerprint.slice(-4)}`
+        : compileFingerprint
+      : "—";
+    const dirtyReasonLabels: Record<GraphNodeDirtyReason, string> = {
+      initial_run: "初次运行",
+      input_changed: "输入变化",
+      upstream_dirty: "上游脏",
+      clean: "干净",
+    };
+    const primaryDirtyReasons = (
+      Object.entries(overview.dirty.reasonCounts) as Array<
+        [GraphNodeDirtyReason, number]
+      >
+    )
+      .filter(([reason, count]) => reason !== "clean" && count > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([reason, count]) => ({
+        reason,
+        label: dirtyReasonLabels[reason],
+        count,
+      }));
+
+    return {
+      runStatus: overview.run.status,
+      runStatusLabel:
+        overview.run.status === "completed"
+          ? "最近运行成功"
+          : overview.run.status === "failed"
+            ? `最近运行失败${overview.run.failedStage ? ` · ${overview.run.failedStage}` : ""}`
+            : overview.run.status === "cancelled"
+              ? "最近运行已取消"
+              : `最近运行中 · ${overview.run.status}`,
+      compileFingerprint,
+      compileFingerprintShort: fingerprintShort,
+      nodeCount: overview.compile.nodeCount ?? overview.dirty.totalNodeCount,
+      terminalNodeCount: overview.compile.terminalNodeCount ?? 0,
+      dirtyNodeCount: overview.dirty.dirtyNodeCount,
+      cleanNodeCount: overview.dirty.cleanNodeCount,
+      primaryDirtyReasons,
+    };
+  }
+
+  function toActiveGraphRunArtifact(
+    diagnostics: unknown,
+  ): GraphRunArtifact | null {
+    if (!_.isPlainObject(diagnostics)) {
+      return null;
+    }
+    const diagnosticsRecord = diagnostics as Record<string, unknown>;
+    const bridge = _.isPlainObject(diagnosticsRecord.bridge)
+      ? (diagnosticsRecord.bridge as Record<string, unknown>)
+      : null;
+    const artifact = _.isPlainObject(bridge?.graph_run_overview)
+      ? (bridge?.graph_run_overview as Record<string, unknown>)
+      : null;
+    if (!artifact) {
+      return null;
+    }
+    const updatedAt = Number(artifact.updatedAt);
+    const eventCount = Number(artifact.eventCount);
+    const toHeartbeatSummary = (
+      value: unknown,
+    ): GraphRunHeartbeatSummary | undefined => {
+      if (!_.isPlainObject(value)) {
+        return undefined;
+      }
+      const record = value as Record<string, unknown>;
+      const timestamp = Number(record.timestamp);
+      return {
+        timestamp: Number.isFinite(timestamp)
+          ? Math.max(0, Math.trunc(timestamp))
+          : 0,
+        nodeId: typeof record.nodeId === "string" ? record.nodeId : undefined,
+        moduleId:
+          typeof record.moduleId === "string" ? record.moduleId : undefined,
+        nodeIndex: Number.isFinite(Number(record.nodeIndex))
+          ? Math.max(0, Math.trunc(Number(record.nodeIndex)))
+          : undefined,
+        message:
+          typeof record.message === "string" ? record.message : undefined,
+      };
+    };
+    const toPartialOutputSummary = (
+      value: unknown,
+    ): GraphRunPartialOutputSummary | undefined => {
+      if (!_.isPlainObject(value)) {
+        return undefined;
+      }
+      const record = value as Record<string, unknown>;
+      const timestamp = Number(record.timestamp);
+      const length = Number(record.length);
+      return {
+        timestamp: Number.isFinite(timestamp)
+          ? Math.max(0, Math.trunc(timestamp))
+          : 0,
+        nodeId: typeof record.nodeId === "string" ? record.nodeId : undefined,
+        moduleId:
+          typeof record.moduleId === "string" ? record.moduleId : undefined,
+        nodeIndex: Number.isFinite(Number(record.nodeIndex))
+          ? Math.max(0, Math.trunc(Number(record.nodeIndex)))
+          : undefined,
+        preview: typeof record.preview === "string" ? record.preview : "",
+        length: Number.isFinite(length) ? Math.max(0, Math.trunc(length)) : 0,
+      };
+    };
+    const toWaitingUserSummary = (
+      value: unknown,
+    ): GraphRunWaitingUserSummary | undefined => {
+      if (!_.isPlainObject(value)) {
+        return undefined;
+      }
+      const record = value as Record<string, unknown>;
+      const timestamp = Number(record.timestamp);
+      return {
+        timestamp: Number.isFinite(timestamp)
+          ? Math.max(0, Math.trunc(timestamp))
+          : 0,
+        nodeId: typeof record.nodeId === "string" ? record.nodeId : undefined,
+        moduleId:
+          typeof record.moduleId === "string" ? record.moduleId : undefined,
+        nodeIndex: Number.isFinite(Number(record.nodeIndex))
+          ? Math.max(0, Math.trunc(Number(record.nodeIndex)))
+          : undefined,
+        reason:
+          typeof record.reason === "string" && record.reason.trim()
+            ? record.reason.trim()
+            : "waiting_user",
+      };
+    };
+    return {
+      runId: typeof artifact.runId === "string" ? artifact.runId : "",
+      graphId: typeof artifact.graphId === "string" ? artifact.graphId : "",
+      status:
+        typeof artifact.status === "string"
+          ? (artifact.status as GraphRunStatus)
+          : "completed",
+      currentStage:
+        artifact.currentStage === "validate" ||
+        artifact.currentStage === "compile" ||
+        artifact.currentStage === "execute"
+          ? (artifact.currentStage as GraphExecutionStage)
+          : undefined,
+      failedStage:
+        artifact.failedStage === "validate" ||
+        artifact.failedStage === "compile" ||
+        artifact.failedStage === "execute"
+          ? (artifact.failedStage as GraphExecutionStage)
+          : undefined,
+      compileFingerprint:
+        typeof artifact.compileFingerprint === "string"
+          ? artifact.compileFingerprint
+          : undefined,
+      latestNodeId:
+        typeof artifact.latestNodeId === "string"
+          ? artifact.latestNodeId
+          : undefined,
+      latestNodeModuleId:
+        typeof artifact.latestNodeModuleId === "string"
+          ? artifact.latestNodeModuleId
+          : undefined,
+      latestNodeStatus:
+        artifact.latestNodeStatus === "started" ||
+        artifact.latestNodeStatus === "finished" ||
+        artifact.latestNodeStatus === "failed" ||
+        artifact.latestNodeStatus === "skipped"
+          ? artifact.latestNodeStatus
+          : undefined,
+      diagnosticsOverview:
+        toGraphDiagnosticsOverview({
+          graph: { overview: artifact.diagnosticsOverview },
+        }) ?? undefined,
+      errorSummary:
+        typeof artifact.errorSummary === "string"
+          ? artifact.errorSummary
+          : undefined,
+      checkpointCandidate: _.isPlainObject(artifact.checkpointCandidate)
+        ? (artifact.checkpointCandidate as GraphRunArtifact["checkpointCandidate"])
+        : undefined,
+      latestHeartbeat: toHeartbeatSummary(artifact.latestHeartbeat),
+      latestPartialOutput: toPartialOutputSummary(artifact.latestPartialOutput),
+      waitingUser: toWaitingUserSummary(artifact.waitingUser),
+      eventCount: Number.isFinite(eventCount)
+        ? Math.max(0, Math.trunc(eventCount))
+        : 0,
+      updatedAt: Number.isFinite(updatedAt)
+        ? Math.max(0, Math.trunc(updatedAt))
+        : 0,
+    };
+  }
+
+  function toCheckpointCandidateViewModel(
+    candidate: GraphRunArtifact["checkpointCandidate"],
+  ): GraphCheckpointCandidateViewModel | null {
+    if (!candidate) {
+      return null;
+    }
+
+    return {
+      checkpointId: candidate.checkpointId,
+      stage: candidate.stage,
+      nodeId: candidate.nodeId,
+      nodeIndex: candidate.nodeIndex,
+      resumable: false,
+      reason: candidate.reason,
+      createdAt: candidate.createdAt,
+    };
+  }
+
+  function toActiveGraphRunSummaryViewModel(
+    artifact: GraphRunArtifact | null,
+    diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null,
+  ): GraphActiveRunSummaryViewModel | null {
+    if (!artifact) {
+      return null;
+    }
+
+    const stageLabels: Record<GraphExecutionStage, string> = {
+      validate: "校验阶段",
+      compile: "编译阶段",
+      execute: "执行阶段",
+    };
+    const statusLabels: Record<GraphRunStatus, string> = {
+      queued: "排队中",
+      running: "运行中",
+      streaming: "流式处理中",
+      waiting_user: "等待用户",
+      cancelling: "取消中",
+      completed: "已完成",
+      failed: "失败",
+      cancelled: "已取消",
+    };
+    const latestNodeStatusLabels: Record<
+      NonNullable<GraphRunArtifact["latestNodeStatus"]>,
+      string
+    > = {
+      started: "节点执行中",
+      finished: "节点已完成",
+      failed: "节点失败",
+      skipped: "节点已跳过",
+    };
+    const checkpointCandidate = toCheckpointCandidateViewModel(
+      artifact.checkpointCandidate,
+    );
+
+    return {
+      runId: artifact.runId,
+      graphId: artifact.graphId,
+      hasActiveRun:
+        artifact.status === "running" ||
+        artifact.status === "streaming" ||
+        artifact.status === "waiting_user",
+      status: artifact.status,
+      statusLabel:
+        statusLabels[artifact.status] ?? `状态 ${String(artifact.status)}`,
+      currentStage: artifact.currentStage,
+      currentStageLabel: artifact.currentStage
+        ? stageLabels[artifact.currentStage]
+        : "—",
+      latestNodeId: artifact.latestNodeId,
+      latestNodeModuleId: artifact.latestNodeModuleId,
+      latestNodeLabel:
+        artifact.latestNodeId || artifact.latestNodeModuleId
+          ? [artifact.latestNodeId, artifact.latestNodeModuleId]
+              .filter((value): value is string => Boolean(value))
+              .join(" · ")
+          : "—",
+      latestNodeStatus: artifact.latestNodeStatus,
+      latestNodeStatusLabel: artifact.latestNodeStatus
+        ? latestNodeStatusLabels[artifact.latestNodeStatus]
+        : "—",
+      eventCount: artifact.eventCount,
+      updatedAt: artifact.updatedAt,
+      hasRecoveryCandidate: checkpointCandidate !== null,
+      checkpointCandidate,
+      latestHeartbeat: artifact.latestHeartbeat ?? null,
+      latestHeartbeatLabel: artifact.latestHeartbeat
+        ? artifact.latestHeartbeat.message?.trim()
+          ? artifact.latestHeartbeat.message.trim()
+          : [artifact.latestHeartbeat.nodeId, artifact.latestHeartbeat.moduleId]
+              .filter((value): value is string => Boolean(value))
+              .join(" · ") || "heartbeat"
+        : "无 heartbeat",
+      latestPartialOutput: artifact.latestPartialOutput ?? null,
+      latestPartialOutputLabel: artifact.latestPartialOutput
+        ? artifact.latestPartialOutput.preview.trim()
+          ? `${artifact.latestPartialOutput.preview}${artifact.latestPartialOutput.length > artifact.latestPartialOutput.preview.length ? "…" : ""}`
+          : `长度 ${artifact.latestPartialOutput.length}`
+        : "无 partial output",
+      waitingUser: artifact.waitingUser ?? null,
+      waitingUserLabel: artifact.waitingUser?.reason ?? "未进入 waiting_user",
+      diagnosticsSummary,
+    };
+  }
+
+  const activeWorkbenchDiagnosticsOverview = computed(() =>
+    toGraphDiagnosticsOverview(lastRun.value?.diagnostics),
+  );
+
+  const activeWorkbenchDiagnosticsSummary = computed(() =>
+    toDiagnosticsSummaryViewModel(activeWorkbenchDiagnosticsOverview.value),
+  );
+
+  const activeGraphRunArtifact = computed(() =>
+    toActiveGraphRunArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphRunSummary = computed(() =>
+    toActiveGraphRunSummaryViewModel(
+      activeGraphRunArtifact.value,
+      activeWorkbenchDiagnosticsSummary.value,
+    ),
   );
 
   function refreshDebugRecords(options: { silent?: boolean } = {}) {
@@ -1150,6 +1605,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     settings,
     lastRun,
     lastIo,
+    activeWorkbenchDiagnosticsOverview,
+    activeWorkbenchDiagnosticsSummary,
+    activeGraphRunArtifact,
+    activeGraphRunSummary,
     activeTab,
     globalAdvancedOpen,
     expandedApiPresetId,

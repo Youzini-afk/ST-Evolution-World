@@ -310,6 +310,14 @@ export interface GraphDirtySetSummary {
   dirtyNodeIds: string[];
 }
 
+export interface GraphRunDiagnosticsDirtyOverview {
+  totalNodeCount: number;
+  dirtyNodeCount: number;
+  cleanNodeCount: number;
+  dirtyNodeIds: string[];
+  reasonCounts: Record<GraphNodeDirtyReason, number>;
+}
+
 export interface GraphNodeCacheKeyFacts {
   compileFingerprint: string;
   nodeFingerprint: string;
@@ -410,6 +418,122 @@ export interface GraphExecutionTrace {
   executionDecisionSummary?: GraphExecutionDecisionSummary;
 }
 
+export type GraphRunStatus =
+  | "queued"
+  | "running"
+  | "streaming"
+  | "waiting_user"
+  | "cancelling"
+  | "cancelled"
+  | "failed"
+  | "completed";
+
+export type GraphRunEventType =
+  | "run_queued"
+  | "run_started"
+  | "run_completed"
+  | "run_failed"
+  | "run_cancelled"
+  | "stage_started"
+  | "stage_finished"
+  | "node_started"
+  | "node_finished"
+  | "node_failed"
+  | "node_skipped"
+  | "checkpoint_candidate"
+  | "heartbeat"
+  | "partial_output"
+  | "waiting_user";
+
+export interface GraphRunHeartbeatSummary {
+  timestamp: number;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+  message?: string;
+}
+
+export interface GraphRunPartialOutputSummary {
+  timestamp: number;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+  preview: string;
+  length: number;
+}
+
+export interface GraphRunWaitingUserSummary {
+  timestamp: number;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+  reason: string;
+}
+
+export interface GraphRunCheckpointSummary {
+  checkpointId: string;
+  runId: string;
+  graphId: string;
+  compileFingerprint?: string;
+  stage: GraphExecutionStage;
+  nodeId?: string;
+  nodeIndex?: number;
+  resumable: false;
+  reason: "stage_boundary" | "node_boundary" | "terminal_candidate";
+  createdAt: number;
+}
+
+export interface GraphRunArtifact {
+  runId: string;
+  graphId: string;
+  compileFingerprint?: string;
+  status: GraphRunStatus;
+  currentStage?: GraphExecutionStage;
+  failedStage?: GraphExecutionStage;
+  latestNodeId?: string;
+  latestNodeModuleId?: string;
+  latestNodeStatus?: "started" | "finished" | "failed" | "skipped";
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  errorSummary?: string;
+  checkpointCandidate?: GraphRunCheckpointSummary;
+  latestHeartbeat?: GraphRunHeartbeatSummary;
+  latestPartialOutput?: GraphRunPartialOutputSummary;
+  waitingUser?: GraphRunWaitingUserSummary;
+  eventCount: number;
+  updatedAt: number;
+}
+
+export interface GraphRunEvent {
+  type: GraphRunEventType;
+  runId: string;
+  graphId: string;
+  status?: GraphRunStatus;
+  stage?: GraphExecutionStage;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+  checkpoint?: GraphRunCheckpointSummary;
+  artifact?: GraphRunArtifact;
+  diagnosticsOverview?: GraphRunDiagnosticsOverview;
+  heartbeat?: GraphRunHeartbeatSummary;
+  partialOutput?: GraphRunPartialOutputSummary;
+  waitingUser?: GraphRunWaitingUserSummary;
+  error?: string;
+  timestamp: number;
+}
+
+export interface GraphRunProgressCompatibleUpdate {
+  request_id: string;
+  phase: string;
+  message?: string;
+  graph_id?: string;
+  [key: string]: unknown;
+}
+
+export type GraphRunProgressUpdate =
+  | GraphRunEvent
+  | GraphRunProgressCompatibleUpdate;
+
 /** Context available to all modules during execution */
 export interface ExecutionContext {
   requestId: string;
@@ -420,7 +544,7 @@ export interface ExecutionContext {
   settings: any; // EwSettings
   abortSignal?: AbortSignal;
   isCancelled?: () => boolean;
-  onProgress?: (update: any) => void;
+  onProgress?: (update: GraphRunProgressUpdate) => void;
 }
 
 /** Result of executing a single module */
@@ -450,12 +574,78 @@ export interface ModuleExecutionResult {
 
 export interface GraphRunState {
   runId: string;
-  status: "completed" | "failed";
+  graphId?: string;
+  status: GraphRunStatus;
+  currentStage?: GraphExecutionStage;
   failedStage?: GraphExecutionStage;
   startedAt: number;
   completedAt: number;
   elapsedMs: number;
   compileFingerprint?: string;
+}
+
+export interface GraphRunDiagnosticsOverview {
+  run: GraphRunState;
+  compile: {
+    compileFingerprint?: string;
+    nodeCount?: number;
+    terminalNodeCount?: number;
+  };
+  dirty: GraphRunDiagnosticsDirtyOverview;
+}
+
+export interface GraphRunDiagnosticsReasonBadge {
+  reason: GraphNodeDirtyReason;
+  label: string;
+  count: number;
+}
+
+export interface GraphRunDiagnosticsSummaryViewModel {
+  runStatus: GraphRunState["status"];
+  runStatusLabel: string;
+  compileFingerprint?: string;
+  compileFingerprintShort: string;
+  nodeCount: number;
+  terminalNodeCount: number;
+  dirtyNodeCount: number;
+  cleanNodeCount: number;
+  primaryDirtyReasons: GraphRunDiagnosticsReasonBadge[];
+}
+
+export interface GraphCheckpointCandidateViewModel {
+  checkpointId: string;
+  stage: GraphExecutionStage;
+  nodeId?: string;
+  nodeIndex?: number;
+  resumable: false;
+  reason: GraphRunCheckpointSummary["reason"];
+  createdAt: number;
+}
+
+export interface GraphActiveRunSummaryViewModel {
+  runId: string;
+  graphId: string;
+  hasActiveRun: boolean;
+  status: GraphRunStatus;
+  statusLabel: string;
+  currentStage?: GraphExecutionStage;
+  currentStageLabel: string;
+  latestNodeId?: string;
+  latestNodeModuleId?: string;
+  latestNodeLabel: string;
+  latestNodeStatus?: GraphRunArtifact["latestNodeStatus"];
+  latestNodeStatusLabel: string;
+  eventCount: number;
+  updatedAt: number;
+  hasRecoveryCandidate: boolean;
+  checkpointCandidate: GraphCheckpointCandidateViewModel | null;
+  latestHeartbeat: GraphRunHeartbeatSummary | null;
+  latestHeartbeatLabel: string;
+  latestPartialOutput: GraphRunPartialOutputSummary | null;
+  latestPartialOutputLabel: string;
+  waitingUser: GraphRunWaitingUserSummary | null;
+  waitingUserLabel: string;
+  diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null;
 }
 
 /** Result of executing the entire graph */
@@ -464,6 +654,9 @@ export interface GraphExecutionResult {
   reason?: string;
   requestId: string;
   runState: GraphRunState;
+  runArtifact?: GraphRunArtifact;
+  runEvents?: GraphRunEvent[];
+  checkpointCandidate?: GraphRunCheckpointSummary;
   moduleResults: ModuleExecutionResult[];
   finalOutputs: Record<string, any>;
   elapsedMs: number;
