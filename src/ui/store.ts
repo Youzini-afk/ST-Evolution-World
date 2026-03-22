@@ -26,6 +26,7 @@ import { readGraphCompileArtifactEnvelope } from "../runtime/graph-compile-artif
 import { readGraphCompileRunLinkArtifactEnvelope } from "../runtime/graph-compile-run-link-artifact-codec";
 import { readGraphDocumentEnvelope } from "../runtime/graph-document-codec";
 import { readGraphNodeInputResolutionArtifactEnvelope } from "../runtime/graph-input-resolution-artifact-codec";
+import { readGraphOutputExplainArtifactEnvelope } from "../runtime/graph-output-explain-artifact-codec";
 import { readGraphReuseExplainArtifactEnvelope } from "../runtime/graph-reuse-explain-artifact-codec";
 import { readGraphRunSnapshotEnvelope } from "../runtime/graph-run-artifact-codec";
 import { readGraphSchedulingExplainArtifactEnvelope } from "../runtime/graph-scheduling-explain-artifact-codec";
@@ -72,6 +73,7 @@ import type {
   GraphNodeExecutionDecisionReason,
   GraphNodeInputResolutionArtifactV1,
   GraphNodeReuseReason,
+  GraphOutputExplainArtifactV1,
   GraphReuseExplainArtifactV1,
   GraphRunArtifact,
   GraphRunBlockingContract,
@@ -1223,6 +1225,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphOutputExplainArtifact(
+    diagnostics: unknown,
+  ): GraphOutputExplainArtifactV1 | null {
+    return (
+      readGraphOutputExplainArtifactEnvelope(diagnostics)?.artifact ?? null
+    );
+  }
+
   function toActiveGraphReuseExplainArtifact(
     diagnostics: unknown,
   ): GraphReuseExplainArtifactV1 | null {
@@ -1807,6 +1817,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphCompileRunLinkArtifact = computed(() =>
     toActiveGraphCompileRunLinkArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphOutputExplainArtifact = computed(() =>
+    toActiveGraphOutputExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeGraphReuseExplainArtifact = computed(() =>
@@ -2750,6 +2764,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphCompileArtifact,
     activeGraphNodeInputResolutionArtifact,
     activeGraphCompileRunLinkArtifact,
+    activeGraphOutputExplainArtifact,
     activeGraphReuseExplainArtifact,
     activeGraphSchedulingExplainArtifact,
     activeGraphRunArtifact,

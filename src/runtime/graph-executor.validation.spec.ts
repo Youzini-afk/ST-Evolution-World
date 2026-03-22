@@ -43,6 +43,10 @@ import {
   readGraphNodeInputResolutionArtifactEnvelope,
 } from "./graph-input-resolution-artifact-codec";
 import {
+  createGraphOutputExplainArtifactEnvelope,
+  readGraphOutputExplainArtifactEnvelope,
+} from "./graph-output-explain-artifact-codec";
+import {
   createGraphReuseExplainArtifactEnvelope,
   readGraphReuseExplainArtifactEnvelope,
 } from "./graph-reuse-explain-artifact-codec";
@@ -3600,6 +3604,344 @@ async function runValidationSpec(): Promise<void> {
     `Expected malformed or sparse compile-run link payloads to conservatively degrade without leaking runtime internals. Actual: ${JSON.stringify(degradedCompileRunLink)}`,
   );
 
+  const outputExplainEnvelope = createGraphOutputExplainArtifactEnvelope({
+    plan: skipPilotRepeat.compilePlan,
+    runArtifact: skipPilotRepeat.runArtifact,
+    result: skipPilotRepeat,
+    compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+  });
+  assert(
+    outputExplainEnvelope?.kind === "graph_output_explain_artifact" &&
+      outputExplainEnvelope.version === "v1" &&
+      outputExplainEnvelope.artifact.graphId ===
+        skipPilotRepeat.runArtifact?.graphId &&
+      outputExplainEnvelope.artifact.runId === skipPilotRepeat.requestId &&
+      outputExplainEnvelope.artifact.compileFingerprint ===
+        skipPilotRepeat.compilePlan?.compileFingerprint &&
+      outputExplainEnvelope.artifact.nodeCount ===
+        skipPilotRepeat.compilePlan?.fingerprintSource?.nodeCount &&
+      outputExplainEnvelope.artifact.observedOutputNodeCount === 2 &&
+      outputExplainEnvelope.artifact.finalOutputNodeIds.join(",") === "" &&
+      outputExplainEnvelope.artifact.intermediateOutputNodeIds.join(",") ===
+        "src_text,filter_text",
+    `Expected output explain envelope to project stable read-only output summaries and final/intermediate split. Actual: ${JSON.stringify(outputExplainEnvelope)}`,
+  );
+  assert(
+    !JSON.stringify(outputExplainEnvelope).includes('"outputs"') &&
+      !JSON.stringify(outputExplainEnvelope).includes('"hostWrites"') &&
+      !JSON.stringify(outputExplainEnvelope).includes(
+        '"hostCommitContracts"',
+      ) &&
+      !JSON.stringify(outputExplainEnvelope).includes('"scopeKey"') &&
+      !JSON.stringify(outputExplainEnvelope).includes('"trace"') &&
+      !JSON.stringify(outputExplainEnvelope).includes("skip-pilot") &&
+      !JSON.stringify(outputExplainEnvelope).includes("repeated") &&
+      !JSON.stringify(outputExplainEnvelope).includes("host + output"),
+    `Expected output explain envelope to omit raw payloads and runtime-only internals. Actual: ${JSON.stringify(outputExplainEnvelope)}`,
+  );
+  assert(
+    outputExplainEnvelope?.artifact.nodes
+      .map(
+        (node: {
+          nodeId: string;
+          projectionKind: string;
+          outputObserved: boolean;
+          includedInFinalOutputs: boolean;
+          latestPartialOutputObserved: boolean;
+          producedHostEffect: boolean;
+        }) =>
+          `${node.nodeId}:${node.projectionKind}:${node.outputObserved}:${node.includedInFinalOutputs}:${node.latestPartialOutputObserved}:${node.producedHostEffect}`,
+      )
+      .join(",") ===
+      "src_text:intermediate_output:true:false:false:false,filter_text:intermediate_output:true:false:false:false,out_reply:host_effect_only:false:false:false:true",
+    `Expected output explain artifact to distinguish intermediate output from host_effect_only while preserving host effect facts. Actual: ${JSON.stringify(outputExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const degradedOutputExplain = readGraphOutputExplainArtifactEnvelope({
+    bridge: {
+      graph_output_explain_artifact: {
+        kind: "graph_output_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          compileFingerprint: "compile_fp_sparse",
+          nodeCount: -3,
+          observedOutputNodeCount: -5,
+          finalOutputNodeIds: ["node_sparse", 2],
+          intermediateOutputNodeIds: ["node_sparse", { bad: true }],
+          hostEffectNodeIds: ["node_sparse", { bad: true }],
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "src_user_input",
+              nodeFingerprint: "node_fp_sparse",
+              compileOrder: -2,
+              runDisposition: "invented_state",
+              isTerminal: true,
+              isSideEffect: true,
+              outputObserved: true,
+              outputValueType: "object",
+              outputPreview: "preview payload",
+              outputFingerprintSummary: "sha1:test_fp",
+              isTruncated: false,
+              includedInFinalOutputs: true,
+              latestPartialOutputObserved: true,
+              producedHostEffect: true,
+              projectionKind: "made_up_projection",
+              outputs: { leak: true },
+              hostWrites: [{ leak: true }],
+              runtimeOnly: { leak: true },
+            },
+            {
+              nodeId: "broken_only",
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert(
+    degradedOutputExplain?.artifact.nodeCount === 0 &&
+      degradedOutputExplain.artifact.observedOutputNodeCount === 0 &&
+      degradedOutputExplain.artifact.finalOutputNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedOutputExplain.artifact.intermediateOutputNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedOutputExplain.artifact.hostEffectNodeIds.join(",") ===
+        "node_sparse" &&
+      degradedOutputExplain.artifact.nodes.length === 1 &&
+      degradedOutputExplain.artifact.nodes[0]?.compileOrder === 0 &&
+      degradedOutputExplain.artifact.nodes[0]?.runDisposition ===
+        "not_reached" &&
+      degradedOutputExplain.artifact.nodes[0]?.projectionKind ===
+        "final_output" &&
+      !JSON.stringify(degradedOutputExplain).includes('"outputs"') &&
+      !JSON.stringify(degradedOutputExplain).includes('"hostWrites"') &&
+      !JSON.stringify(degradedOutputExplain).includes('"runtimeOnly"'),
+    `Expected malformed or sparse output explain payloads to conservatively degrade without leaking runtime internals. Actual: ${JSON.stringify(degradedOutputExplain)}`,
+  );
+
+  const outputExplainRoundtrip = readGraphOutputExplainArtifactEnvelope({
+    bridge: {
+      graph_output_explain_artifact: {
+        kind: "graph_output_explain_artifact",
+        version: "v1",
+        artifact: outputExplainEnvelope?.artifact,
+      },
+    },
+  });
+  assert(
+    outputExplainRoundtrip?.artifact.compileFingerprint ===
+      outputExplainEnvelope?.artifact.compileFingerprint &&
+      outputExplainRoundtrip?.artifact.nodes.length ===
+        outputExplainEnvelope?.artifact.nodes.length,
+    `Expected output explain envelope to roundtrip through stable read model. Actual: ${JSON.stringify(outputExplainRoundtrip)}`,
+  );
+
+  const failureOutputExplainEnvelope = createGraphOutputExplainArtifactEnvelope(
+    {
+      plan: handlerFailureResult.compilePlan,
+      runArtifact: handlerFailureResult.runArtifact,
+      result: handlerFailureResult,
+      compileRunLinkArtifact: failureCompileRunLinkEnvelope?.artifact,
+    },
+  );
+  assert(
+    failureOutputExplainEnvelope?.artifact.compileFingerprint ===
+      handlerFailureResult.runArtifact?.compileFingerprint &&
+      failureOutputExplainEnvelope?.artifact.nodes.find(
+        (node: { nodeId: string; projectionKind: string }) =>
+          node.nodeId === "node_reply",
+      )?.projectionKind === "failed",
+    `Expected failed run disposition to conservatively project as failed output explain state. Actual: ${JSON.stringify(failureOutputExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const notReachedOutputExplainEnvelope =
+    createGraphOutputExplainArtifactEnvelope({
+      plan: failSkipResult.compilePlan,
+      runArtifact: failSkipResult.runArtifact,
+      result: failSkipResult,
+      compileRunLinkArtifact: notReachedCompileRunLinkEnvelope?.artifact,
+    });
+  assert(
+    notReachedOutputExplainEnvelope?.artifact.nodes.find(
+      (node: { nodeId: string; projectionKind: string }) =>
+        node.nodeId === "out_reply",
+    )?.projectionKind === "not_reached",
+    `Expected downstream unexecuted node to conservatively project as not_reached. Actual: ${JSON.stringify(notReachedOutputExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const partialEvidenceOnlyOutputExplain =
+    createGraphOutputExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_partial_only",
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        status: "running",
+        phase: "executing",
+        phaseLabel: "执行中",
+        latestPartialOutput: {
+          timestamp: 1,
+          nodeId: "out_reply",
+          moduleId: "out_reply_inject",
+          preview: "partial only",
+          length: 12,
+        },
+        eventCount: 0,
+        updatedAt: 1,
+      },
+      result: {
+        moduleResults: [],
+      },
+      compileRunLinkArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_partial_only",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        fingerprintVersion: 1,
+        nodeCount: compilePlanFixture.nodes.length,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: compilePlanFixture.nodes.map((node) => ({
+          nodeId: node.nodeId,
+          moduleId: node.moduleId,
+          nodeFingerprint: node.nodeFingerprint,
+          compileOrder: node.order,
+          dependsOn: [...node.dependsOn],
+          isTerminal: node.isTerminal,
+          isSideEffect: node.isSideEffectNode,
+          runDisposition: "executed",
+          includedInFinalOutputs: false,
+          producedHostEffect: false,
+          inputResolutionObserved: false,
+        })),
+      },
+    });
+  assert(
+    partialEvidenceOnlyOutputExplain?.artifact.nodes.find(
+      (node: { nodeId: string; latestPartialOutputObserved: boolean }) =>
+        node.nodeId === "out_reply",
+    )?.latestPartialOutputObserved === true &&
+      partialEvidenceOnlyOutputExplain.artifact.nodes.find(
+        (node: {
+          nodeId: string;
+          outputObserved: boolean;
+          projectionKind: string;
+        }) => node.nodeId === "out_reply",
+      )?.outputObserved === false &&
+      partialEvidenceOnlyOutputExplain.artifact.nodes.find(
+        (node: { nodeId: string; projectionKind: string }) =>
+          node.nodeId === "out_reply",
+      )?.projectionKind === "no_observed_output",
+    `Expected partial output evidence to remain observational only and not imply final output. Actual: ${JSON.stringify(partialEvidenceOnlyOutputExplain?.artifact.nodes)}`,
+  );
+  const srcTextOutputSummary = outputExplainEnvelope?.artifact.nodes.find(
+    (node: {
+      nodeId: string;
+      outputPreview?: string;
+      outputFingerprintSummary?: string;
+      isTruncated: boolean;
+    }) => node.nodeId === "src_text",
+  );
+  const filterTextOutputSummary = outputExplainEnvelope?.artifact.nodes.find(
+    (node: {
+      nodeId: string;
+      outputPreview?: string;
+      outputFingerprintSummary?: string;
+      isTruncated: boolean;
+    }) => node.nodeId === "filter_text",
+  );
+  assert(
+    srcTextOutputSummary?.outputPreview === "string(length=10)" &&
+      filterTextOutputSummary?.outputPreview === "string(length=19)" &&
+      srcTextOutputSummary.outputFingerprintSummary?.startsWith("sha1:") ===
+        true &&
+      filterTextOutputSummary.outputFingerprintSummary?.startsWith("sha1:") ===
+        true &&
+      srcTextOutputSummary.isTruncated === false &&
+      filterTextOutputSummary.isTruncated === false &&
+      !srcTextOutputSummary.outputPreview.includes("skip-pilot") &&
+      !filterTextOutputSummary.outputPreview.includes("repeated"),
+    `Expected outputPreview to remain a conservative summary without leaking payload text. Actual: ${JSON.stringify(outputExplainEnvelope?.artifact.nodes)}`,
+  );
+
+  const finalOutputGraph = makeBaseGraph();
+  finalOutputGraph.nodes = finalOutputGraph.nodes.filter(
+    (node) => node.id !== "out_reply",
+  );
+  finalOutputGraph.edges = finalOutputGraph.edges.filter(
+    (edge) => edge.target !== "out_reply" && edge.source !== "out_reply",
+  );
+  const finalOutputResult = await executeGraph(
+    finalOutputGraph,
+    makeExecutionContext({ userInput: "final-output" }),
+  );
+  const finalOutputCompileRunLinkEnvelope =
+    createGraphCompileRunLinkArtifactEnvelope({
+      plan: finalOutputResult.compilePlan,
+      runArtifact: finalOutputResult.runArtifact,
+      result: finalOutputResult,
+    });
+  const finalOutputExplainEnvelope = createGraphOutputExplainArtifactEnvelope({
+    plan: finalOutputResult.compilePlan,
+    runArtifact: finalOutputResult.runArtifact,
+    result: finalOutputResult,
+    compileRunLinkArtifact: finalOutputCompileRunLinkEnvelope?.artifact,
+  });
+  assert(
+    finalOutputExplainEnvelope?.artifact.finalOutputNodeIds.join(",") ===
+      "filter_text" &&
+      finalOutputExplainEnvelope.artifact.intermediateOutputNodeIds.join(
+        ",",
+      ) === "src_text" &&
+      finalOutputExplainEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionKind: string }) =>
+          node.nodeId === "filter_text",
+      )?.projectionKind === "final_output" &&
+      finalOutputExplainEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionKind: string }) =>
+          node.nodeId === "src_text",
+      )?.projectionKind === "intermediate_output",
+    `Expected successful non-side-effect terminal path to distinguish final_output from intermediate_output. Actual: ${JSON.stringify(finalOutputExplainEnvelope?.artifact)}`,
+  );
+
+  const hostEffectWithObservedOutputEnvelope =
+    createGraphOutputExplainArtifactEnvelope({
+      plan: skipPilotRepeat.compilePlan,
+      runArtifact: skipPilotRepeat.runArtifact,
+      result: {
+        moduleResults: skipPilotRepeat.moduleResults.map((moduleResult) =>
+          moduleResult.nodeId === "out_reply"
+            ? {
+                ...moduleResult,
+                outputs: { acknowledgement: "host + output" },
+              }
+            : moduleResult,
+        ),
+      },
+      compileRunLinkArtifact: compileRunLinkEnvelope?.artifact,
+    });
+  assert(
+    hostEffectWithObservedOutputEnvelope?.artifact.nodes.find(
+      (node: {
+        nodeId: string;
+        producedHostEffect: boolean;
+        outputObserved: boolean;
+        projectionKind: string;
+      }) => node.nodeId === "out_reply",
+    )?.producedHostEffect === true &&
+      hostEffectWithObservedOutputEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; outputObserved: boolean }) =>
+          node.nodeId === "out_reply",
+      )?.outputObserved === true &&
+      hostEffectWithObservedOutputEnvelope.artifact.nodes.find(
+        (node: { nodeId: string; projectionKind: string }) =>
+          node.nodeId === "out_reply",
+      )?.projectionKind === "intermediate_output",
+    `Expected host effect and observable output to coexist without collapsing into host_effect_only. Actual: ${JSON.stringify(hostEffectWithObservedOutputEnvelope?.artifact.nodes)}`,
+  );
+
   const reuseExplainEnvelope = createGraphReuseExplainArtifactEnvelope({
     plan: skipPilotRepeat.compilePlan,
     runArtifact: skipPilotRepeat.runArtifact,
@@ -4663,6 +5005,17 @@ async function runValidationSpec(): Promise<void> {
           node.runDisposition === "skipped_reuse",
       ),
     `Expected store read surface to consume graph compile-run link artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeCompileRunLinkArtifact)}`,
+  );
+  const activeOutputExplainArtifact = store.activeGraphOutputExplainArtifact;
+  assert(
+    activeOutputExplainArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeOutputExplainArtifact.runId === skipPilotRepeat.requestId &&
+      activeOutputExplainArtifact.nodes.find(
+        (node: { nodeId: string; projectionKind: string }) =>
+          node.nodeId === "out_reply",
+      )?.projectionKind === "host_effect_only",
+    `Expected store read surface to consume graph output explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeOutputExplainArtifact)}`,
   );
   const activeReuseExplainArtifact = store.activeGraphReuseExplainArtifact;
   assert(

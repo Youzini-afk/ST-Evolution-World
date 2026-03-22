@@ -3,6 +3,7 @@ import type {
   GraphCompileRunLinkArtifactEnvelope,
   GraphExecutionResult,
   GraphNodeInputResolutionArtifactEnvelope,
+  GraphOutputExplainArtifactEnvelope,
   GraphReuseExplainArtifactEnvelope,
   GraphRunArtifact,
   GraphRunEvent,
@@ -19,6 +20,7 @@ import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-cod
 import { createGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphNodeInputResolutionArtifactEnvelope } from "./graph-input-resolution-artifact-codec";
+import { createGraphOutputExplainArtifactEnvelope } from "./graph-output-explain-artifact-codec";
 import { createGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
 import { createGraphSchedulingExplainArtifactEnvelope } from "./graph-scheduling-explain-artifact-codec";
@@ -60,6 +62,7 @@ export type WorkflowBridgeDiagnostics = {
     typeof createGraphCompileArtifactEnvelope
   >;
   graph_compile_run_link_artifact?: GraphCompileRunLinkArtifactEnvelope;
+  graph_output_explain_artifact?: GraphOutputExplainArtifactEnvelope;
   graph_reuse_explain_artifact?: GraphReuseExplainArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
   graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
@@ -777,6 +780,16 @@ export function buildWorkflowBridgeDiagnostics(params: {
       : null,
     compileRunLinkArtifact: graphCompileRunLinkArtifact?.artifact ?? null,
   });
+  const graphOutputExplainArtifact = createGraphOutputExplainArtifactEnvelope({
+    plan: graphCompilePlan ?? null,
+    runArtifact: effectiveGraphRunOverview ?? null,
+    result: graphExecutionResult
+      ? {
+          moduleResults: graphExecutionResult.moduleResults,
+        }
+      : null,
+    compileRunLinkArtifact: graphCompileRunLinkArtifact?.artifact ?? null,
+  });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -803,6 +816,11 @@ export function buildWorkflowBridgeDiagnostics(params: {
     ...(graphReuseExplainArtifact
       ? {
           graph_reuse_explain_artifact: graphReuseExplainArtifact,
+        }
+      : {}),
+    ...(graphOutputExplainArtifact
+      ? {
+          graph_output_explain_artifact: graphOutputExplainArtifact,
         }
       : {}),
     ...(graphNodeInputResolutionArtifact

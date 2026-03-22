@@ -499,6 +499,52 @@ export interface GraphCompileRunLinkArtifactEnvelope {
   artifact: GraphCompileRunLinkArtifactV1;
 }
 
+export type GraphOutputExplainProjectionKindV1 =
+  | "final_output"
+  | "intermediate_output"
+  | "host_effect_only"
+  | "no_observed_output"
+  | "not_reached"
+  | "failed";
+
+export interface GraphOutputExplainNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  runDisposition: GraphCompileRunLinkDispositionV1;
+  isTerminal: boolean;
+  isSideEffect: boolean;
+  outputObserved: boolean;
+  outputValueType?: string;
+  outputPreview?: string;
+  outputFingerprintSummary?: string;
+  isTruncated: boolean;
+  includedInFinalOutputs: boolean;
+  latestPartialOutputObserved: boolean;
+  producedHostEffect: boolean;
+  projectionKind: GraphOutputExplainProjectionKindV1;
+}
+
+export interface GraphOutputExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  observedOutputNodeCount: number;
+  finalOutputNodeIds: string[];
+  intermediateOutputNodeIds: string[];
+  hostEffectNodeIds: string[];
+  nodes: GraphOutputExplainNodeRecordV1[];
+}
+
+export interface GraphOutputExplainArtifactEnvelope {
+  kind: "graph_output_explain_artifact";
+  version: "v1";
+  artifact: GraphOutputExplainArtifactV1;
+}
+
 export type GraphReuseExplainFinalDispositionV1 =
   | "skipped_reuse"
   | "eligible_but_executed"
