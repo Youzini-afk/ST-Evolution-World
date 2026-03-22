@@ -800,9 +800,9 @@ async function runGraphWorkflow(
       }
 
       // Validate before execution
-      const errors = validateGraph(graph);
-      if (errors.length > 0) {
-        const msg = errors.map((e) => e.message).join("; ");
+      const validationResult = validateGraph(graph);
+      if (validationResult.errors.length > 0) {
+        const msg = validationResult.errors.map((e) => e.message).join("; ");
         console.warn(`[EW] Graph "${graph.name}" validation failed: ${msg}`);
         continue; // Skip invalid graphs
       }

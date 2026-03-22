@@ -11,6 +11,7 @@ import type {
   ModuleMetadataSchemaFieldSummary,
   ModuleMetadataSemanticSummary,
   ModuleMetadataUiSummary,
+  ModuleMetadataValidationSummary,
   ModulePortDef,
 } from "./module-types";
 export type { ModuleBlueprint, ModulePortDef };
@@ -76,6 +77,30 @@ function buildSchemaFieldSummaries(
   }));
 }
 
+function buildValidationSummary(
+  module: Pick<
+    ModuleBlueprint,
+    "configSchema" | "defaultConfig" | "configMetadata"
+  >,
+): ModuleMetadataValidationSummary | undefined {
+  const schemaFields = buildSchemaFieldSummaries(module);
+  if (schemaFields.length === 0) {
+    return undefined;
+  }
+  const allowedConfigKeys = schemaFields.map((field) => field.key);
+  const requiredConfigKeys = schemaFields
+    .filter((field) => field.required)
+    .map((field) => field.key);
+  return {
+    allowedConfigKeys,
+    requiredConfigKeys,
+    unknownConfigSeverity: "warning",
+    requiredConfigSeverity: "error",
+    explainHint:
+      "当前校验仅消费 metadata fact surface，未知配置键默认以解释型告警处理。",
+  };
+}
+
 function buildConfigSummary(
   module: Pick<
     ModuleBlueprint,
@@ -89,6 +114,7 @@ function buildConfigSummary(
     schemaFieldCount: schemaFieldKeys.length,
     hasSchema: schemaFieldKeys.length > 0,
     schemaFields,
+    validation: buildValidationSummary(module),
   };
 }
 
@@ -864,9 +890,19 @@ const OUTPUT_MODULES: ModuleBlueprint[] = [
       icon: "💉",
       description: "向 AI 的下一次回复注入指令文本",
       ports: [textIn("instruction", "指令文本")],
-      defaultConfig: {},
+      defaultConfig: {
+        target_slot: "reply.instruction",
+      },
       configMetadata: {
-        schemaFields: [],
+        schemaFields: [
+          {
+            key: "target_slot",
+            label: "目标槽位",
+            required: true,
+            defaultValueHint: "reply.instruction",
+            description: "说明性 metadata 字段：标记当前宿主写入目标槽位。",
+          },
+        ],
       },
     },
     {

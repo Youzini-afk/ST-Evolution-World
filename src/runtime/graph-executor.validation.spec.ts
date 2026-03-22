@@ -294,8 +294,10 @@ function assert(condition: unknown, message: string): void {
   }
 }
 
+type GraphValidationIssue = ReturnType<typeof validateGraph>["errors"][number];
+
 function assertHasMessage(
-  errors: ReturnType<typeof validateGraph>,
+  errors: GraphValidationIssue[],
   keyword: string,
 ): void {
   assert(
@@ -305,13 +307,33 @@ function assertHasMessage(
 }
 
 function assertHasRef(
-  errors: ReturnType<typeof validateGraph>,
-  predicate: (error: ReturnType<typeof validateGraph>[number]) => boolean,
+  errors: GraphValidationIssue[],
+  predicate: (error: GraphValidationIssue) => boolean,
   label: string,
 ): void {
   assert(
     errors.some(predicate),
     `Expected validation error matching ${label}. Actual: ${errors.map((error) => JSON.stringify(error)).join(" | ")}`,
+  );
+}
+
+function assertHasDiagnosticMessage(
+  diagnostics: ReturnType<typeof validateGraph>["diagnostics"],
+  keyword: string,
+): void {
+  assert(
+    diagnostics.some((diagnostic) => diagnostic.message.includes(keyword)),
+    `Expected validation diagnostic containing: ${keyword}. Actual: ${diagnostics.map((diagnostic) => diagnostic.message).join(" | ")}`,
+  );
+}
+
+function assertNoMessage(
+  errors: GraphValidationIssue[],
+  keyword: string,
+): void {
+  assert(
+    !errors.some((error) => error.message.includes(keyword)),
+    `Expected no validation error containing: ${keyword}. Actual: ${errors.map((error) => error.message).join(" | ")}`,
   );
 }
 
@@ -1063,22 +1085,26 @@ function readPersistedScriptStorage(): Record<string, unknown> {
 async function runValidationSpec(): Promise<void> {
   ensureMemoryLocalStorage();
   resetGraphExecutorReuseStateForTesting();
-  const validGraphErrors = validateGraph(makeBaseGraph());
+  const validGraphValidation = validateGraph(makeBaseGraph());
   assert(
-    validGraphErrors.length === 0,
+    validGraphValidation.errors.length === 0,
     "Expected valid graph to have no validation errors",
+  );
+  assert(
+    validGraphValidation.diagnostics.length === 0,
+    "Expected valid graph to have no validation diagnostics",
   );
 
   const missingSourcePortGraph = makeBaseGraph();
   missingSourcePortGraph.edges[0].sourcePort = "missing_port";
   assertHasMessage(
-    validateGraph(missingSourcePortGraph),
+    validateGraph(missingSourcePortGraph).errors,
     "源端口(missing_port)不存在",
   );
 
   const invalidDirectionGraph = makeBaseGraph();
   invalidDirectionGraph.edges[0].targetPort = "text_out";
-  assertHasMessage(validateGraph(invalidDirectionGraph), "不是输入端口");
+  assertHasMessage(validateGraph(invalidDirectionGraph).errors, "不是输入端口");
 
   const incompatibleTypeGraph = makeBaseGraph();
   incompatibleTypeGraph.nodes.push({
@@ -1097,7 +1123,7 @@ async function runValidationSpec(): Promise<void> {
       targetPort: "text_in",
     },
   ];
-  assertHasMessage(validateGraph(incompatibleTypeGraph), "类型不兼容");
+  assertHasMessage(validateGraph(incompatibleTypeGraph).errors, "类型不兼容");
 
   const multipleIncomingGraph = makeBaseGraph();
   multipleIncomingGraph.nodes.push({
@@ -1114,7 +1140,7 @@ async function runValidationSpec(): Promise<void> {
     target: "filter_text",
     targetPort: "text_in",
   });
-  assertHasMessage(validateGraph(multipleIncomingGraph), "不允许多入边");
+  assertHasMessage(validateGraph(multipleIncomingGraph).errors, "不允许多入边");
 
   const duplicateNodeIdGraph = makeBaseGraph();
   duplicateNodeIdGraph.nodes.push({
@@ -1124,7 +1150,7 @@ async function runValidationSpec(): Promise<void> {
     config: {},
     collapsed: false,
   });
-  const duplicateNodeErrors = validateGraph(duplicateNodeIdGraph);
+  const duplicateNodeErrors = validateGraph(duplicateNodeIdGraph).errors;
   assertHasMessage(duplicateNodeErrors, "重复的节点 ID");
   assertHasRef(
     duplicateNodeErrors,
@@ -1147,7 +1173,7 @@ async function runValidationSpec(): Promise<void> {
     target: "filter_text",
     targetPort: "text_in",
   });
-  const duplicateEdgeErrors = validateGraph(duplicateEdgeIdGraph);
+  const duplicateEdgeErrors = validateGraph(duplicateEdgeIdGraph).errors;
   assertHasMessage(duplicateEdgeErrors, "重复的连线 ID");
   assertHasRef(
     duplicateEdgeErrors,
@@ -1157,7 +1183,128 @@ async function runValidationSpec(): Promise<void> {
 
   const missingRequiredInputGraph = makeBaseGraph();
   missingRequiredInputGraph.edges = [];
-  assertHasMessage(validateGraph(missingRequiredInputGraph), "必要输入");
+  assertHasMessage(validateGraph(missingRequiredInputGraph).errors, "必要输入");
+
+  const metadataRequiredConfigGraph = makeBaseGraph();
+  metadataRequiredConfigGraph.nodes.push({
+    id: "reply_output",
+    moduleId: "out_reply_inject",
+    position: { x: 420, y: 0 },
+    config: {},
+    collapsed: false,
+  });
+  metadataRequiredConfigGraph.edges.push({
+    id: "edge_reply_output",
+    source: "filter_text",
+    sourcePort: "text_out",
+    target: "reply_output",
+    targetPort: "instruction",
+  });
+  const metadataRequiredConfigValidation = validateGraph(
+    metadataRequiredConfigGraph,
+  );
+  assertHasMessage(
+    metadataRequiredConfigValidation.errors,
+    "metadata-required 配置字段",
+  );
+  assert(
+    metadataRequiredConfigValidation.diagnostics.length === 0,
+    `Expected required config validation to stay fatal-only. Actual diagnostics: ${metadataRequiredConfigValidation.diagnostics.map((diagnostic) => diagnostic.message).join(" | ")}`,
+  );
+
+  const unknownConfigKeyGraph = makeBaseGraph();
+  unknownConfigKeyGraph.nodes.push({
+    id: "reply_output_unknown_config",
+    moduleId: "out_reply_inject",
+    position: { x: 420, y: 0 },
+    config: {
+      target_slot: "reply.instruction",
+      legacy_mode: true,
+    },
+    collapsed: false,
+  });
+  unknownConfigKeyGraph.edges.push({
+    id: "edge_reply_output_unknown_config",
+    source: "filter_text",
+    sourcePort: "text_out",
+    target: "reply_output_unknown_config",
+    targetPort: "instruction",
+  });
+  const unknownConfigKeyValidation = validateGraph(unknownConfigKeyGraph);
+  assertHasDiagnosticMessage(
+    unknownConfigKeyValidation.diagnostics,
+    "未知配置键",
+  );
+  assertNoMessage(unknownConfigKeyValidation.errors, "未知配置键");
+
+  const hostWriteMisplacedGraph = makeBaseGraph();
+  hostWriteMisplacedGraph.nodes.push({
+    id: "reply_output_misplaced",
+    moduleId: "out_reply_inject",
+    position: { x: 420, y: 0 },
+    config: {
+      target_slot: "reply.instruction",
+    },
+    collapsed: false,
+  });
+  hostWriteMisplacedGraph.nodes.push({
+    id: "tail_strip",
+    moduleId: "flt_mvu_strip",
+    position: { x: 640, y: 0 },
+    config: {},
+    collapsed: false,
+  });
+  hostWriteMisplacedGraph.edges.push(
+    {
+      id: "edge_reply_output_misplaced_in",
+      source: "filter_text",
+      sourcePort: "text_out",
+      target: "reply_output_misplaced",
+      targetPort: "instruction",
+    },
+    {
+      id: "edge_reply_output_misplaced_out",
+      source: "reply_output_misplaced",
+      sourcePort: "instruction",
+      target: "tail_strip",
+      targetPort: "text_in",
+    },
+  );
+  const hostWriteMisplacedValidation = validateGraph(hostWriteMisplacedGraph);
+  assertHasDiagnosticMessage(
+    hostWriteMisplacedValidation.diagnostics,
+    "host-write 提示",
+  );
+  assertNoMessage(hostWriteMisplacedValidation.errors, "host-write 提示");
+
+  const metadataBackwardCompatibleGraph = makeBaseGraph();
+  metadataBackwardCompatibleGraph.nodes.push({
+    id: "composite_without_metadata",
+    moduleId: "pkg_prompt_assembly",
+    position: { x: 420, y: 160 },
+    config: {
+      legacy_payload: true,
+    },
+    collapsed: false,
+  });
+  const metadataBackwardCompatibleValidation = validateGraph(
+    metadataBackwardCompatibleGraph,
+  );
+  assert(
+    !metadataBackwardCompatibleValidation.errors.some(
+      (error) =>
+        error.nodeId === "composite_without_metadata" &&
+        (error.message.includes("metadata-required") ||
+          error.message.includes("未知配置键")),
+    ) &&
+      !metadataBackwardCompatibleValidation.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.nodeId === "composite_without_metadata" &&
+          (diagnostic.message.includes("metadata-required") ||
+            diagnostic.message.includes("未知配置键")),
+      ),
+    `Expected module without pilot metadata to stay backward compatible for config validation. Actual errors: ${metadataBackwardCompatibleValidation.errors.map((error) => JSON.stringify(error)).join(" | ")} ; diagnostics: ${metadataBackwardCompatibleValidation.diagnostics.map((diagnostic) => JSON.stringify(diagnostic)).join(" | ")}`,
+  );
 
   const cycleGraph = makeBaseGraph();
   cycleGraph.edges.push({
@@ -1167,11 +1314,11 @@ async function runValidationSpec(): Promise<void> {
     target: "src_text",
     targetPort: "text",
   });
-  assertHasMessage(validateGraph(cycleGraph), "循环依赖");
+  assertHasMessage(validateGraph(cycleGraph).errors, "循环依赖");
 
   const unknownNodeRefGraph = makeBaseGraph();
   unknownNodeRefGraph.edges[0].target = "missing_target";
-  const unknownNodeErrors = validateGraph(unknownNodeRefGraph);
+  const unknownNodeErrors = validateGraph(unknownNodeRefGraph).errors;
   assertHasMessage(unknownNodeErrors, "不存在的目标节点");
   assertHasRef(
     unknownNodeErrors,
@@ -1181,7 +1328,7 @@ async function runValidationSpec(): Promise<void> {
 
   const unknownModuleGraph = makeBaseGraph();
   unknownModuleGraph.nodes[0].moduleId = "module_missing";
-  const unknownModuleErrors = validateGraph(unknownModuleGraph);
+  const unknownModuleErrors = validateGraph(unknownModuleGraph).errors;
   assertHasMessage(unknownModuleErrors, "未知的模块类型");
   assertHasRef(
     unknownModuleErrors,
@@ -3046,8 +3193,10 @@ async function runValidationSpec(): Promise<void> {
     migratedGraph.nodes.some((node) => node.moduleId === "out_floor_bind"),
     "Expected migrated graph to include legacy output bridge node",
   );
+  const migratedValidation = validateGraph(migratedGraph);
   assert(
-    Array.isArray(validateGraph(migratedGraph)),
+    Array.isArray(migratedValidation.errors) &&
+      Array.isArray(migratedValidation.diagnostics),
     "Expected migrated graph to remain acceptable to validateGraph entrypoint",
   );
 
@@ -4082,6 +4231,7 @@ async function runValidationSpec(): Promise<void> {
       filterMetadata.help?.summary === "剥离文本中的 MVU XML 块与相关产物。" &&
       Array.isArray(filterMetadata.config?.schemaFields) &&
       filterMetadata.config.schemaFields.length === 0 &&
+      filterMetadata.config.validation === undefined &&
       filterMetadata.constraints?.inputs?.[0]?.summary?.includes(
         "空文本处理",
       ) &&
@@ -4094,6 +4244,10 @@ async function runValidationSpec(): Promise<void> {
         "inject_reply_instruction" &&
       outputMetadata.help?.summary ===
         "把指令文本写入宿主 reply instruction。" &&
+      outputMetadata.config?.validation?.requiredConfigKeys?.includes(
+        "target_slot",
+      ) &&
+      outputMetadata.config?.validation?.unknownConfigSeverity === "warning" &&
       outputMetadata.constraints?.inputs?.[0]?.summary?.includes("指令文本"),
     `Expected out_reply_inject metadata pilot summary to carry host write hint. Actual: ${JSON.stringify(outputMetadata)}`,
   );

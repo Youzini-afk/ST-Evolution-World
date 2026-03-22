@@ -15,6 +15,7 @@
 import {
   getModuleBlueprint,
   getModuleMetadataSummary,
+  getModuleMetadataSurface,
 } from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
@@ -2482,9 +2483,9 @@ export async function executeGraph(
   emitRunEvent("stage_started", { status: "running", stage: "validate" });
 
   const validateTimer = startStage("validate");
-  const validationErrors = validateGraph(graph);
-  if (validationErrors.length > 0) {
-    const reason = formatGraphValidationErrors(validationErrors);
+  const validationResult = validateGraph(graph);
+  if (validationResult.errors.length > 0) {
+    const reason = formatGraphValidationErrors(validationResult.errors);
     trace.push(validateTimer.finish("error", reason));
     trace.push({ stage: "compile", status: "skipped", elapsedMs: 0 });
     trace.push({ stage: "execute", status: "skipped", elapsedMs: 0 });
@@ -2922,6 +2923,11 @@ export interface GraphValidationError {
   message: string;
 }
 
+export interface GraphValidationResult {
+  errors: GraphValidationError[];
+  diagnostics: GraphValidationError[];
+}
+
 function formatGraphValidationErrors(errors: GraphValidationError[]): string {
   return errors
     .map((error) => {
@@ -2940,6 +2946,26 @@ function formatGraphValidationErrors(errors: GraphValidationError[]): string {
 interface GraphPortValidationContext {
   node: WorkbenchNode;
   port: ModulePortDef;
+}
+
+function hasMeaningfulConfigValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return true;
+}
+
+function isHostWriteNodeMisplaced(
+  graph: WorkbenchGraph,
+  node: WorkbenchNode,
+): boolean {
+  return graph.edges.some((edge) => edge.source === node.id);
 }
 
 function formatNodeRef(node: WorkbenchNode, label?: string): string {
@@ -2972,8 +2998,9 @@ function getPortContext(
   }
 }
 
-export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
+export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
   const errors: GraphValidationError[] = [];
+  const diagnostics: GraphValidationError[] = [];
   const nodeIds = new Set<string>();
   const edgeIds = new Set<string>();
   const nodeMap = new Map<string, WorkbenchNode>();
@@ -3004,10 +3031,52 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
     edgeIds.add(edge.id);
   }
 
-  // Check that all nodes reference valid module IDs
+  // Check that all nodes reference valid module IDs and metadata-aware config facts
   for (const node of graph.nodes) {
     try {
-      getModuleBlueprint(node.moduleId);
+      const blueprint = getModuleBlueprint(node.moduleId);
+      const metadata = getModuleMetadataSurface(node.moduleId);
+      const validation = metadata?.config?.validation;
+      const knownSchemaFields = metadata?.config?.schemaFields ?? [];
+      const knownFieldLabelByKey = new Map(
+        knownSchemaFields.map((field) => [field.key, field.label]),
+      );
+      const allowedConfigKeys = new Set(validation?.allowedConfigKeys ?? []);
+      const requiredConfigKeys = validation?.requiredConfigKeys ?? [];
+      const configRecord =
+        node.config && typeof node.config === "object" ? node.config : {};
+
+      for (const requiredKey of requiredConfigKeys) {
+        if (hasMeaningfulConfigValue(configRecord[requiredKey])) {
+          continue;
+        }
+        const fieldLabel = knownFieldLabelByKey.get(requiredKey) ?? requiredKey;
+        const requiredSeverity = validation?.requiredConfigSeverity ?? "error";
+        const targetCollection =
+          requiredSeverity === "error" ? errors : diagnostics;
+        targetCollection.push({
+          nodeId: node.id,
+          message: `${formatNodeRef(node, blueprint.label)} 缺少 metadata-required 配置字段「${fieldLabel}」(${requiredKey})；当前按 ${requiredSeverity} 级别处理，并保持执行期默认回退语义不变。`,
+        });
+      }
+
+      if (allowedConfigKeys.size > 0) {
+        for (const rawKey of Object.keys(configRecord)) {
+          if (allowedConfigKeys.has(rawKey)) {
+            continue;
+          }
+          const explainHint =
+            validation?.explainHint ?? "当前按说明性 metadata 处理未知配置键。";
+          const unknownSeverity =
+            validation?.unknownConfigSeverity ?? "warning";
+          const targetCollection =
+            unknownSeverity === "error" ? errors : diagnostics;
+          targetCollection.push({
+            nodeId: node.id,
+            message: `${formatNodeRef(node, blueprint.label)} 检测到 schema 外未知配置键「${rawKey}」；按兼容优先策略保守视为 ${unknownSeverity} / explain。${explainHint}`,
+          });
+        }
+      }
     } catch {
       errors.push({
         nodeId: node.id,
@@ -3102,6 +3171,7 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
     try {
       const bp = getModuleBlueprint(node.moduleId);
       const inputPorts = bp.ports.filter((p) => p.direction === "in");
+      const metadataSummary = getModuleMetadataSummary(node.moduleId);
 
       for (const port of inputPorts) {
         const connectionCount =
@@ -3123,6 +3193,23 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
           });
         }
       }
+
+      if (
+        metadataSummary?.semantic.capability === "writes_host" ||
+        metadataSummary?.semantic.hostWriteHint
+      ) {
+        if (isHostWriteNodeMisplaced(graph, node)) {
+          const hostWriteLabel =
+            metadataSummary.semantic.hostWriteHint?.targetType &&
+            metadataSummary.semantic.hostWriteHint?.operation
+              ? `${metadataSummary.semantic.hostWriteHint.targetType}:${metadataSummary.semantic.hostWriteHint.operation}`
+              : "host_write";
+          diagnostics.push({
+            nodeId: node.id,
+            message: `${formatNodeRef(node, bp.label)} 带有 host-write 提示 ${hostWriteLabel}，但当前被串接为上游数据源位置；这属于静态 explain/告警，不引入新的控制语义或执行拒绝。`,
+          });
+        }
+      }
     } catch {
       // Already reported above
     }
@@ -3137,5 +3224,8 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationError[] {
     });
   }
 
-  return errors;
+  return {
+    errors,
+    diagnostics,
+  };
 }

@@ -139,11 +139,22 @@ export interface ModuleMetadataSchemaFieldSummary {
   description?: string;
 }
 
+export type ModuleMetadataValidationSeverity = "warning" | "error";
+
+export interface ModuleMetadataValidationSummary {
+  allowedConfigKeys?: readonly string[];
+  requiredConfigKeys?: readonly string[];
+  unknownConfigSeverity?: ModuleMetadataValidationSeverity;
+  requiredConfigSeverity?: ModuleMetadataValidationSeverity;
+  explainHint?: string;
+}
+
 export interface ModuleMetadataConfigSummary {
   schemaFieldKeys: readonly string[];
   schemaFieldCount: number;
   hasSchema: boolean;
   schemaFields?: readonly ModuleMetadataSchemaFieldSummary[];
+  validation?: ModuleMetadataValidationSummary;
 }
 
 export interface ModuleMetadataPortConstraintSummary {
