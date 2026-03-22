@@ -140,12 +140,16 @@ export interface ModuleMetadataSchemaFieldSummary {
 }
 
 export type ModuleMetadataValidationSeverity = "warning" | "error";
+export type ModuleMetadataUnknownKeyPolicy =
+  | "allow_with_warning"
+  | "allow_with_error";
 
 export interface ModuleMetadataValidationSummary {
   allowedConfigKeys?: readonly string[];
   requiredConfigKeys?: readonly string[];
   unknownConfigSeverity?: ModuleMetadataValidationSeverity;
   requiredConfigSeverity?: ModuleMetadataValidationSeverity;
+  unknownKeyPolicy?: ModuleMetadataUnknownKeyPolicy;
   explainHint?: string;
 }
 
@@ -186,6 +190,32 @@ export interface ModuleMetadataDiagnosticsSummary {
   hostWriteLabel?: string;
 }
 
+export interface ModuleExplainContractConfigView {
+  requiredConfigKeys: readonly string[];
+  allowedConfigKeys: readonly string[];
+  unknownKeyPolicy: ModuleMetadataUnknownKeyPolicy;
+  schemaFields: readonly ModuleMetadataSchemaFieldSummary[];
+}
+
+export interface ModuleExplainContractPortView {
+  inputs: readonly ModuleMetadataPortConstraintSummary[];
+  outputs: readonly ModuleMetadataPortConstraintSummary[];
+}
+
+export interface ModuleExplainContractLabels {
+  capability: string;
+  sideEffect: string;
+  hostWrite?: string;
+}
+
+export interface ModuleExplainContract {
+  semantic: ModuleMetadataSemanticSummary;
+  config: ModuleExplainContractConfigView;
+  ports: ModuleExplainContractPortView;
+  help?: ModuleMetadataHelpSummary;
+  diagnostics: ModuleExplainContractLabels;
+}
+
 export interface ModuleMetadataSurface {
   semantic: ModuleMetadataSemanticSummary;
   config?: ModuleMetadataConfigSummary;
@@ -193,6 +223,7 @@ export interface ModuleMetadataSurface {
   help?: ModuleMetadataHelpSummary;
   ui?: ModuleMetadataUiSummary;
   diagnostics?: ModuleMetadataDiagnosticsSummary;
+  explain?: ModuleExplainContract;
 }
 
 /** Blueprint definition for a module type (registered in the registry) */

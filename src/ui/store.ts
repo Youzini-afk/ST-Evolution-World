@@ -47,6 +47,7 @@ import {
   RunSummary,
   type ControllerEntrySnapshot,
 } from "../runtime/types";
+import { getModuleExplainContract } from "./components/graph/module-registry";
 import type {
   GraphActiveRunSummaryViewModel,
   GraphCheckpointCandidateViewModel,
@@ -70,6 +71,7 @@ import type {
   GraphRunStatus,
   GraphRunTerminalOutcome,
   GraphRunWaitingUserSummary,
+  ModuleExplainContract,
 } from "./components/graph/module-types";
 import { convertStPresetToFlow, isSillyTavernPreset } from "./convertStPreset";
 import type { TabKey } from "./help-meta";
@@ -1302,6 +1304,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     ),
   );
 
+  function getModuleExplainContractView(
+    moduleId: string,
+  ): ModuleExplainContract | null {
+    return getModuleExplainContract(moduleId);
+  }
+
   function refreshDebugRecords(options: { silent?: boolean } = {}) {
     const currentChatId = getCurrentChatIdSafe();
     const nextRun = currentChatId
@@ -2162,6 +2170,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeWorkbenchDiagnosticsSummary,
     activeGraphRunArtifact,
     activeGraphRunSummary,
+    getModuleExplainContractView,
     activeTab,
     globalAdvancedOpen,
     expandedApiPresetId,

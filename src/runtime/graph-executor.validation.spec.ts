@@ -1,4 +1,5 @@
 import {
+  getModuleExplainContract,
   getModuleMetadataSummary,
   getModuleMetadataSurface,
 } from "../ui/components/graph/module-registry";
@@ -1234,6 +1235,10 @@ async function runValidationSpec(): Promise<void> {
   assertHasDiagnosticMessage(
     unknownConfigKeyValidation.diagnostics,
     "未知配置键",
+  );
+  assertHasDiagnosticMessage(
+    unknownConfigKeyValidation.diagnostics,
+    "allow_with_warning",
   );
   assertNoMessage(unknownConfigKeyValidation.errors, "未知配置键");
 
@@ -4252,30 +4257,42 @@ async function runValidationSpec(): Promise<void> {
     `Expected out_reply_inject metadata pilot summary to carry host write hint. Actual: ${JSON.stringify(outputMetadata)}`,
   );
 
+  const sourceExplain = getModuleExplainContract("src_user_input");
+  const filterExplain = getModuleExplainContract("flt_mvu_strip");
+  const outputExplain = getModuleExplainContract("out_reply_inject");
   const sourceMetadataSummary = getModuleMetadataSummary("src_user_input");
   const filterMetadataSummary = getModuleMetadataSummary("flt_mvu_strip");
   const outputMetadataSummary = getModuleMetadataSummary("out_reply_inject");
   assert(
-    filterMetadataSummary?.inputConstraintSummary?.[0]?.includes(
-      "text_in:期望单段文本输入",
-    ) &&
+    filterExplain?.ports.inputs[0]?.summary.includes("期望单段文本输入") &&
+      filterExplain?.ports.outputs[0]?.summary.includes("净化文本") &&
+      filterExplain?.config.schemaFields.length ===
+        (filterMetadata?.config?.schemaFields?.length ?? 0) &&
+      filterMetadataSummary?.inputConstraintSummary?.[0]?.includes(
+        "text_in:期望单段文本输入",
+      ) &&
       filterMetadataSummary?.outputConstraintSummary?.[0]?.includes(
         "text_out:输出剥离 MVU XML 块后的净化文本",
       ) &&
       filterMetadataSummary?.configFields?.length ===
-        filterMetadata?.config?.schemaFields?.length,
-    `Expected registry metadata summary helper to reuse filter config/constraint metadata instead of hardcoding a separate summary. Actual: ${JSON.stringify(filterMetadataSummary)}`,
+        filterExplain?.config.schemaFields.length,
+    `Expected registry metadata summary helper to reuse filter explain contract instead of hardcoding a separate summary. Actual explain=${JSON.stringify(filterExplain)} summary=${JSON.stringify(filterMetadataSummary)}`,
   );
   assert(
-    outputMetadataSummary?.diagnosticsLabel ===
-      "reply_instruction:inject_reply_instruction",
-    `Expected registry metadata summary helper to reuse host write diagnostics label. Actual: ${JSON.stringify(outputMetadataSummary)}`,
+    outputExplain?.diagnostics.hostWrite ===
+      "reply_instruction:inject_reply_instruction" &&
+      outputExplain?.config.requiredConfigKeys.includes("target_slot") &&
+      outputMetadataSummary?.diagnosticsLabel ===
+        "reply_instruction:inject_reply_instruction",
+    `Expected registry metadata summary helper to reuse host write diagnostics label from explain contract. Actual explain=${JSON.stringify(outputExplain)} summary=${JSON.stringify(outputMetadataSummary)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===
       sourceMetadata?.help?.summary &&
       srcUserResolve.descriptor.metadataSummary?.semantic.capability ===
         sourceMetadata?.semantic.capability &&
+      srcUserResolve.descriptor.metadataSummary?.explainContract?.help
+        ?.summary === sourceExplain?.help?.summary &&
       srcUserResolve.descriptor.metadataSummary
         ?.outputConstraintSummary?.[0] ===
         sourceMetadataSummary?.outputConstraintSummary?.[0],
@@ -4288,6 +4305,8 @@ async function runValidationSpec(): Promise<void> {
       outReplyResolve.descriptor.metadataSummary?.semantic.hostWriteHint
         ?.operation ===
         outputMetadataSummary?.semantic.hostWriteHint?.operation &&
+      outReplyResolve.descriptor.metadataSummary?.explainContract?.diagnostics
+        .hostWrite === outputExplain?.diagnostics.hostWrite &&
       outReplyResolve.descriptor.metadataSummary?.runtimeUsage ===
         outputMetadata?.help?.runtimeUsage,
     `Expected runtime descriptor and registry metadata summary helper to share the same host-write summary. Actual descriptor=${JSON.stringify(outReplyResolve.descriptor.metadataSummary)} summary=${JSON.stringify(outputMetadataSummary)}`,

@@ -13,6 +13,7 @@
 
 import {
   getModuleBlueprint,
+  getModuleExplainContract,
   getModuleMetadataSummary,
 } from "../ui/components/graph/module-registry";
 import type {
@@ -128,6 +129,7 @@ export interface NodeHandlerDescriptor {
     helpSummary?: string;
     runtimeUsage?: string;
     diagnosticsLabel?: string;
+    explainContract?: ReturnType<typeof getModuleExplainContract>;
   } | null;
   kind: "builtin" | "fallback";
   produceHostWriteDescriptors?: HostWriteDescriptorProducer;
@@ -166,7 +168,14 @@ function normalizeCapability(
 function getStableMetadataSummary(
   moduleId: string,
 ): NodeHandlerDescriptor["metadataSummary"] {
-  return getModuleMetadataSummary(moduleId);
+  const summary = getModuleMetadataSummary(moduleId);
+  if (!summary) {
+    return null;
+  }
+  return {
+    ...summary,
+    explainContract: getModuleExplainContract(moduleId),
+  };
 }
 
 function normalizeLegacySideEffect(

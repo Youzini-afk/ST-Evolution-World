@@ -220,118 +220,192 @@
         <EwModulePalette />
 
         <!-- Canvas area -->
-        <div
-          class="ew-workbench__canvas"
-          ref="canvasRef"
-          @pointerdown="onCanvasPointerDown"
-          @wheel.prevent="onWheel"
-          @dragover.prevent
-          @drop.prevent="onDrop"
-          @dblclick="onCanvasDblClick"
-        >
-          <!-- Grid -->
-          <svg class="ew-workbench__grid">
-            <defs>
-              <pattern
-                id="ew-wb-dots"
-                :width="20 * viewport.zoom"
-                :height="20 * viewport.zoom"
-                patternUnits="userSpaceOnUse"
-                :x="viewport.x"
-                :y="viewport.y"
+        <div class="ew-workbench__canvas-wrap">
+          <div
+            v-if="selectedModuleExplain"
+            class="ew-workbench__module-explain"
+          >
+            <div class="ew-workbench__module-explain-heading">
+              <span>{{ selectedModuleLabel }}</span>
+              <span v-if="selectedModuleExplain.help?.summary">
+                {{ selectedModuleExplain.help.summary }}
+              </span>
+            </div>
+            <div class="ew-workbench__module-explain-tags">
+              <span class="ew-workbench__module-explain-tag">
+                能力 {{ selectedModuleExplain.diagnostics.capability }}
+              </span>
+              <span class="ew-workbench__module-explain-tag">
+                副作用 {{ selectedModuleExplain.diagnostics.sideEffect }}
+              </span>
+              <span
+                v-if="selectedModuleExplain.diagnostics.hostWrite"
+                class="ew-workbench__module-explain-tag"
               >
-                <circle
-                  :cx="(20 * viewport.zoom) / 2"
-                  :cy="(20 * viewport.zoom) / 2"
-                  :r="1 * viewport.zoom"
-                  fill="rgba(255,255,255,0.1)"
-                />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#ew-wb-dots)" />
-          </svg>
-
-          <!-- Transform wrapper -->
-          <div class="ew-workbench__transform" :style="transformStyle">
-            <!-- Edges SVG -->
-            <svg
-              class="ew-workbench__edges-svg"
-              style="
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 1px;
-                height: 1px;
-                overflow: visible;
-              "
-            >
-              <line
-                v-for="edge in activeEdges"
-                :key="edge.id"
-                :x1="getPortPos(edge.source, edge.sourcePort)?.x ?? 0"
-                :y1="getPortPos(edge.source, edge.sourcePort)?.y ?? 0"
-                :x2="getPortPos(edge.target, edge.targetPort)?.x ?? 0"
-                :y2="getPortPos(edge.target, edge.targetPort)?.y ?? 0"
-                stroke="rgba(99,102,241,0.5)"
-                stroke-width="2"
-                stroke-dasharray="6 3"
-              />
-            </svg>
-
-            <!-- Nodes -->
-            <div
-              v-for="node in activeNodes"
-              :key="node.id"
-              class="ew-workbench__node"
-              :class="{ 'is-selected': selectedNodeId === node.id }"
-              :style="nodeStyle(node)"
-              @pointerdown.stop="onNodePointerDown($event, node)"
-              @dblclick.stop="openPropertyPanel(node)"
-            >
-              <div
-                class="ew-workbench__node-header"
-                :style="{ background: getModuleColor(node.moduleId) }"
-              >
-                <span class="ew-workbench__node-icon">{{
-                  getModuleIcon(node.moduleId)
-                }}</span>
-                <span class="ew-workbench__node-title">{{
-                  getModuleLabel(node.moduleId)
-                }}</span>
-              </div>
-              <div class="ew-workbench__node-ports">
-                <div
-                  v-for="port in getModulePorts(node.moduleId, 'in')"
-                  :key="port.id"
-                  class="ew-workbench__port ew-workbench__port--in"
-                  :data-node-id="node.id"
-                  :data-port-id="port.id"
-                >
-                  <span class="ew-workbench__port-dot" />
-                  <span class="ew-workbench__port-label">{{ port.label }}</span>
+                host-write {{ selectedModuleExplain.diagnostics.hostWrite }}
+              </span>
+              <span class="ew-workbench__module-explain-tag">
+                未知键策略 {{ selectedModuleExplain.config.unknownKeyPolicy }}
+              </span>
+            </div>
+            <div class="ew-workbench__module-explain-sections">
+              <div class="ew-workbench__module-explain-section">
+                <div class="ew-workbench__module-explain-title">配置约束</div>
+                <div class="ew-workbench__module-explain-text">
+                  必填
+                  {{
+                    selectedModuleExplain.config.requiredConfigKeys.join(
+                      "、",
+                    ) || "无"
+                  }}
                 </div>
-                <div
-                  v-for="port in getModulePorts(node.moduleId, 'out')"
-                  :key="port.id"
-                  class="ew-workbench__port ew-workbench__port--out"
-                  :data-node-id="node.id"
-                  :data-port-id="port.id"
-                >
-                  <span class="ew-workbench__port-label">{{ port.label }}</span>
-                  <span class="ew-workbench__port-dot" />
+                <div class="ew-workbench__module-explain-text">
+                  Schema 字段
+                  {{
+                    selectedModuleExplain.config.schemaFields
+                      .map((field) => field.key)
+                      .join("、") || "无"
+                  }}
+                </div>
+              </div>
+              <div class="ew-workbench__module-explain-section">
+                <div class="ew-workbench__module-explain-title">端口约束</div>
+                <div class="ew-workbench__module-explain-text">
+                  输入
+                  {{
+                    selectedModuleExplain.ports.inputs
+                      .map((item) => `${item.portId}:${item.summary}`)
+                      .join("；") || "无"
+                  }}
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  输出
+                  {{
+                    selectedModuleExplain.ports.outputs
+                      .map((item) => `${item.portId}:${item.summary}`)
+                      .join("；") || "无"
+                  }}
                 </div>
               </div>
             </div>
           </div>
+          <div
+            class="ew-workbench__canvas"
+            ref="canvasRef"
+            @pointerdown="onCanvasPointerDown"
+            @wheel.prevent="onWheel"
+            @dragover.prevent
+            @drop.prevent="onDrop"
+            @dblclick="onCanvasDblClick"
+          >
+            <!-- Grid -->
+            <svg class="ew-workbench__grid">
+              <defs>
+                <pattern
+                  id="ew-wb-dots"
+                  :width="20 * viewport.zoom"
+                  :height="20 * viewport.zoom"
+                  patternUnits="userSpaceOnUse"
+                  :x="viewport.x"
+                  :y="viewport.y"
+                >
+                  <circle
+                    :cx="(20 * viewport.zoom) / 2"
+                    :cy="(20 * viewport.zoom) / 2"
+                    :r="1 * viewport.zoom"
+                    fill="rgba(255,255,255,0.1)"
+                  />
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#ew-wb-dots)" />
+            </svg>
 
-          <!-- Empty state -->
-          <div v-if="activeNodes.length === 0" class="ew-workbench__empty">
-            <div class="ew-workbench__empty-icon">🧩</div>
-            <div class="ew-workbench__empty-text">
-              从左侧拖入模块开始搭建管线
+            <!-- Transform wrapper -->
+            <div class="ew-workbench__transform" :style="transformStyle">
+              <!-- Edges SVG -->
+              <svg
+                class="ew-workbench__edges-svg"
+                style="
+                  position: absolute;
+                  top: 0;
+                  left: 0;
+                  width: 1px;
+                  height: 1px;
+                  overflow: visible;
+                "
+              >
+                <line
+                  v-for="edge in activeEdges"
+                  :key="edge.id"
+                  :x1="getPortPos(edge.source, edge.sourcePort)?.x ?? 0"
+                  :y1="getPortPos(edge.source, edge.sourcePort)?.y ?? 0"
+                  :x2="getPortPos(edge.target, edge.targetPort)?.x ?? 0"
+                  :y2="getPortPos(edge.target, edge.targetPort)?.y ?? 0"
+                  stroke="rgba(99,102,241,0.5)"
+                  stroke-width="2"
+                  stroke-dasharray="6 3"
+                />
+              </svg>
+
+              <!-- Nodes -->
+              <div
+                v-for="node in activeNodes"
+                :key="node.id"
+                class="ew-workbench__node"
+                :class="{ 'is-selected': selectedNodeId === node.id }"
+                :style="nodeStyle(node)"
+                @pointerdown.stop="onNodePointerDown($event, node)"
+                @dblclick.stop="openPropertyPanel(node)"
+              >
+                <div
+                  class="ew-workbench__node-header"
+                  :style="{ background: getModuleColor(node.moduleId) }"
+                >
+                  <span class="ew-workbench__node-icon">{{
+                    getModuleIcon(node.moduleId)
+                  }}</span>
+                  <span class="ew-workbench__node-title">{{
+                    getModuleLabel(node.moduleId)
+                  }}</span>
+                </div>
+                <div class="ew-workbench__node-ports">
+                  <div
+                    v-for="port in getModulePorts(node.moduleId, 'in')"
+                    :key="port.id"
+                    class="ew-workbench__port ew-workbench__port--in"
+                    :data-node-id="node.id"
+                    :data-port-id="port.id"
+                  >
+                    <span class="ew-workbench__port-dot" />
+                    <span class="ew-workbench__port-label">{{
+                      port.label
+                    }}</span>
+                  </div>
+                  <div
+                    v-for="port in getModulePorts(node.moduleId, 'out')"
+                    :key="port.id"
+                    class="ew-workbench__port ew-workbench__port--out"
+                    :data-node-id="node.id"
+                    :data-port-id="port.id"
+                  >
+                    <span class="ew-workbench__port-label">{{
+                      port.label
+                    }}</span>
+                    <span class="ew-workbench__port-dot" />
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="ew-workbench__empty-hint">
-              双击节点编辑参数 · 滚轮缩放 · 拖拽画布平移
+
+            <!-- Empty state -->
+            <div v-if="activeNodes.length === 0" class="ew-workbench__empty">
+              <div class="ew-workbench__empty-icon">🧩</div>
+              <div class="ew-workbench__empty-text">
+                从左侧拖入模块开始搭建管线
+              </div>
+              <div class="ew-workbench__empty-hint">
+                双击节点编辑参数 · 滚轮缩放 · 拖拽画布平移
+              </div>
             </div>
           </div>
         </div>
@@ -351,10 +425,11 @@
 import { klona } from "klona/full";
 import EwModulePalette from "./EwModulePalette.vue";
 import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
-import { MODULE_REGISTRY } from "./module-registry";
+import { MODULE_REGISTRY, getModuleExplainContract } from "./module-registry";
 import type {
   GraphActiveRunSummaryViewModel,
   GraphRunDiagnosticsSummaryViewModel,
+  ModuleExplainContract,
   ModulePortDef,
   WorkbenchGraph,
   WorkbenchNode,
@@ -457,6 +532,18 @@ function onWheel(e: WheelEvent) {
 
 // ── Node drag ──
 const selectedNodeId = ref<string | null>(null);
+const selectedModuleExplain = computed<ModuleExplainContract | null>(() => {
+  const selectedNode = activeNodes.value.find(
+    (node) => node.id === selectedNodeId.value,
+  );
+  return selectedNode ? getModuleExplainContract(selectedNode.moduleId) : null;
+});
+const selectedModuleLabel = computed(() => {
+  const selectedNode = activeNodes.value.find(
+    (node) => node.id === selectedNodeId.value,
+  );
+  return selectedNode ? getModuleLabel(selectedNode.moduleId) : "";
+});
 let draggingNodeId: string | null = null;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
@@ -703,6 +790,75 @@ function getPortPos(nodeId: string, portId: string) {
 .ew-workbench__diagnostics-status[data-status="cancelled"] {
   background: rgba(148, 163, 184, 0.18);
   color: #e2e8f0;
+}
+
+.ew-workbench__canvas-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ew-workbench__module-explain {
+  width: 300px;
+  padding: 12px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(14, 18, 34, 0.96);
+  color: rgba(255, 255, 255, 0.84);
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow: auto;
+}
+
+.ew-workbench__module-explain-heading {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.ew-workbench__module-explain-heading span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.ew-workbench__module-explain-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ew-workbench__module-explain-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+}
+
+.ew-workbench__module-explain-sections {
+  display: grid;
+  gap: 10px;
+}
+
+.ew-workbench__module-explain-section {
+  display: grid;
+  gap: 6px;
+}
+
+.ew-workbench__module-explain-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.ew-workbench__module-explain-text {
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Full-screen mode: fixed overlay covering entire screen */

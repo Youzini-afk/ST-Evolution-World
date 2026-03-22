@@ -4,6 +4,7 @@
 import type {
   HostWriteSummary,
   ModuleBlueprint,
+  ModuleExplainContract,
   ModuleMetadataConfigSummary,
   ModuleMetadataConstraintSummary,
   ModuleMetadataDiagnosticsSummary,
@@ -96,6 +97,7 @@ function buildValidationSummary(
     requiredConfigKeys,
     unknownConfigSeverity: "warning",
     requiredConfigSeverity: "error",
+    unknownKeyPolicy: "allow_with_warning",
     explainHint:
       "当前校验仅消费 metadata fact surface，未知配置键默认以解释型告警处理。",
   };
@@ -154,6 +156,39 @@ function buildDiagnosticsSummary(
   };
 }
 
+function buildExplainContract(params: {
+  semantic: ModuleMetadataSemanticSummary;
+  config: ModuleMetadataConfigSummary;
+  constraints?: ModuleMetadataConstraintSummary;
+  help?: ModuleMetadataHelpSummary;
+  diagnostics: ModuleMetadataDiagnosticsSummary;
+}): ModuleExplainContract {
+  const validation = params.config.validation;
+  return {
+    semantic: params.semantic,
+    config: {
+      requiredConfigKeys: validation?.requiredConfigKeys ?? [],
+      allowedConfigKeys: validation?.allowedConfigKeys ?? [],
+      unknownKeyPolicy:
+        validation?.unknownKeyPolicy ??
+        (validation?.unknownConfigSeverity === "error"
+          ? "allow_with_error"
+          : "allow_with_warning"),
+      schemaFields: params.config.schemaFields ?? [],
+    },
+    ports: {
+      inputs: params.constraints?.inputs ?? [],
+      outputs: params.constraints?.outputs ?? [],
+    },
+    help: params.help,
+    diagnostics: {
+      capability: params.diagnostics.capabilityLabel,
+      sideEffect: params.diagnostics.sideEffectLabel,
+      hostWrite: params.diagnostics.hostWriteLabel,
+    },
+  };
+}
+
 function withMetadataSurface(
   module: ModuleBlueprint,
   options: {
@@ -182,15 +217,25 @@ function withMetadataSurface(
       runtimeMeta.hostTargetHint ??
       undefined,
   };
+  const config = buildConfigSummary(module);
+  const diagnostics = buildDiagnosticsSummary(semantic);
+  const explain = buildExplainContract({
+    semantic,
+    config,
+    constraints: options.constraints,
+    help: options.help,
+    diagnostics,
+  });
   return {
     ...module,
     metadata: {
       semantic,
-      config: buildConfigSummary(module),
+      config,
       constraints: options.constraints,
       help: options.help,
       ui: options.ui,
-      diagnostics: buildDiagnosticsSummary(semantic),
+      diagnostics,
+      explain,
     },
   };
 }
@@ -1301,6 +1346,12 @@ export function getModuleMetadataSurface(
   return getModuleBlueprint(moduleId).metadata;
 }
 
+export function getModuleExplainContract(
+  moduleId: string,
+): ModuleExplainContract | null {
+  return getModuleMetadataSurface(moduleId)?.explain ?? null;
+}
+
 export function getModuleMetadataSummary(moduleId: string): {
   semantic: ModuleBlueprint["metadata"] extends infer T
     ? T extends { semantic: infer S }
@@ -1313,23 +1364,27 @@ export function getModuleMetadataSummary(moduleId: string): {
   helpSummary?: string;
   runtimeUsage?: string;
   diagnosticsLabel?: string;
+  explainContract?: ModuleExplainContract;
 } | null {
   const metadata = getModuleMetadataSurface(moduleId);
   if (!metadata) {
     return null;
   }
+  const explain = metadata.explain;
   return {
     semantic: metadata.semantic,
-    configFields: metadata.config?.schemaFields,
-    inputConstraintSummary: metadata.constraints?.inputs?.map(
+    configFields: explain?.config.schemaFields ?? metadata.config?.schemaFields,
+    inputConstraintSummary: explain?.ports.inputs.map(
       (constraint) => `${constraint.portId}:${constraint.summary}`,
     ),
-    outputConstraintSummary: metadata.constraints?.outputs?.map(
+    outputConstraintSummary: explain?.ports.outputs.map(
       (constraint) => `${constraint.portId}:${constraint.summary}`,
     ),
-    helpSummary: metadata.help?.summary,
-    runtimeUsage: metadata.help?.runtimeUsage,
-    diagnosticsLabel: metadata.diagnostics?.hostWriteLabel,
+    helpSummary: explain?.help?.summary ?? metadata.help?.summary,
+    runtimeUsage: explain?.help?.runtimeUsage ?? metadata.help?.runtimeUsage,
+    diagnosticsLabel:
+      explain?.diagnostics.hostWrite ?? metadata.diagnostics?.hostWriteLabel,
+    explainContract: explain,
   };
 }
 

@@ -14,6 +14,7 @@
 
 import {
   getModuleBlueprint,
+  getModuleExplainContract,
   getModuleMetadataSummary,
   getModuleMetadataSurface,
 } from "../ui/components/graph/module-registry";
@@ -3036,13 +3037,22 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
     try {
       const blueprint = getModuleBlueprint(node.moduleId);
       const metadata = getModuleMetadataSurface(node.moduleId);
+      const explain = getModuleExplainContract(node.moduleId);
       const validation = metadata?.config?.validation;
-      const knownSchemaFields = metadata?.config?.schemaFields ?? [];
+      const knownSchemaFields =
+        explain?.config.schemaFields ?? metadata?.config?.schemaFields ?? [];
       const knownFieldLabelByKey = new Map(
         knownSchemaFields.map((field) => [field.key, field.label]),
       );
-      const allowedConfigKeys = new Set(validation?.allowedConfigKeys ?? []);
-      const requiredConfigKeys = validation?.requiredConfigKeys ?? [];
+      const allowedConfigKeys = new Set(
+        explain?.config.allowedConfigKeys ??
+          validation?.allowedConfigKeys ??
+          [],
+      );
+      const requiredConfigKeys =
+        explain?.config.requiredConfigKeys ??
+        validation?.requiredConfigKeys ??
+        [];
       const configRecord =
         node.config && typeof node.config === "object" ? node.config : {};
 
@@ -3068,7 +3078,10 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
           const explainHint =
             validation?.explainHint ?? "当前按说明性 metadata 处理未知配置键。";
           const unknownSeverity =
-            validation?.unknownConfigSeverity ?? "warning";
+            validation?.unknownConfigSeverity ??
+            (explain?.config.unknownKeyPolicy === "allow_with_error"
+              ? "error"
+              : "warning");
           const targetCollection =
             unknownSeverity === "error" ? errors : diagnostics;
           targetCollection.push({
@@ -3172,6 +3185,7 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
       const bp = getModuleBlueprint(node.moduleId);
       const inputPorts = bp.ports.filter((p) => p.direction === "in");
       const metadataSummary = getModuleMetadataSummary(node.moduleId);
+      const explain = metadataSummary?.explainContract;
 
       for (const port of inputPorts) {
         const connectionCount =
@@ -3200,10 +3214,11 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
       ) {
         if (isHostWriteNodeMisplaced(graph, node)) {
           const hostWriteLabel =
-            metadataSummary.semantic.hostWriteHint?.targetType &&
+            explain?.diagnostics.hostWrite ??
+            (metadataSummary.semantic.hostWriteHint?.targetType &&
             metadataSummary.semantic.hostWriteHint?.operation
               ? `${metadataSummary.semantic.hostWriteHint.targetType}:${metadataSummary.semantic.hostWriteHint.operation}`
-              : "host_write";
+              : "host_write");
           diagnostics.push({
             nodeId: node.id,
             message: `${formatNodeRef(node, bp.label)} 带有 host-write 提示 ${hostWriteLabel}，但当前被串接为上游数据源位置；这属于静态 explain/告警，不引入新的控制语义或执行拒绝。`,
