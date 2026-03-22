@@ -1,3 +1,4 @@
+import { readGraphBlockingExplainArtifactEnvelope } from "@/runtime/graph-blocking-explain-artifact-codec";
 import {
   GraphDocumentEnvelope,
   buildGraphDocumentExportPayload,
@@ -66,6 +67,7 @@ import {
 import { getModuleExplainContract } from "./components/graph/module-registry";
 import type {
   GraphActiveRunSummaryViewModel,
+  GraphBlockingExplainArtifactV1,
   GraphCheckpointCandidateViewModel,
   GraphCompileArtifactV1,
   GraphCompileRunLinkArtifactV1,
@@ -1270,6 +1272,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphBlockingExplainArtifact(
+    diagnostics: unknown,
+  ): GraphBlockingExplainArtifactV1 | null {
+    return (
+      readGraphBlockingExplainArtifactEnvelope(diagnostics)?.artifact ?? null
+    );
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1872,6 +1882,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphTerminalOutcomeExplainArtifact = computed(() =>
     toActiveGraphTerminalOutcomeExplainArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphBlockingExplainArtifact = computed(() =>
+    toActiveGraphBlockingExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchNodeDiagnostics = computed(() =>
@@ -2813,6 +2827,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphReuseExplainArtifact,
     activeGraphSchedulingExplainArtifact,
     activeGraphTerminalOutcomeExplainArtifact,
+    activeGraphBlockingExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,

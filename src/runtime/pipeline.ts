@@ -1,4 +1,5 @@
 import type {
+  GraphBlockingExplainArtifactEnvelope,
   GraphCompilePlan,
   GraphCompileRunLinkArtifactEnvelope,
   GraphExecutionResult,
@@ -19,6 +20,7 @@ import { getChatId, getChatMessages } from "./compat/character";
 import { FlowTriggerV1 } from "./contracts";
 import { renderControllerTemplate } from "./controller-renderer";
 import { dispatchFlows, DispatchFlowsError } from "./dispatcher";
+import { createGraphBlockingExplainArtifactEnvelope } from "./graph-blocking-explain-artifact-codec";
 import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-codec";
 import { createGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
@@ -74,6 +76,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_reuse_explain_artifact?: GraphReuseExplainArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
   graph_terminal_outcome_explain_artifact?: GraphTerminalOutcomeExplainArtifactEnvelope;
+  graph_blocking_explain_artifact?: GraphBlockingExplainArtifactEnvelope;
   graph_node_input_resolution_artifact?: GraphNodeInputResolutionArtifactEnvelope;
   graph_run_snapshot?: GraphRunSnapshotEnvelope;
   graph_run_overview?: GraphRunArtifact;
@@ -846,6 +849,10 @@ export function buildWorkflowBridgeDiagnostics(params: {
         graphHostEffectExplainArtifact?.artifact ?? null,
       failureExplainArtifact: graphFailureExplainArtifact?.artifact ?? null,
     });
+  const graphBlockingExplainArtifact =
+    createGraphBlockingExplainArtifactEnvelope({
+      runArtifact: effectiveGraphRunOverview ?? null,
+    });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -893,6 +900,11 @@ export function buildWorkflowBridgeDiagnostics(params: {
       ? {
           graph_terminal_outcome_explain_artifact:
             graphTerminalOutcomeExplainArtifact,
+        }
+      : {}),
+    ...(graphBlockingExplainArtifact
+      ? {
+          graph_blocking_explain_artifact: graphBlockingExplainArtifact,
         }
       : {}),
     ...(graphNodeInputResolutionArtifact

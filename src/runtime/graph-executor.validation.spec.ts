@@ -15,6 +15,10 @@ import type {
 import { useEwStore } from "../ui/store";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
+  createGraphBlockingExplainArtifactEnvelope,
+  readGraphBlockingExplainArtifactEnvelope,
+} from "./graph-blocking-explain-artifact-codec";
+import {
   createGraphCompileArtifactEnvelope,
   readGraphCompileArtifactEnvelope,
 } from "./graph-compile-artifact-codec";
@@ -83,6 +87,154 @@ import {
 } from "./runtime-node-registry";
 import { loadLastRun, loadLastRunForChat, setLastRun } from "./settings";
 import { RunSummarySchema, type EwFlowConfig, type RunSummary } from "./types";
+
+function toActiveGraphBlockingExplainArtifactForTest(
+  diagnostics: Record<string, any>,
+): {
+  summary?: {
+    runStatus?: string;
+    phase?: string;
+    blockingDisposition?: string;
+    blockingExplainKind?: string;
+    isHumanInputRequired?: boolean;
+    checkpointObserved?: boolean;
+    terminalOutcome?: string;
+    evidenceSources?: string[];
+  };
+  blockingReason?: { category?: string; code?: string; label?: string };
+  blockingContract?: {
+    kind?: string;
+    requiresHumanInput?: boolean;
+    inputRequirementType?: string;
+    reasonLabel?: string;
+  };
+  waitingUser?: { observed?: boolean; reason?: string };
+  checkpoint?: { observed?: boolean; stage?: string; reason?: string };
+  controlPreconditions?: {
+    nonContinuableReasonKind?: string;
+    explanation?: string;
+    items?: Array<{
+      kind?: string;
+      status?: string;
+      sourceKind?: string;
+      conservativeSourceKind?: string;
+    }>;
+  };
+  constraintSummary?: {
+    heading?: string;
+    explanation?: string;
+    disclaimer?: string;
+    capabilityBoundary?: string;
+  };
+  recoveryEligibility?: { status?: string; source?: string; label?: string };
+} | null {
+  const artifact =
+    readGraphBlockingExplainArtifactEnvelope(diagnostics)?.artifact;
+  if (!artifact || typeof artifact !== "object") {
+    return null;
+  }
+  return {
+    summary: {
+      runStatus: String(artifact.summary?.runStatus ?? "completed"),
+      phase: String(artifact.summary?.phase ?? "terminal"),
+      blockingDisposition: String(
+        artifact.summary?.blockingDisposition ?? "unknown",
+      ),
+      blockingExplainKind: String(
+        artifact.summary?.blockingExplainKind ?? "unknown",
+      ),
+      isHumanInputRequired: artifact.summary?.isHumanInputRequired === true,
+      checkpointObserved: artifact.summary?.checkpointObserved === true,
+      terminalOutcome:
+        typeof artifact.summary?.terminalOutcome === "string"
+          ? artifact.summary.terminalOutcome
+          : undefined,
+      evidenceSources: Array.isArray(artifact.summary?.evidenceSources)
+        ? artifact.summary.evidenceSources.map((entry) => String(entry))
+        : [],
+    },
+    blockingReason: artifact.blockingReason
+      ? {
+          category: String(artifact.blockingReason.category ?? "unknown"),
+          code: String(artifact.blockingReason.code ?? "unknown"),
+          label: String(artifact.blockingReason.label ?? ""),
+        }
+      : undefined,
+    blockingContract: artifact.blockingContract
+      ? {
+          kind: String(artifact.blockingContract.kind ?? "unknown"),
+          requiresHumanInput:
+            artifact.blockingContract.requiresHumanInput === true,
+          inputRequirementType: String(
+            artifact.blockingContract.inputRequirementType ?? "unknown",
+          ),
+          reasonLabel:
+            typeof artifact.blockingContract.reasonLabel === "string"
+              ? artifact.blockingContract.reasonLabel
+              : undefined,
+        }
+      : undefined,
+    waitingUser: artifact.waitingUser
+      ? {
+          observed: artifact.waitingUser.observed === true,
+          reason:
+            typeof artifact.waitingUser.reason === "string"
+              ? artifact.waitingUser.reason
+              : undefined,
+        }
+      : undefined,
+    checkpoint: artifact.checkpoint
+      ? {
+          observed: artifact.checkpoint.observed === true,
+          stage:
+            typeof artifact.checkpoint.stage === "string"
+              ? artifact.checkpoint.stage
+              : undefined,
+          reason:
+            typeof artifact.checkpoint.reason === "string"
+              ? artifact.checkpoint.reason
+              : undefined,
+        }
+      : undefined,
+    controlPreconditions: artifact.controlPreconditions
+      ? {
+          nonContinuableReasonKind:
+            typeof artifact.controlPreconditions.nonContinuableReasonKind ===
+            "string"
+              ? artifact.controlPreconditions.nonContinuableReasonKind
+              : undefined,
+          explanation: String(artifact.controlPreconditions.explanation ?? ""),
+          items: Array.isArray(artifact.controlPreconditions.items)
+            ? artifact.controlPreconditions.items.map((item) => ({
+                kind: String(item.kind ?? "unknown"),
+                status: String(item.status ?? "unknown"),
+                sourceKind: String(item.sourceKind ?? "unknown"),
+                conservativeSourceKind: String(
+                  item.conservativeSourceKind ?? "unknown",
+                ),
+              }))
+            : [],
+        }
+      : undefined,
+    constraintSummary: artifact.constraintSummary
+      ? {
+          heading: String(artifact.constraintSummary.heading ?? ""),
+          explanation: String(artifact.constraintSummary.explanation ?? ""),
+          disclaimer: String(artifact.constraintSummary.disclaimer ?? ""),
+          capabilityBoundary: String(
+            artifact.constraintSummary.capabilityBoundary ?? "",
+          ),
+        }
+      : undefined,
+    recoveryEligibility: artifact.recoveryEligibility
+      ? {
+          status: String(artifact.recoveryEligibility.status ?? "unknown"),
+          source: String(artifact.recoveryEligibility.source ?? "unknown"),
+          label: String(artifact.recoveryEligibility.label ?? ""),
+        }
+      : undefined,
+  };
+}
 
 function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
   recoveryEligibility?: { status?: string };
@@ -2051,6 +2203,42 @@ async function runValidationSpec(): Promise<void> {
       waitingUserEvent.artifact?.recoveryEligibility?.status === "eligible",
     `Expected waiting_user event to expose blocking contract plus conservative control-precondition explanation. Actual: ${JSON.stringify(waitingUserEvent)}`,
   );
+  const waitingUserBlockingExplainEnvelope =
+    createGraphBlockingExplainArtifactEnvelope({
+      runArtifact: waitingUserEvent?.artifact,
+    });
+  assert(
+    waitingUserBlockingExplainEnvelope?.kind ===
+      "graph_blocking_explain_artifact" &&
+      waitingUserBlockingExplainEnvelope.version === "v1" &&
+      waitingUserBlockingExplainEnvelope.artifact.summary.runStatus ===
+        "waiting_user" &&
+      waitingUserBlockingExplainEnvelope.artifact.summary.phase === "blocked" &&
+      waitingUserBlockingExplainEnvelope.artifact.summary
+        .blockingDisposition === "waiting_user" &&
+      waitingUserBlockingExplainEnvelope.artifact.summary
+        .blockingExplainKind === "waiting_for_external_input" &&
+      waitingUserBlockingExplainEnvelope.artifact.summary
+        .isHumanInputRequired === true &&
+      waitingUserBlockingExplainEnvelope.artifact.summary.checkpointObserved ===
+        true &&
+      waitingUserBlockingExplainEnvelope.artifact.summary.evidenceSources.includes(
+        "control_preconditions",
+      ) &&
+      waitingUserBlockingExplainEnvelope.artifact.waitingUser?.observed ===
+        true &&
+      waitingUserBlockingExplainEnvelope.artifact.checkpoint?.observed ===
+        true &&
+      waitingUserBlockingExplainEnvelope.artifact.controlPreconditions?.items.some(
+        (item: { kind?: string; status?: string; sourceKind?: string }) =>
+          item.kind === "control_action_surface_inference" &&
+          item.status === "unknown" &&
+          item.sourceKind === "host_limited",
+      ) &&
+      waitingUserBlockingExplainEnvelope.artifact.recoveryEligibility
+        ?.status === "eligible",
+    `Expected waiting_user run artifact to project stable blocking explain facts without introducing action semantics. Actual: ${JSON.stringify(waitingUserBlockingExplainEnvelope)}`,
+  );
   const waitingUserNoCheckpointArtifact = toActiveGraphRunArtifactForTest({
     bridge: {
       graph_run_overview: {
@@ -2116,6 +2304,105 @@ async function runValidationSpec(): Promise<void> {
         "不是恢复承诺",
       ),
     `Expected waiting_user without checkpoint to stay unknown/incomplete and not imply resumable. Actual: ${JSON.stringify(waitingUserNoCheckpointArtifact)}`,
+  );
+  const runningBlockingExplainEnvelope =
+    createGraphBlockingExplainArtifactEnvelope({
+      runArtifact: {
+        runId: "run_non_terminal_running",
+        graphId: "graph_test",
+        status: "running",
+        phase: "executing",
+        phaseLabel: "执行中",
+        eventCount: 1,
+        updatedAt: 1,
+        controlPreconditionsContract:
+          successResult.runState.controlPreconditionsContract,
+        constraintSummary: successResult.runState.constraintSummary,
+        recoveryEligibility: {
+          status: "unknown",
+          source: "unknown",
+          label: "恢复资格未知",
+        },
+      },
+    });
+  assert(
+    runningBlockingExplainEnvelope?.artifact.summary.blockingDisposition ===
+      "running" &&
+      runningBlockingExplainEnvelope.artifact.summary.blockingExplainKind ===
+        "non_terminal_running" &&
+      runningBlockingExplainEnvelope.artifact.summary.isHumanInputRequired ===
+        false &&
+      runningBlockingExplainEnvelope.artifact.summary.checkpointObserved ===
+        false,
+    `Expected non-terminal running state to degrade into non-blocked running explanation. Actual: ${JSON.stringify(runningBlockingExplainEnvelope)}`,
+  );
+  const terminalBlockingExplainEnvelope =
+    createGraphBlockingExplainArtifactEnvelope({
+      runArtifact: successResult.runArtifact,
+    });
+  assert(
+    terminalBlockingExplainEnvelope?.artifact.summary.blockingDisposition ===
+      "terminal" &&
+      terminalBlockingExplainEnvelope.artifact.summary.blockingExplainKind ===
+        "terminal_non_resumable" &&
+      terminalBlockingExplainEnvelope.artifact.summary.terminalOutcome ===
+        "completed" &&
+      terminalBlockingExplainEnvelope.artifact.recoveryEligibility?.status ===
+        "ineligible",
+    `Expected completed terminal run to conservatively degrade to terminal_non_resumable blocking explanation. Actual: ${JSON.stringify(terminalBlockingExplainEnvelope)}`,
+  );
+  const failedBlockingExplainEnvelope =
+    createGraphBlockingExplainArtifactEnvelope({
+      runArtifact: {
+        runId: "run_failed_blocking",
+        graphId: "graph_test",
+        status: "failed",
+        phase: "terminal",
+        phaseLabel: "已失败",
+        terminalOutcome: "failed",
+        eventCount: 0,
+        updatedAt: 1,
+        controlPreconditionsContract:
+          successResult.runState.controlPreconditionsContract,
+        constraintSummary: successResult.runState.constraintSummary,
+        recoveryEligibility: {
+          status: "ineligible",
+          source: "terminal_state",
+          label: "当前不具备恢复资格事实",
+        },
+      },
+    });
+  const cancelledBlockingExplainEnvelope =
+    createGraphBlockingExplainArtifactEnvelope({
+      runArtifact: {
+        runId: "run_cancelled_blocking",
+        graphId: "graph_test",
+        status: "cancelled",
+        phase: "terminal",
+        phaseLabel: "已取消",
+        terminalOutcome: "cancelled",
+        eventCount: 0,
+        updatedAt: 1,
+        controlPreconditionsContract:
+          successResult.runState.controlPreconditionsContract,
+        constraintSummary: successResult.runState.constraintSummary,
+        recoveryEligibility: {
+          status: "ineligible",
+          source: "terminal_state",
+          label: "当前不具备恢复资格事实",
+        },
+      },
+    });
+  assert(
+    failedBlockingExplainEnvelope?.artifact.summary.blockingDisposition ===
+      "terminal" &&
+      failedBlockingExplainEnvelope.artifact.summary.terminalOutcome ===
+        "failed" &&
+      cancelledBlockingExplainEnvelope?.artifact.summary.blockingDisposition ===
+        "terminal" &&
+      cancelledBlockingExplainEnvelope.artifact.summary.terminalOutcome ===
+        "cancelled",
+    `Expected failed/cancelled terminal runs to stay conservatively terminal in blocking explain summary. Actual: ${JSON.stringify({ failedBlockingExplainEnvelope, cancelledBlockingExplainEnvelope })}`,
   );
   const degradedConstraintArtifact = toActiveGraphRunArtifactForTest({
     bridge: {
@@ -5998,6 +6285,29 @@ async function runValidationSpec(): Promise<void> {
       )?.reuseDisposition === "skipped_reuse",
     `Expected workflow bridge diagnostics to expose stable failure explain artifact surface for successful runs without misclassifying reuse as failure. Actual: ${JSON.stringify(bridgeFailureExplainArtifact)}`,
   );
+  const bridgeBlockingExplainArtifact =
+    readGraphBlockingExplainArtifactEnvelope(
+      bridgeDiagnosticsWithCompileArtifact,
+    );
+  assert(
+    bridgeBlockingExplainArtifact?.artifact.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      bridgeBlockingExplainArtifact.artifact.runId ===
+        skipPilotRepeat.requestId &&
+      bridgeBlockingExplainArtifact.artifact.summary.blockingDisposition ===
+        "terminal" &&
+      bridgeBlockingExplainArtifact.artifact.summary.blockingExplainKind ===
+        "terminal_non_resumable" &&
+      bridgeBlockingExplainArtifact.artifact.summary.evidenceSources.includes(
+        "constraint_summary",
+      ) &&
+      !JSON.stringify(bridgeBlockingExplainArtifact).includes("resumeToken") &&
+      !JSON.stringify(bridgeBlockingExplainArtifact).includes("actionId") &&
+      !JSON.stringify(bridgeBlockingExplainArtifact).includes(
+        "internalCommand",
+      ),
+    `Expected workflow bridge diagnostics to expose stable blocking explain artifact surface aligned with conservative run facts and de-sensitized evidence. Actual: ${JSON.stringify(bridgeBlockingExplainArtifact)}`,
+  );
   const bridgeHostEffectExplainArtifact =
     readGraphHostEffectExplainArtifactEnvelope(
       bridgeDiagnosticsWithCompileArtifact,
@@ -6044,6 +6354,120 @@ async function runValidationSpec(): Promise<void> {
         (node) => node.nodeId === "out_reply",
       )?.projectionRole === "host_effect_only",
     `Expected workflow bridge diagnostics to expose stable terminal outcome explain artifact surface aligned with compile fingerprint and end-state projection facts. Actual: ${JSON.stringify(bridgeTerminalOutcomeExplainArtifact)}`,
+  );
+  const degradedBlockingExplain = toActiveGraphBlockingExplainArtifactForTest({
+    bridge: {
+      graph_blocking_explain_artifact: {
+        kind: "graph_blocking_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          summary: {
+            runStatus: "waiting_user",
+            phase: "blocked",
+            blockingDisposition: "made_up_disposition",
+            blockingExplainKind: "made_up_kind",
+            isHumanInputRequired: "yes",
+            checkpointObserved: true,
+            evidenceSources: ["run_status", "made_up_source"],
+            terminalOutcome: "made_up_terminal",
+            payload: { leak: true },
+          },
+          blockingReason: {
+            category: "waiting_user",
+            code: "waiting_user",
+            label: "等待用户输入",
+            runtimeOnly: { leak: true },
+          },
+          blockingContract: {
+            kind: "waiting_user",
+            requiresHumanInput: true,
+            inputRequirementType: "secret_type",
+            reasonLabel: "等待用户输入",
+          },
+          waitingUser: {
+            observed: true,
+            reason: "需要补充输入",
+            resumeToken: "omit_me",
+          },
+          checkpoint: {
+            observed: true,
+            stage: "execute",
+            reason: "terminal_candidate",
+            actionId: "omit_me",
+          },
+          controlPreconditions: {
+            explanation: "只读说明",
+            nonContinuableReasonKind: "made_up_reason",
+            items: [
+              {
+                kind: "broken_kind",
+                status: "broken_status",
+                label: "控制前提",
+                sourceKind: "broken_source",
+                conservativeSourceKind: "broken_source",
+                internalCommand: "omit_me",
+              },
+            ],
+          },
+          constraintSummary: {
+            heading: "控制前提说明（只读）",
+            explanation: "只读说明",
+            disclaimer: "不是恢复承诺。",
+            capabilityBoundary: "不是控制动作能力。",
+            controlAction: "omit_me",
+          },
+          recoveryEligibility: {
+            status: "broken_status",
+            source: "broken_source",
+            label: "恢复资格未知",
+            action: "omit_me",
+          },
+        },
+      },
+    },
+  });
+  const activeBlockingExplainArtifact =
+    useEwStore().activeGraphBlockingExplainArtifact;
+  assert(
+    activeBlockingExplainArtifact?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeBlockingExplainArtifact.runId === skipPilotRepeat.requestId &&
+      activeBlockingExplainArtifact.summary.blockingDisposition ===
+        "terminal" &&
+      activeBlockingExplainArtifact.summary.blockingExplainKind ===
+        "terminal_non_resumable" &&
+      activeBlockingExplainArtifact.summary.evidenceSources.includes(
+        "recovery_eligibility",
+      ),
+    `Expected store read surface to consume graph blocking explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeBlockingExplainArtifact)}`,
+  );
+  assert(
+    degradedBlockingExplain?.summary?.blockingDisposition === "waiting_user" &&
+      degradedBlockingExplain.summary?.blockingExplainKind === "unknown" &&
+      degradedBlockingExplain.summary?.isHumanInputRequired === false &&
+      degradedBlockingExplain.summary?.checkpointObserved === true &&
+      JSON.stringify(degradedBlockingExplain.summary?.evidenceSources) ===
+        JSON.stringify(["run_status"]) &&
+      degradedBlockingExplain.blockingContract?.inputRequirementType ===
+        "unknown" &&
+      degradedBlockingExplain.controlPreconditions?.nonContinuableReasonKind ===
+        undefined &&
+      degradedBlockingExplain.controlPreconditions?.items?.[0]?.kind ===
+        "unknown" &&
+      degradedBlockingExplain.controlPreconditions?.items?.[0]?.status ===
+        "unknown" &&
+      degradedBlockingExplain.controlPreconditions?.items?.[0]?.sourceKind ===
+        "inferred" &&
+      degradedBlockingExplain.recoveryEligibility?.status === "unknown" &&
+      degradedBlockingExplain.recoveryEligibility?.source === "unknown" &&
+      !JSON.stringify(degradedBlockingExplain).includes("resumeToken") &&
+      !JSON.stringify(degradedBlockingExplain).includes("actionId") &&
+      !JSON.stringify(degradedBlockingExplain).includes("internalCommand") &&
+      !JSON.stringify(degradedBlockingExplain).includes("controlAction") &&
+      !JSON.stringify(degradedBlockingExplain).includes('"payload"'),
+    `Expected sparse/malformed blocking explain payloads to conservatively degrade and stay de-sensitized. Actual: ${JSON.stringify(degradedBlockingExplain)}`,
   );
   const store = useEwStore();
   setLastRun(

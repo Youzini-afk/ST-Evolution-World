@@ -846,6 +846,122 @@ export interface GraphTerminalOutcomeExplainArtifactEnvelope {
   artifact: GraphTerminalOutcomeExplainArtifactV1;
 }
 
+export type GraphBlockingDispositionV1 =
+  | "not_blocked"
+  | "waiting_user"
+  | "blocked"
+  | "terminal"
+  | "running"
+  | "unknown";
+
+export type GraphBlockingExplainKindV1 =
+  | "waiting_for_external_input"
+  | "blocked_without_input"
+  | "terminal_non_resumable"
+  | "non_terminal_running"
+  | "unknown";
+
+export type GraphBlockingExplainEvidenceSourceV1 =
+  | "run_status"
+  | "phase"
+  | "blocking_reason"
+  | "blocking_contract"
+  | "waiting_user"
+  | "checkpoint_candidate"
+  | "control_preconditions"
+  | "constraint_summary"
+  | "recovery_eligibility"
+  | "terminal_outcome";
+
+export interface GraphBlockingExplainObservedReasonV1 {
+  category: GraphRunBlockingReasonCategory | "unknown";
+  code: GraphRunBlockingReasonCode | "unknown";
+  label: string;
+  detail?: string;
+}
+
+export interface GraphBlockingExplainObservedContractV1 {
+  kind: GraphRunBlockingContractKind | "unknown";
+  requiresHumanInput: boolean;
+  inputRequirementType: GraphRunBlockingInputRequirementType | "unknown";
+  reasonLabel?: string;
+}
+
+export interface GraphBlockingExplainObservedWaitingUserV1 {
+  observed: boolean;
+  reason?: string;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+}
+
+export interface GraphBlockingExplainObservedCheckpointV1 {
+  observed: boolean;
+  stage?: GraphExecutionStage;
+  reason?: GraphRunCheckpointSummary["reason"];
+  nodeId?: string;
+  nodeIndex?: number;
+}
+
+export interface GraphBlockingExplainObservedPreconditionsV1 {
+  explanation: string;
+  nonContinuableReasonKind?: GraphRunNonContinuableReasonKind;
+  items: Array<{
+    kind: GraphRunControlPreconditionKind | "unknown";
+    status: GraphRunControlPreconditionStatus | "unknown";
+    label: string;
+    detail?: string;
+    sourceKind: GraphRunConstraintSourceKind;
+    conservativeSourceKind: GraphRunConstraintSourceKind;
+  }>;
+}
+
+export interface GraphBlockingExplainObservedConstraintSummaryV1 {
+  heading: string;
+  explanation: string;
+  disclaimer: string;
+  capabilityBoundary: string;
+}
+
+export interface GraphBlockingExplainObservedRecoveryEligibilityV1 {
+  status: GraphRunRecoveryEligibility | "unknown";
+  source: GraphRunRecoveryFactSource | "unknown";
+  label: string;
+  detail?: string;
+}
+
+export interface GraphBlockingExplainSummaryV1 {
+  runStatus: GraphRunStatus;
+  phase: GraphRunPhase;
+  blockingDisposition: GraphBlockingDispositionV1;
+  blockingExplainKind: GraphBlockingExplainKindV1;
+  isHumanInputRequired: boolean;
+  checkpointObserved: boolean;
+  terminalOutcome?: GraphRunTerminalOutcome;
+  evidenceSources: GraphBlockingExplainEvidenceSourceV1[];
+}
+
+export interface GraphBlockingExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint?: string;
+  fingerprintVersion: 1;
+  summary: GraphBlockingExplainSummaryV1;
+  blockingReason?: GraphBlockingExplainObservedReasonV1;
+  blockingContract?: GraphBlockingExplainObservedContractV1;
+  waitingUser?: GraphBlockingExplainObservedWaitingUserV1;
+  checkpoint?: GraphBlockingExplainObservedCheckpointV1;
+  controlPreconditions?: GraphBlockingExplainObservedPreconditionsV1;
+  constraintSummary?: GraphBlockingExplainObservedConstraintSummaryV1;
+  recoveryEligibility?: GraphBlockingExplainObservedRecoveryEligibilityV1;
+}
+
+export interface GraphBlockingExplainArtifactEnvelope {
+  kind: "graph_blocking_explain_artifact";
+  version: "v1";
+  artifact: GraphBlockingExplainArtifactV1;
+}
+
 export interface GraphNodeTraceError {
   message: string;
   stack?: string;
