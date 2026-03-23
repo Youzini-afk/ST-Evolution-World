@@ -475,6 +475,13 @@
               <span class="ew-builder-workbench__chip">
                 {{ visibleActiveRunSummary.phaseLabel }}
               </span>
+              <span
+                v-if="visibleActiveRunSummary.controlFlowSummary"
+                class="ew-builder-workbench__chip"
+              >
+                控制流阻塞
+                {{ visibleActiveRunSummary.controlFlowSummary.inactiveNodeCount }}
+              </span>
               <span class="ew-builder-workbench__chip">
                 {{ visibleActiveRunSummary.terminalOutcomeLabel }}
               </span>
@@ -505,6 +512,15 @@
               <span>waiting_user</span>
               <strong>{{ visibleActiveRunSummary.waitingUserLabel }}</strong>
             </div>
+            <div
+              v-if="visibleActiveRunSummary.controlFlowSummary"
+              class="ew-builder-workbench__kv"
+            >
+              <span>控制流未激活</span>
+              <strong>
+                {{ visibleActiveRunSummary.controlFlowSummary.inactiveNodeIds.join("、") }}
+              </strong>
+            </div>
           </div>
           <div
             v-else-if="visibleDiagnosticsSummary"
@@ -525,6 +541,13 @@
               </span>
               <span class="ew-builder-workbench__chip">
                 指纹 {{ visibleDiagnosticsSummary.compileFingerprintShort }}
+              </span>
+              <span
+                v-if="visibleDiagnosticsSummary.controlFlowSummary"
+                class="ew-builder-workbench__chip"
+              >
+                控制流阻塞
+                {{ visibleDiagnosticsSummary.controlFlowSummary.inactiveNodeCount }}
               </span>
             </div>
             <div class="ew-builder-workbench__kv">
@@ -571,6 +594,19 @@
                 {{
                   visibleDiagnosticsSummary.bridgeIntentSummary
                     .requestedTimingLabel
+                }}
+              </strong>
+            </div>
+            <div
+              v-if="visibleDiagnosticsSummary.controlFlowSummary"
+              class="ew-builder-workbench__kv"
+            >
+              <span>控制流未激活</span>
+              <strong>
+                {{
+                  visibleDiagnosticsSummary.controlFlowSummary.inactiveNodeIds.join(
+                    "、",
+                  )
                 }}
               </strong>
             </div>
@@ -682,6 +718,33 @@
               <span>skip_reuse_outputs</span>
               <strong>{{
                 selectedNodeDiagnostics.skipReuseOutputsFactLabel
+              }}</strong>
+            </div>
+            <div
+              v-if="selectedNodeDiagnostics.hasControlFlowExplain"
+              class="ew-builder-workbench__kv"
+            >
+              <span>控制流执行位形</span>
+              <strong>{{
+                selectedNodeDiagnostics.controlFlowDispositionLabel
+              }}</strong>
+            </div>
+            <div
+              v-if="selectedNodeDiagnostics.hasControlFlowExplain"
+              class="ew-builder-workbench__kv"
+            >
+              <span>控制流就绪解释</span>
+              <strong>{{
+                selectedNodeDiagnostics.controlFlowReadinessLabel
+              }}</strong>
+            </div>
+            <div
+              v-if="selectedNodeDiagnostics.hasControlFlowExplain"
+              class="ew-builder-workbench__kv"
+            >
+              <span>控制流执行前沿</span>
+              <strong>{{
+                selectedNodeDiagnostics.controlFlowFrontierLabel
               }}</strong>
             </div>
           </div>

@@ -2911,6 +2911,51 @@ async function runValidationSpec(): Promise<void> {
       controlFrontierFinal.primaryReasonKind === "control_flow_inactive",
     `Expected execution frontier explain artifact to preserve inactive control flow as a blocked frontier reason. Actual: ${JSON.stringify(controlFrontierEnvelope?.artifact)}`,
   );
+  setLastRun(
+    RunSummarySchema.parse({
+      at: Date.now(),
+      ok: true,
+      reason: "control flow explain store summary",
+      request_id: exclusiveJoinAllResult.requestId,
+      chat_id: "chat_control_flow_explain",
+      flow_count: 1,
+      elapsed_ms: 12,
+      mode: "manual",
+      diagnostics: {
+        graph: {
+          overview: buildGraphRunDiagnosticsOverview(exclusiveJoinAllResult),
+        },
+        graph_run_snapshot: createGraphRunSnapshotEnvelope({
+          overview: exclusiveJoinAllResult.runArtifact ?? null,
+          events: exclusiveJoinAllResult.runEvents,
+          diagnosticsOverview:
+            buildGraphRunDiagnosticsOverview(exclusiveJoinAllResult),
+        }),
+        graph_node_execution_disposition_explain_artifact:
+          controlNodeDispositionEnvelope,
+        graph_dependency_readiness_explain_artifact:
+          controlDependencyReadinessEnvelope,
+        graph_execution_frontier_explain_artifact: controlFrontierEnvelope,
+      },
+    }),
+  );
+  const controlFlowStoreSummary = useEwStore().activeGraphRunSummary;
+  const controlFlowDiagnosticsSummary =
+    useEwStore().activeWorkbenchDiagnosticsSummary;
+  assert(
+    controlFlowStoreSummary?.controlFlowSummary?.inactiveNodeCount === 2 &&
+      controlFlowDiagnosticsSummary?.controlFlowSummary?.inactiveNodeCount ===
+        2 &&
+      controlFlowStoreSummary.nodeDiagnostics?.hasControlFlowExplain ===
+        true &&
+      controlFlowStoreSummary.nodeDiagnostics.controlFlowDispositionLabel.includes(
+        "控制流未激活",
+      ) &&
+      controlFlowDiagnosticsSummary.controlFlowSummary?.inactiveNodeIds.join(
+        ",",
+      ) === "branch_b,final_filter",
+    `Expected store summaries to expose control-flow inactive diagnostics for UI consumption. Actual run=${JSON.stringify(controlFlowStoreSummary)} diagnostics=${JSON.stringify(controlFlowDiagnosticsSummary)}`,
+  );
 
   const dualHostGraphFixture = makeIntegratedSmokeGraph();
   const dualHostGraph = {

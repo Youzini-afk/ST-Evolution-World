@@ -75,6 +75,7 @@ import type {
   GraphCheckpointCandidateViewModel,
   GraphCompileArtifactV1,
   GraphCompileRunLinkArtifactV1,
+  GraphControlFlowExplainSummaryViewModel,
   GraphDependencyReadinessExplainArtifactV1,
   GraphExecutionFrontierExplainArtifactV1,
   GraphExecutionStage,
@@ -946,6 +947,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
                   decisionCountsRaw,
                   "feature_disabled",
                 ),
+                inactive_control_flow: normalizeReasonCount(
+                  decisionCountsRaw,
+                  "inactive_control_flow",
+                ),
                 ineligible_reuse_verdict: normalizeReasonCount(
                   decisionCountsRaw,
                   "ineligible_reuse_verdict",
@@ -996,6 +1001,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   function toDiagnosticsSummaryViewModel(
     overview: GraphRunDiagnosticsOverview | null,
     bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null,
+    controlFlowSummary: GraphControlFlowExplainSummaryViewModel | null,
   ): GraphRunDiagnosticsSummaryViewModel | null {
     if (!overview) {
       return null;
@@ -1105,6 +1111,43 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       primaryReuseReasons,
       primaryExecutionDecisionReasons,
       bridgeIntentSummary,
+      controlFlowSummary,
+    };
+  }
+
+  function toGraphControlFlowExplainSummaryViewModel(
+    nodeExecutionDispositionArtifact: GraphNodeExecutionDispositionExplainArtifactV1 | null,
+    dependencyReadinessArtifact: GraphDependencyReadinessExplainArtifactV1 | null,
+    executionFrontierArtifact: GraphExecutionFrontierExplainArtifactV1 | null,
+  ): GraphControlFlowExplainSummaryViewModel | null {
+    const dispositionInactiveNodeIds =
+      nodeExecutionDispositionArtifact?.nodes
+        .filter((node) => node.primaryReasonKind === "control_flow_inactive")
+        .map((node) => node.nodeId) ?? [];
+    const readinessInactiveNodeIds =
+      dependencyReadinessArtifact?.nodes
+        .filter((node) => node.primaryReasonKind === "control_flow_inactive")
+        .map((node) => node.nodeId) ?? [];
+    const frontierInactiveNodeIds =
+      executionFrontierArtifact?.nodes
+        .filter((node) => node.primaryReasonKind === "control_flow_inactive")
+        .map((node) => node.nodeId) ?? [];
+    const inactiveNodeIds = Array.from(
+      new Set([
+        ...dispositionInactiveNodeIds,
+        ...readinessInactiveNodeIds,
+        ...frontierInactiveNodeIds,
+      ]),
+    );
+    if (inactiveNodeIds.length === 0) {
+      return null;
+    }
+    return {
+      inactiveNodeCount: inactiveNodeIds.length,
+      inactiveNodeIds,
+      dispositionInactiveNodeCount: dispositionInactiveNodeIds.length,
+      readinessInactiveNodeCount: readinessInactiveNodeIds.length,
+      frontierInactiveNodeCount: frontierInactiveNodeIds.length,
     };
   }
 
@@ -1687,6 +1730,9 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   function toNodeDiagnosticsViewModel(
     overview: GraphRunDiagnosticsOverview | null,
     artifact: GraphRunArtifact | null,
+    nodeExecutionDispositionArtifact: GraphNodeExecutionDispositionExplainArtifactV1 | null,
+    dependencyReadinessArtifact: GraphDependencyReadinessExplainArtifactV1 | null,
+    executionFrontierArtifact: GraphExecutionFrontierExplainArtifactV1 | null,
   ): GraphNodeDiagnosticsViewModel | null {
     const selectedNodeId = artifact?.latestNodeId?.trim();
     if (!selectedNodeId) {
@@ -1737,6 +1783,99 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         ? `${value.slice(0, 6)}…${value.slice(-4)}`
         : value;
     };
+    const nodeExecutionDispositionLabels: Record<
+      GraphNodeExecutionDispositionExplainArtifactV1["nodes"][number]["disposition"],
+      string
+    > = {
+      executed: "已执行",
+      skipped_reuse: "复用跳过",
+      failed: "失败",
+      not_reached: "未到达",
+      blocked: "阻塞",
+      unknown: "未知",
+    };
+    const nodeExecutionReasonLabels: Record<
+      GraphNodeExecutionDispositionExplainArtifactV1["nodes"][number]["primaryReasonKind"],
+      string
+    > = {
+      executed_by_decision: "按决策执行",
+      executed_despite_reuse_eligibility: "可复用但仍执行",
+      reuse_skip: "复用跳过",
+      control_flow_inactive: "控制流未激活",
+      dependency_not_reached: "依赖未到达",
+      input_missing_or_unresolved: "输入缺失或未解析",
+      truncated_by_failure: "因失败截断",
+      non_terminal_blocked: "非终态阻塞",
+      terminal_projection_only: "仅终局投影",
+      unknown: "未知",
+    };
+    const dependencyReadinessDispositionLabels: Record<
+      GraphDependencyReadinessExplainArtifactV1["nodes"][number]["readinessDisposition"],
+      string
+    > = {
+      ready: "已就绪",
+      not_ready_dependency: "依赖未就绪",
+      not_ready_input: "输入未就绪",
+      blocked_non_terminal: "控制阻塞",
+      truncated_by_failure: "因失败截断",
+      unknown: "未知",
+    };
+    const dependencyReadinessReasonLabels: Record<
+      GraphDependencyReadinessExplainArtifactV1["nodes"][number]["primaryReasonKind"],
+      string
+    > = {
+      all_prerequisites_satisfied: "前置已满足",
+      control_flow_inactive: "控制流未激活",
+      dependency_not_ready: "依赖未就绪",
+      missing_or_unresolved_input: "输入缺失或未解析",
+      non_terminal_blocked: "非终态阻塞",
+      truncated_by_failure: "因失败截断",
+      unknown: "未知",
+    };
+    const executionFrontierDispositionLabels: Record<
+      GraphExecutionFrontierExplainArtifactV1["nodes"][number]["frontierDisposition"],
+      string
+    > = {
+      ready_frontier: "前沿可执行",
+      blocked_dependency: "依赖阻塞",
+      blocked_input: "输入阻塞",
+      blocked_non_terminal: "控制阻塞",
+      unreachable: "不可达",
+      unknown: "未知",
+    };
+    const executionFrontierReasonLabels: Record<
+      GraphExecutionFrontierExplainArtifactV1["nodes"][number]["primaryReasonKind"],
+      string
+    > = {
+      all_prerequisites_satisfied_but_not_executed: "前置满足但未执行",
+      control_flow_inactive: "控制流未激活",
+      dependency_not_ready: "依赖未就绪",
+      missing_or_unresolved_input: "输入缺失或未解析",
+      non_terminal_blocked: "非终态阻塞",
+      truncated_or_unreachable: "截断或不可达",
+      unknown: "未知",
+    };
+    const executionDispositionNode =
+      nodeExecutionDispositionArtifact?.nodes.find(
+        (item) => item.nodeId === selectedNodeId,
+      ) ?? null;
+    const dependencyReadinessNode =
+      dependencyReadinessArtifact?.nodes.find(
+        (item) => item.nodeId === selectedNodeId,
+      ) ?? null;
+    const executionFrontierNode =
+      executionFrontierArtifact?.nodes.find(
+        (item) => item.nodeId === selectedNodeId,
+      ) ?? null;
+    const controlFlowDispositionLabel = executionDispositionNode
+      ? `${nodeExecutionDispositionLabels[executionDispositionNode.disposition]} · ${nodeExecutionReasonLabels[executionDispositionNode.primaryReasonKind]}`
+      : "无 control flow disposition 事实";
+    const controlFlowReadinessLabel = dependencyReadinessNode
+      ? `${dependencyReadinessDispositionLabels[dependencyReadinessNode.readinessDisposition]} · ${dependencyReadinessReasonLabels[dependencyReadinessNode.primaryReasonKind]}`
+      : "无 control flow readiness 事实";
+    const controlFlowFrontierLabel = executionFrontierNode
+      ? `${executionFrontierDispositionLabels[executionFrontierNode.frontierDisposition]} · ${executionFrontierReasonLabels[executionFrontierNode.primaryReasonKind]}`
+      : "无 control flow frontier 事实";
 
     return {
       nodeId: nodeDiagnostics.nodeId,
@@ -1776,6 +1915,13 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       skipReuseOutputsFactLabel: nodeDiagnostics.skipReuseOutputsHit
         ? "命中 skip_reuse_outputs"
         : "未命中 skip_reuse_outputs",
+      hasControlFlowExplain:
+        executionDispositionNode !== null ||
+        dependencyReadinessNode !== null ||
+        executionFrontierNode !== null,
+      controlFlowDispositionLabel,
+      controlFlowReadinessLabel,
+      controlFlowFrontierLabel,
     };
   }
 
@@ -1784,6 +1930,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null,
     nodeDiagnostics: GraphNodeDiagnosticsViewModel | null,
     bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null,
+    controlFlowSummary: GraphControlFlowExplainSummaryViewModel | null,
   ): GraphActiveRunSummaryViewModel | null {
     if (!artifact) {
       return null;
@@ -2014,6 +2161,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       waitingUser: artifact.waitingUser ?? null,
       waitingUserLabel: artifact.waitingUser?.reason ?? "未进入 waiting_user",
       bridgeIntentSummary,
+      controlFlowSummary,
       controlPreconditionsLabel,
       constraintSummaryLabel,
       diagnosticsSummary,
@@ -2027,13 +2175,6 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeWorkbenchDiagnosticsOverview = computed(() =>
     toGraphDiagnosticsOverview(lastRun.value?.diagnostics),
-  );
-
-  const activeWorkbenchDiagnosticsSummary = computed(() =>
-    toDiagnosticsSummaryViewModel(
-      activeWorkbenchDiagnosticsOverview.value,
-      activeGraphBridgeIntentSummary.value,
-    ),
   );
 
   const activeGraphCompileArtifact = computed(() =>
@@ -2080,6 +2221,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     toActiveGraphBlockingExplainArtifact(lastRun.value?.diagnostics),
   );
 
+  const activeGraphNodeExecutionDispositionExplainArtifact = computed(() =>
+    toActiveGraphNodeExecutionDispositionExplainArtifact(
+      lastRun.value?.diagnostics,
+    ),
+  );
+
   const activeGraphDependencyReadinessExplainArtifact = computed(() =>
     toActiveGraphDependencyReadinessExplainArtifact(lastRun.value?.diagnostics),
   );
@@ -2088,10 +2235,29 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     toActiveGraphExecutionFrontierExplainArtifact(lastRun.value?.diagnostics),
   );
 
+  const activeGraphControlFlowExplainSummary = computed(() =>
+    toGraphControlFlowExplainSummaryViewModel(
+      activeGraphNodeExecutionDispositionExplainArtifact.value,
+      activeGraphDependencyReadinessExplainArtifact.value,
+      activeGraphExecutionFrontierExplainArtifact.value,
+    ),
+  );
+
+  const activeWorkbenchDiagnosticsSummary = computed(() =>
+    toDiagnosticsSummaryViewModel(
+      activeWorkbenchDiagnosticsOverview.value,
+      activeGraphBridgeIntentSummary.value,
+      activeGraphControlFlowExplainSummary.value,
+    ),
+  );
+
   const activeWorkbenchNodeDiagnostics = computed(() =>
     toNodeDiagnosticsViewModel(
       activeWorkbenchDiagnosticsOverview.value,
       activeGraphRunArtifact.value,
+      activeGraphNodeExecutionDispositionExplainArtifact.value,
+      activeGraphDependencyReadinessExplainArtifact.value,
+      activeGraphExecutionFrontierExplainArtifact.value,
     ),
   );
 
@@ -2101,6 +2267,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       activeWorkbenchDiagnosticsSummary.value,
       activeWorkbenchNodeDiagnostics.value,
       activeGraphBridgeIntentSummary.value,
+      activeGraphControlFlowExplainSummary.value,
     ),
   );
 
@@ -3017,6 +3184,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     lastRun,
     lastIo,
     activeGraphBridgeIntentSummary,
+    activeGraphControlFlowExplainSummary,
     activeWorkbenchDiagnosticsOverview,
     activeWorkbenchDiagnosticsSummary,
     activeWorkbenchNodeDiagnostics,
@@ -3030,6 +3198,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphSchedulingExplainArtifact,
     activeGraphTerminalOutcomeExplainArtifact,
     activeGraphBlockingExplainArtifact,
+    activeGraphNodeExecutionDispositionExplainArtifact,
     activeGraphDependencyReadinessExplainArtifact,
     activeGraphExecutionFrontierExplainArtifact,
     activeGraphRunArtifact,

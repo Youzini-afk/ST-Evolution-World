@@ -1960,6 +1960,14 @@ export interface GraphBridgeIntentSummaryViewModel {
   takeoverCandidateCount: number;
 }
 
+export interface GraphControlFlowExplainSummaryViewModel {
+  inactiveNodeCount: number;
+  inactiveNodeIds: string[];
+  dispositionInactiveNodeCount: number;
+  readinessInactiveNodeCount: number;
+  frontierInactiveNodeCount: number;
+}
+
 export interface GraphRunDiagnosticsSummaryViewModel {
   runStatus: GraphRunState["status"];
   runStatusLabel: string;
@@ -1976,6 +1984,7 @@ export interface GraphRunDiagnosticsSummaryViewModel {
   primaryReuseReasons: GraphRunDiagnosticsReasonBadge<GraphNodeReuseReason>[];
   primaryExecutionDecisionReasons: GraphRunDiagnosticsReasonBadge<GraphNodeExecutionDecisionReason>[];
   bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null;
+  controlFlowSummary: GraphControlFlowExplainSummaryViewModel | null;
 }
 
 export interface GraphNodeDiagnosticsViewModelItem {
@@ -2002,6 +2011,10 @@ export interface GraphNodeDiagnosticsViewModel {
   cacheKeyFactsSummary: string;
   reusableOutputsFactLabel: string;
   skipReuseOutputsFactLabel: string;
+  hasControlFlowExplain: boolean;
+  controlFlowDispositionLabel: string;
+  controlFlowReadinessLabel: string;
+  controlFlowFrontierLabel: string;
 }
 
 export interface GraphCheckpointCandidateViewModel {
@@ -2066,6 +2079,7 @@ export interface GraphActiveRunSummaryViewModel {
   waitingUser: GraphRunWaitingUserSummary | null;
   waitingUserLabel: string;
   bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null;
+  controlFlowSummary: GraphControlFlowExplainSummaryViewModel | null;
   diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null;
   nodeDiagnostics: GraphNodeDiagnosticsViewModel | null;
 }

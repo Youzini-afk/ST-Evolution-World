@@ -78,6 +78,13 @@
             <span class="ew-workbench__diagnostics-item">
               运行阶段 {{ activeRunSummary.phaseLabel }}
             </span>
+            <span
+              v-if="activeRunSummary.controlFlowSummary"
+              class="ew-workbench__diagnostics-item"
+            >
+              控制流阻塞
+              {{ activeRunSummary.controlFlowSummary.inactiveNodeCount }}
+            </span>
             <span class="ew-workbench__diagnostics-item">
               终局结果 {{ activeRunSummary.terminalOutcomeLabel }}
             </span>
@@ -247,6 +254,13 @@
             <span class="ew-workbench__diagnostics-item">
               skip_reuse_outputs
               {{ diagnosticsSummary.skipReuseOutputHitCount }}
+            </span>
+            <span
+              v-if="diagnosticsSummary.controlFlowSummary"
+              class="ew-workbench__diagnostics-item"
+            >
+              control inactive
+              {{ diagnosticsSummary.controlFlowSummary.inactiveNodeCount }}
             </span>
             <span
               v-if="diagnosticsSummary.bridgeIntentSummary"
@@ -550,6 +564,23 @@
                 </div>
                 <div class="ew-workbench__module-explain-text">
                   {{ selectedNodeDiagnostics.skipReuseOutputsFactLabel }}
+                </div>
+              </div>
+              <div
+                v-if="selectedNodeDiagnostics.hasControlFlowExplain"
+                class="ew-workbench__module-explain-section"
+              >
+                <div class="ew-workbench__module-explain-title">
+                  控制流解释
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.controlFlowDispositionLabel }}
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.controlFlowReadinessLabel }}
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.controlFlowFrontierLabel }}
                 </div>
               </div>
             </div>
