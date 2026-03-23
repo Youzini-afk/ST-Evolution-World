@@ -15,6 +15,7 @@ import type {
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { useEwStore } from "../ui/store";
+import { hasWorkflowsForTiming } from "./events";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
 import {
   createGraphBlockingExplainArtifactEnvelope,
@@ -100,7 +101,12 @@ import {
   resolveNodeHandler,
 } from "./runtime-node-registry";
 import { loadLastRun, loadLastRunForChat, setLastRun } from "./settings";
-import { RunSummarySchema, type EwFlowConfig, type RunSummary } from "./types";
+import {
+  RunSummarySchema,
+  type EwFlowConfig,
+  type EwSettings,
+  type RunSummary,
+} from "./types";
 
 function toActiveGraphBlockingExplainArtifactForTest(
   diagnostics: Record<string, any>,
@@ -6463,6 +6469,78 @@ async function runValidationSpec(): Promise<void> {
     hasExplicitLegacyFlowSelection: false,
   });
 
+  const beforeReplyGraph = {
+    ...makeDispatchSmokeGraph(),
+    id: "graph_before_reply",
+    name: "Before Reply Graph",
+    timing: "before_reply" as const,
+  };
+  const timingFilteredGraphRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: undefined,
+      timing_filter: "before_reply",
+    },
+    settings: {
+      workflow_timing: "after_reply",
+      workbench_graphs: [makeBaseGraph(), beforeReplyGraph],
+    },
+  });
+  assertBridgeRoute(timingFilteredGraphRoute, {
+    route: "graph",
+    reason: "graph_first",
+    enabledGraphIds: ["graph_before_reply"],
+    graphIntent: "assistive",
+    assistiveGraphIds: ["graph_before_reply"],
+    optionalMainTakeoverGraphIds: [],
+    hasExplicitLegacyFlowSelection: false,
+  });
+
+  const noGraphForTimingRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: undefined,
+      timing_filter: "before_reply",
+    },
+    settings: {
+      workflow_timing: "after_reply",
+      workbench_graphs: [makeBaseGraph()],
+    },
+  });
+  assertBridgeRoute(noGraphForTimingRoute, {
+    route: "legacy",
+    reason: "no_graph_for_timing",
+    enabledGraphIds: [],
+    hasExplicitLegacyFlowSelection: false,
+  });
+
+  assert(
+    hasWorkflowsForTiming(
+      {
+        flows: [],
+        workbench_graphs: [beforeReplyGraph],
+        workflow_timing: "after_reply",
+      } as EwSettings,
+      "before_reply",
+    ),
+    "Expected timing gate helper to consider explicit graph timing when legacy flows are absent.",
+  );
+  assert(
+    hasWorkflowsForTiming(
+      {
+        flows: [],
+        workbench_graphs: [
+          {
+            ...makeBaseGraph(),
+            id: "graph_default_before_reply",
+            timing: "default",
+          },
+        ],
+        workflow_timing: "before_reply",
+      } as EwSettings,
+      "before_reply",
+    ),
+    "Expected timing gate helper to respect workflow_timing for default-timed graphs.",
+  );
+
   const graphTakeoverCandidate = makeOptionalMainTakeoverGraph();
   const takeoverRoute = selectWorkflowBridgeRoute({
     input: {
@@ -6543,6 +6621,28 @@ async function runValidationSpec(): Promise<void> {
       graphIntent: "assistive",
       assistiveGraphIds: ["graph_test"],
       optionalMainTakeoverGraphIds: [],
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({ selection: timingFilteredGraphRoute }),
+    {
+      route: "graph",
+      reason: "graph_first",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 1,
+      selectedGraphIds: ["graph_before_reply"],
+      graphIntent: "assistive",
+      assistiveGraphIds: ["graph_before_reply"],
+      optionalMainTakeoverGraphIds: [],
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({ selection: noGraphForTimingRoute }),
+    {
+      route: "legacy",
+      reason: "no_graph_for_timing",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 0,
     },
   );
   assertBridgeDiagnostics(
@@ -8128,6 +8228,31 @@ async function runValidationSpec(): Promise<void> {
     enabledGraphCount: 0,
     hasFailure: false,
   });
+
+  const noGraphForTimingSummary = createRunSummaryFixture({
+    chatId: "chat_legacy_graph_timing_skip",
+    requestId: "req_legacy_graph_timing_skip",
+    ok: true,
+    reason: "no flows match timing 'before_reply'",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: noGraphForTimingRoute,
+    }),
+  });
+  setLastRun(noGraphForTimingSummary);
+  assertRunSummaryBridgeContract(
+    loadLastRunForChat("chat_legacy_graph_timing_skip"),
+    {
+      chatId: "chat_legacy_graph_timing_skip",
+      requestId: "req_legacy_graph_timing_skip",
+      ok: true,
+      reason: "no flows match timing 'before_reply'",
+      route: "legacy",
+      bridgeReason: "no_graph_for_timing",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 0,
+      hasFailure: false,
+    },
+  );
 
   const legacyGlobalSummaryRaw = {
     at: Date.now(),

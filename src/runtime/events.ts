@@ -2011,17 +2011,28 @@ async function rollbackInterceptedUserMessage(
 }
 
 // ---------------------------------------------------------------------------
-// Per-flow timing gate (fast sync check).
-// Returns true if there are potentially matching flows for the given timing.
-// This only checks global flows as a fast-path; char-flows are filtered by
-// the pipeline's timing_filter after getEffectiveFlows().
+// Per-workflow timing gate (fast sync check).
+// Returns true if there are potentially matching legacy flows or workbench
+// graphs for the given timing. Char-flows are still filtered authoritatively
+// by the pipeline's timing_filter after getEffectiveFlows().
 // ---------------------------------------------------------------------------
 
-function hasFlowsForTiming(
+function getEffectiveGraphTiming(
+  graph: {
+    timing?: "default" | "before_reply" | "after_reply";
+  },
+  defaultTiming: "before_reply" | "after_reply",
+): "before_reply" | "after_reply" {
+  return graph.timing === "before_reply" || graph.timing === "after_reply"
+    ? graph.timing
+    : defaultTiming;
+}
+
+export function hasWorkflowsForTiming(
   settings: EwSettings,
   timing: "before_reply" | "after_reply",
 ): boolean {
-  // Fast path: any global flow explicitly or effectively matches
+  // Fast path: any global legacy flow explicitly or effectively matches
   const globalMatch = settings.flows.some((f) => {
     if (!f.enabled) return false;
     const effective =
@@ -2029,6 +2040,15 @@ function hasFlowsForTiming(
     return effective === timing;
   });
   if (globalMatch) return true;
+
+  const graphMatch = (settings.workbench_graphs ?? []).some((graph) => {
+    if (!graph?.enabled) return false;
+    return (
+      getEffectiveGraphTiming(graph, settings.workflow_timing) === timing
+    );
+  });
+  if (graphMatch) return true;
+
   // Fallback: if the global default equals the requested timing,
   // char-flows with timing:'default' would resolve to it — proceed
   // and let the pipeline's timing_filter do the authoritative check.
@@ -2767,7 +2787,7 @@ async function runPrimaryBeforeReplyIntercept(
   if (
     !settings.enabled ||
     getRuntimeState().is_processing ||
-    !hasFlowsForTiming(settings, "before_reply")
+    !hasWorkflowsForTiming(settings, "before_reply")
   ) {
     return;
   }
@@ -2939,7 +2959,7 @@ async function onGenerationAfterCommands(
   }
 
   const settings = getSettings();
-  if (!hasFlowsForTiming(settings, "before_reply")) {
+  if (!hasWorkflowsForTiming(settings, "before_reply")) {
     return;
   }
   const decision = shouldHandleGenerationAfter(type, params, dryRun, settings);
@@ -3125,7 +3145,7 @@ async function onAfterReplyMessage(
     Number.isFinite(pendingUserMessageId) &&
     pendingBeforeReplyBinding.user_message_id === pendingUserMessageId,
   );
-  const hasAfterReplyFlows = hasFlowsForTiming(settings, "after_reply");
+  const hasAfterReplyFlows = hasWorkflowsForTiming(settings, "after_reply");
   const decision = hasAfterReplyFlows
     ? shouldHandleAfterReply(messageId, type, settings)
     : { ok: false, reason: "after_reply_flows_disabled" };
@@ -3794,7 +3814,7 @@ export async function rerollCurrentAfterReplyWorkflow(): Promise<{
   reason?: string;
 }> {
   const settings = getSettings();
-  if (!hasFlowsForTiming(settings, "after_reply")) {
+  if (!hasWorkflowsForTiming(settings, "after_reply")) {
     return { ok: false, reason: "no flows configured for after_reply timing" };
   }
   if (!settings.enabled) {

@@ -678,7 +678,11 @@ export type WorkflowBridgeRouteSelection = {
   optionalMainTakeoverGraphs: WorkbenchGraph[];
   graphIntent: WorkflowBridgeGraphIntent;
   hasExplicitLegacyFlowSelection: boolean;
-  reason: "graph_first" | "legacy_flow_selection" | "no_enabled_graph";
+  reason:
+    | "graph_first"
+    | "legacy_flow_selection"
+    | "no_enabled_graph"
+    | "no_graph_for_timing";
 };
 
 function getGraphGenerationOwnership(
@@ -689,10 +693,20 @@ function getGraphGenerationOwnership(
     : "assistive";
 }
 
+function getEffectiveGraphTiming(
+  graph: Pick<WorkbenchGraph, "timing">,
+  defaultTiming: "before_reply" | "after_reply",
+): "before_reply" | "after_reply" {
+  return graph.timing === "before_reply" || graph.timing === "after_reply"
+    ? graph.timing
+    : defaultTiming;
+}
+
 export function selectWorkflowBridgeRoute(params: {
-  input: Pick<RunWorkflowInput, "flow_ids">;
+  input: Pick<RunWorkflowInput, "flow_ids" | "timing_filter">;
   settings: {
     workbench_graphs?: WorkbenchGraph[];
+    workflow_timing?: "before_reply" | "after_reply";
   };
 }): WorkflowBridgeRouteSelection {
   const workbenchGraphs = Array.isArray(params.settings.workbench_graphs)
@@ -700,11 +714,22 @@ export function selectWorkflowBridgeRoute(params: {
         (graph): graph is WorkbenchGraph => Boolean(graph),
       )
     : [];
+  const defaultTiming =
+    params.settings.workflow_timing === "before_reply"
+      ? "before_reply"
+      : "after_reply";
   const enabledGraphs = workbenchGraphs.filter((graph) => graph.enabled);
-  const assistiveGraphs = enabledGraphs.filter(
+  const eligibleGraphs = params.input.timing_filter
+    ? enabledGraphs.filter(
+        (graph) =>
+          getEffectiveGraphTiming(graph, defaultTiming) ===
+          params.input.timing_filter,
+      )
+    : enabledGraphs;
+  const assistiveGraphs = eligibleGraphs.filter(
     (graph) => getGraphGenerationOwnership(graph) === "assistive",
   );
-  const optionalMainTakeoverGraphs = enabledGraphs.filter(
+  const optionalMainTakeoverGraphs = eligibleGraphs.filter(
     (graph) => getGraphGenerationOwnership(graph) === "optional_main_takeover",
   );
   const graphIntent: WorkflowBridgeGraphIntent =
@@ -715,10 +740,10 @@ export function selectWorkflowBridgeRoute(params: {
     (flowId) => typeof flowId === "string" && flowId.trim().length > 0,
   );
 
-  if (enabledGraphs.length > 0 && !hasExplicitLegacyFlowSelection) {
+  if (eligibleGraphs.length > 0 && !hasExplicitLegacyFlowSelection) {
     return {
       route: "graph",
-      enabledGraphs,
+      enabledGraphs: eligibleGraphs,
       assistiveGraphs,
       optionalMainTakeoverGraphs,
       graphIntent,
@@ -729,13 +754,20 @@ export function selectWorkflowBridgeRoute(params: {
 
   return {
     route: "legacy",
-    enabledGraphs,
+    enabledGraphs: eligibleGraphs,
     assistiveGraphs,
     optionalMainTakeoverGraphs,
     graphIntent,
     hasExplicitLegacyFlowSelection,
-    reason:
-      enabledGraphs.length > 0 ? "legacy_flow_selection" : "no_enabled_graph",
+    reason: hasExplicitLegacyFlowSelection
+      ? enabledGraphs.length > 0
+        ? "legacy_flow_selection"
+        : "no_enabled_graph"
+      : params.input.timing_filter &&
+          enabledGraphs.length > 0 &&
+          eligibleGraphs.length === 0
+        ? "no_graph_for_timing"
+        : "no_enabled_graph",
   };
 }
 
@@ -1370,6 +1402,7 @@ export async function runWorkflow(
     input,
     settings: {
       workbench_graphs: (settings as any).workbench_graphs,
+      workflow_timing: settings.workflow_timing,
     },
   });
   const baseBridgeDiagnostics = buildWorkflowBridgeDiagnostics({
