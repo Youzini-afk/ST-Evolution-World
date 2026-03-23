@@ -27,6 +27,10 @@ import {
   readGraphCompileRunLinkArtifactEnvelope,
 } from "./graph-compile-run-link-artifact-codec";
 import {
+  createGraphDependencyReadinessExplainArtifactEnvelope,
+  readGraphDependencyReadinessExplainArtifactEnvelope,
+} from "./graph-dependency-readiness-explain-artifact-codec";
+import {
   buildGraphDocumentExportPayload,
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
@@ -237,6 +241,106 @@ function toActiveGraphBlockingExplainArtifactForTest(
           label: String(artifact.recoveryEligibility.label ?? ""),
         }
       : undefined,
+  };
+}
+
+function toActiveGraphDependencyReadinessExplainArtifactForTest(
+  diagnostics: Record<string, any>,
+): {
+  summary?: {
+    nodeCounts?: {
+      ready?: number;
+      notReadyDependency?: number;
+      notReadyInput?: number;
+      blockedNonTerminal?: number;
+      truncatedByFailure?: number;
+      unknown?: number;
+    };
+    reasonCounts?: Record<string, number>;
+    evidenceSources?: string[];
+  };
+  nodes?: Array<{
+    nodeId?: string;
+    readinessDisposition?: string;
+    primaryReasonKind?: string;
+    readinessEvidenceSources?: string[];
+    blockingDependencyNodeIds?: string[];
+    unresolvedInputKeys?: string[];
+    upstreamRunDispositions?: string[];
+    runDisposition?: string;
+    blockedByRunStatus?: string;
+  }>;
+} | null {
+  const artifact =
+    readGraphDependencyReadinessExplainArtifactEnvelope(diagnostics)?.artifact;
+  if (!artifact || typeof artifact !== "object") {
+    return null;
+  }
+  return {
+    summary: {
+      nodeCounts: {
+        ready: Number(artifact.summary?.nodeCounts?.ready ?? 0),
+        notReadyDependency: Number(
+          artifact.summary?.nodeCounts?.notReadyDependency ?? 0,
+        ),
+        notReadyInput: Number(artifact.summary?.nodeCounts?.notReadyInput ?? 0),
+        blockedNonTerminal: Number(
+          artifact.summary?.nodeCounts?.blockedNonTerminal ?? 0,
+        ),
+        truncatedByFailure: Number(
+          artifact.summary?.nodeCounts?.truncatedByFailure ?? 0,
+        ),
+        unknown: Number(artifact.summary?.nodeCounts?.unknown ?? 0),
+      },
+      reasonCounts:
+        artifact.summary && typeof artifact.summary.reasonCounts === "object"
+          ? Object.fromEntries(
+              Object.entries(artifact.summary.reasonCounts).map(
+                ([key, value]) => [key, Number(value ?? 0)],
+              ),
+            )
+          : {},
+      evidenceSources: Array.isArray(artifact.summary?.evidenceSources)
+        ? artifact.summary.evidenceSources.map((entry: unknown) =>
+            String(entry),
+          )
+        : [],
+    },
+    nodes: Array.isArray(artifact.nodes)
+      ? artifact.nodes.map((node: Record<string, any>) => ({
+          nodeId: String(node.nodeId ?? ""),
+          readinessDisposition: String(node.readinessDisposition ?? "unknown"),
+          primaryReasonKind: String(node.primaryReasonKind ?? "unknown"),
+          readinessEvidenceSources: Array.isArray(node.readinessEvidenceSources)
+            ? node.readinessEvidenceSources.map((entry: unknown) =>
+                String(entry),
+              )
+            : [],
+          blockingDependencyNodeIds: Array.isArray(
+            node.blockingDependencyNodeIds,
+          )
+            ? node.blockingDependencyNodeIds.map((entry: unknown) =>
+                String(entry),
+              )
+            : [],
+          unresolvedInputKeys: Array.isArray(node.unresolvedInputKeys)
+            ? node.unresolvedInputKeys.map((entry: unknown) => String(entry))
+            : [],
+          upstreamRunDispositions: Array.isArray(node.upstreamRunDispositions)
+            ? node.upstreamRunDispositions.map((entry: unknown) =>
+                String(entry),
+              )
+            : [],
+          runDisposition:
+            typeof node.runDisposition === "string"
+              ? node.runDisposition
+              : undefined,
+          blockedByRunStatus:
+            typeof node.blockedByRunStatus === "string"
+              ? node.blockedByRunStatus
+              : undefined,
+        }))
+      : [],
   };
 }
 
@@ -6597,7 +6701,7 @@ async function runValidationSpec(): Promise<void> {
             outputObservedBeforeFailure: false,
             outputProjectionKind: "not_projected",
             producedHostEffectBeforeFailure: false,
-            hostEffectProjectionKind: "not_projected",
+            hostEffectProjectionKind: "no_host_effect",
             inputResolutionObserved: true,
             reuseDisposition: "ineligible_executed",
           },
@@ -6619,7 +6723,7 @@ async function runValidationSpec(): Promise<void> {
             outputObservedBeforeFailure: false,
             outputProjectionKind: "not_projected",
             producedHostEffectBeforeFailure: false,
-            hostEffectProjectionKind: "not_projected",
+            hostEffectProjectionKind: "no_host_effect",
             inputResolutionObserved: true,
             reuseDisposition: "eligible_but_executed",
           },
@@ -6641,7 +6745,7 @@ async function runValidationSpec(): Promise<void> {
             outputObservedBeforeFailure: false,
             outputProjectionKind: "not_projected",
             producedHostEffectBeforeFailure: false,
-            hostEffectProjectionKind: "not_projected",
+            hostEffectProjectionKind: "no_host_effect",
             inputResolutionObserved: true,
             reuseDisposition: "ineligible_executed",
           },
@@ -7033,6 +7137,417 @@ async function runValidationSpec(): Promise<void> {
       !JSON.stringify(degradedBlockingExplain).includes("controlAction") &&
       !JSON.stringify(degradedBlockingExplain).includes('"payload"'),
     `Expected sparse/malformed blocking explain payloads to conservatively degrade and stay de-sensitized. Actual: ${JSON.stringify(degradedBlockingExplain)}`,
+  );
+  const dependencyReadinessEnvelope =
+    createGraphDependencyReadinessExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_dependency_readiness_matrix",
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "blocked",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      } as any,
+      compileRunLinkArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_dependency_readiness_matrix",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        fingerprintVersion: 1,
+        nodeCount: compilePlanFixture.nodes.length,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "src_text",
+            moduleId: "src_user_input",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "src_text",
+              )?.nodeFingerprint ?? "src_fp",
+            compileOrder: 0,
+            dependsOn: [],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "executed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_text",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "filter_text",
+              )?.nodeFingerprint ?? "filter_fp",
+            compileOrder: 1,
+            dependsOn: ["src_text"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "out_reply",
+            moduleId: "out_reply_inject",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "out_reply",
+              )?.nodeFingerprint ?? "out_fp",
+            compileOrder: 2,
+            dependsOn: ["filter_text"],
+            isTerminal: true,
+            isSideEffect: true,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+        ],
+      },
+      inputResolutionArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_dependency_readiness_matrix",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        nodes: [
+          {
+            nodeId: "src_text",
+            moduleId: "src_user_input",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "src_text",
+              )?.nodeFingerprint ?? "src_fp",
+            inputs: [],
+          },
+          {
+            nodeId: "filter_text",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "filter_text",
+              )?.nodeFingerprint ?? "filter_fp",
+            inputs: [],
+          },
+          {
+            nodeId: "out_reply",
+            moduleId: "out_reply_inject",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "out_reply",
+              )?.nodeFingerprint ?? "out_fp",
+            inputs: [
+              {
+                inputKey: "instruction",
+                resolutionStatus: "missing",
+                sourceKind: "unknown",
+                isDefaulted: false,
+                missingReason: "value_unavailable",
+              },
+            ],
+          },
+        ],
+      },
+      nodeExecutionDispositionExplainArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_dependency_readiness_matrix",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        fingerprintVersion: 1,
+        nodeCount: compilePlanFixture.nodes.length,
+        summary: {
+          nodeCounts: {
+            executed: 1,
+            skippedReuse: 0,
+            failed: 0,
+            notReached: 2,
+            blocked: 0,
+            unknown: 0,
+          },
+          reasonCounts: {
+            executed_by_decision: 1,
+            executed_despite_reuse_eligibility: 0,
+            reuse_skip: 0,
+            dependency_not_reached: 1,
+            input_missing_or_unresolved: 1,
+            truncated_by_failure: 0,
+            non_terminal_blocked: 0,
+            terminal_projection_only: 0,
+            unknown: 0,
+          },
+          evidenceSources: [
+            "compile_run_link",
+            "input_resolution",
+            "run_status",
+          ],
+        },
+        nodes: [
+          {
+            nodeId: "src_text",
+            moduleId: "src_user_input",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "src_text",
+              )?.nodeFingerprint ?? "src_fp",
+            compileOrder: 0,
+            disposition: "executed",
+            primaryReasonKind: "executed_by_decision",
+            evidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_text",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "filter_text",
+              )?.nodeFingerprint ?? "filter_fp",
+            compileOrder: 1,
+            disposition: "not_reached",
+            primaryReasonKind: "dependency_not_reached",
+            evidenceSources: ["compile_run_link"],
+            upstreamNodeIds: ["src_text"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_reply",
+            moduleId: "out_reply_inject",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "out_reply",
+              )?.nodeFingerprint ?? "out_fp",
+            compileOrder: 2,
+            disposition: "not_reached",
+            primaryReasonKind: "input_missing_or_unresolved",
+            evidenceSources: ["input_resolution"],
+            relatedInputKeys: ["instruction"],
+            runDisposition: "not_reached",
+          },
+        ],
+      },
+      failureExplainArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_dependency_readiness_matrix",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        fingerprintVersion: 1,
+        nodeCount: compilePlanFixture.nodes.length,
+        summary: {
+          runFailed: false,
+          failedStage: "unknown",
+          failureKind: "none",
+          failedNodeCount: 0,
+          notReachedNodeCount: 2,
+          executedBeforeFailureNodeCount: 1,
+          failureEvidenceSources: ["compile_run_link"],
+        },
+        failedNodeIds: [],
+        notReachedNodeIds: ["filter_text", "out_reply"],
+        nodes: [
+          {
+            nodeId: "src_text",
+            moduleId: "src_user_input",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "src_text",
+              )?.nodeFingerprint ?? "src_fp",
+            compileOrder: 0,
+            runDisposition: "executed",
+            failureDisposition: "not_failed",
+            failureObserved: false,
+            stage: "unknown",
+            failureReasonKind: "none",
+            isTerminal: false,
+            isSideEffect: false,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "no_observed_output",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+          {
+            nodeId: "filter_text",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "filter_text",
+              )?.nodeFingerprint ?? "filter_fp",
+            compileOrder: 1,
+            runDisposition: "not_reached",
+            failureDisposition: "not_reached",
+            failureObserved: false,
+            stage: "unknown",
+            failureReasonKind: "dependency_not_reached",
+            isTerminal: false,
+            isSideEffect: false,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "not_reached",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+          {
+            nodeId: "out_reply",
+            moduleId: "out_reply_inject",
+            nodeFingerprint:
+              compilePlanFixture.nodes.find(
+                (node) => node.nodeId === "out_reply",
+              )?.nodeFingerprint ?? "out_fp",
+            compileOrder: 2,
+            runDisposition: "not_reached",
+            failureDisposition: "not_reached",
+            failureObserved: false,
+            stage: "unknown",
+            failureReasonKind: "dependency_not_reached",
+            isTerminal: true,
+            isSideEffect: true,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "not_reached",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+        ],
+      },
+      blockingExplainArtifact: {
+        graphId: compilePlanFixture.fingerprintSource?.graphId ?? "graph_test",
+        runId: "run_dependency_readiness_matrix",
+        compileFingerprint: compilePlanFixture.compileFingerprint,
+        fingerprintVersion: 1,
+        summary: {
+          runStatus: "waiting_user",
+          phase: "blocked",
+          blockingDisposition: "waiting_user",
+          blockingExplainKind: "waiting_for_external_input",
+          isHumanInputRequired: true,
+          checkpointObserved: false,
+          evidenceSources: ["run_status"],
+        },
+      },
+    });
+  const dependencyReadinessArtifact = dependencyReadinessEnvelope?.artifact;
+  const dependencyReadyNode = dependencyReadinessArtifact?.nodes.find(
+    (node) => node.nodeId === "src_text",
+  );
+  const dependencyBlockedNode = dependencyReadinessArtifact?.nodes.find(
+    (node) => node.nodeId === "filter_text",
+  );
+  const dependencyInputNode = dependencyReadinessArtifact?.nodes.find(
+    (node) => node.nodeId === "out_reply",
+  );
+  assert(
+    dependencyReadinessArtifact?.summary.nodeCounts.ready === 1 &&
+      dependencyReadinessArtifact.summary.nodeCounts.notReadyDependency === 1 &&
+      dependencyReadinessArtifact.summary.nodeCounts.notReadyInput === 1 &&
+      dependencyReadinessArtifact.summary.nodeCounts.blockedNonTerminal === 0 &&
+      dependencyReadinessArtifact.summary.nodeCounts.truncatedByFailure === 0 &&
+      dependencyReadinessArtifact.summary.reasonCounts
+        .all_prerequisites_satisfied === 1 &&
+      dependencyReadinessArtifact.summary.reasonCounts.dependency_not_ready ===
+        1 &&
+      dependencyReadinessArtifact.summary.reasonCounts
+        .missing_or_unresolved_input === 1 &&
+      dependencyReadyNode?.readinessDisposition === "ready" &&
+      dependencyBlockedNode?.readinessDisposition === "not_ready_dependency" &&
+      dependencyInputNode?.readinessDisposition === "not_ready_input" &&
+      JSON.stringify(dependencyInputNode?.unresolvedInputKeys) ===
+        JSON.stringify(["instruction"]),
+    `Expected dependency readiness explain artifact to distinguish ready / dependency-not-ready / input-not-ready conservatively. Actual: ${JSON.stringify(dependencyReadinessArtifact)}`,
+  );
+  const degradedDependencyReadiness =
+    readGraphDependencyReadinessExplainArtifactEnvelope({
+      bridge: {
+        graph_dependency_readiness_explain_artifact: {
+          kind: "graph_dependency_readiness_explain_artifact",
+          version: "v1",
+          artifact: {
+            graphId: "graph_sparse",
+            runId: "run_sparse",
+            compileFingerprint: compilePlanFixture.compileFingerprint,
+            nodeCount: "broken",
+            summary: {
+              nodeCounts: {
+                ready: "broken",
+                notReadyDependency: 2,
+                blockedNonTerminal: -1,
+              },
+              reasonCounts: {
+                dependency_not_ready: 2,
+                truncated_by_failure: 1,
+              },
+              evidenceSources: ["run_status", "secret_source"],
+            },
+            nodes: [
+              {
+                nodeId: "node_sparse_dependency",
+                moduleId: "mod_sparse_dependency",
+                nodeFingerprint: "fp_sparse_dependency",
+                compileOrder: 1,
+                readinessDisposition: "not_ready_dependency",
+                primaryReasonKind: "dependency_not_ready",
+                readinessEvidenceSources: ["compile_run_link", "secret_source"],
+                blockingDependencyNodeIds: ["dep_a", 3],
+                upstreamRunDispositions: ["not_reached", "broken"],
+                taskId: "omit_me",
+                actionPayload: { leak: true },
+              },
+              {
+                nodeId: "node_sparse_unknown",
+                moduleId: "mod_sparse_unknown",
+                nodeFingerprint: "fp_sparse_unknown",
+                compileOrder: 2,
+                readinessDisposition: "invented_disposition",
+                primaryReasonKind: "invented_reason",
+                readinessEvidenceSources: ["run_status"],
+                unresolvedInputKeys: ["instruction", null],
+                blockedByRunStatus: "failed",
+                resumeToken: "omit_me",
+              },
+              {
+                nodeId: "broken_only",
+              },
+            ],
+          },
+        },
+      },
+    });
+  const degradedDependencyReadinessArtifact =
+    degradedDependencyReadiness?.artifact;
+  assert(
+    degradedDependencyReadinessArtifact?.nodeCount === 2 &&
+      degradedDependencyReadinessArtifact.summary.nodeCounts.ready === 0 &&
+      degradedDependencyReadinessArtifact.summary.nodeCounts
+        .notReadyDependency === 2 &&
+      degradedDependencyReadinessArtifact.summary.nodeCounts
+        .blockedNonTerminal === 0 &&
+      degradedDependencyReadinessArtifact.summary.reasonCounts
+        .dependency_not_ready === 2 &&
+      JSON.stringify(
+        degradedDependencyReadinessArtifact.summary.evidenceSources,
+      ) === JSON.stringify(["run_status"]) &&
+      degradedDependencyReadinessArtifact.nodes[0]?.blockingDependencyNodeIds?.join(
+        ",",
+      ) === "dep_a" &&
+      degradedDependencyReadinessArtifact.nodes[0]?.upstreamRunDispositions?.join(
+        ",",
+      ) === "not_reached" &&
+      degradedDependencyReadinessArtifact.nodes[1]?.readinessDisposition ===
+        "unknown" &&
+      degradedDependencyReadinessArtifact.nodes[1]?.primaryReasonKind ===
+        "unknown" &&
+      !JSON.stringify(degradedDependencyReadinessArtifact).includes("taskId") &&
+      !JSON.stringify(degradedDependencyReadinessArtifact).includes(
+        "actionPayload",
+      ) &&
+      !JSON.stringify(degradedDependencyReadinessArtifact).includes(
+        "resumeToken",
+      ),
+    `Expected sparse/malformed dependency readiness payloads to conservatively degrade and stay de-sensitized. Actual: ${JSON.stringify(degradedDependencyReadinessArtifact)}`,
   );
   const store = useEwStore();
   setLastRun(

@@ -3,6 +3,7 @@ import _ from "lodash";
 import { createDefaultApiPreset, createDefaultFlow } from "./factory";
 import { migrateAllFlows } from "./flow-migrator";
 import { readGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
+import { readGraphDependencyReadinessExplainArtifactEnvelope } from "./graph-dependency-readiness-explain-artifact-codec";
 import {
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
@@ -544,6 +545,9 @@ type WorkflowBridgeFacts = {
   graph_node_execution_disposition_explain_artifact?: ReturnType<
     typeof readGraphNodeExecutionDispositionExplainArtifactEnvelope
   >;
+  graph_dependency_readiness_explain_artifact?: ReturnType<
+    typeof readGraphDependencyReadinessExplainArtifactEnvelope
+  >;
   graph_output_explain_artifact?: ReturnType<
     typeof readGraphOutputExplainArtifactEnvelope
   >;
@@ -644,6 +648,15 @@ function normalizeWorkflowBridgeDiagnostics(
   if (graphNodeExecutionDispositionExplainArtifact) {
     normalized.graph_node_execution_disposition_explain_artifact =
       graphNodeExecutionDispositionExplainArtifact;
+  }
+
+  const graphDependencyReadinessExplainArtifact =
+    readGraphDependencyReadinessExplainArtifactEnvelope({
+      bridge: bridgeRecord,
+    });
+  if (graphDependencyReadinessExplainArtifact) {
+    normalized.graph_dependency_readiness_explain_artifact =
+      graphDependencyReadinessExplainArtifact;
   }
 
   const graphOutputExplainArtifact = readGraphOutputExplainArtifactEnvelope({

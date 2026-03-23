@@ -919,6 +919,74 @@ export interface GraphNodeExecutionDispositionExplainArtifactEnvelope {
   artifact: GraphNodeExecutionDispositionExplainArtifactV1;
 }
 
+export type GraphDependencyReadinessDispositionV1 =
+  | "ready"
+  | "not_ready_dependency"
+  | "not_ready_input"
+  | "blocked_non_terminal"
+  | "truncated_by_failure"
+  | "unknown";
+
+export type GraphDependencyReadinessReasonKindV1 =
+  | "all_prerequisites_satisfied"
+  | "dependency_not_ready"
+  | "missing_or_unresolved_input"
+  | "non_terminal_blocked"
+  | "truncated_by_failure"
+  | "unknown";
+
+export type GraphDependencyReadinessEvidenceSourceV1 =
+  | "compile_run_link"
+  | "input_resolution"
+  | "node_execution_disposition"
+  | "failure_explain"
+  | "blocking_explain"
+  | "run_status";
+
+export interface GraphDependencyReadinessSummaryV1 {
+  nodeCounts: {
+    ready: number;
+    notReadyDependency: number;
+    notReadyInput: number;
+    blockedNonTerminal: number;
+    truncatedByFailure: number;
+    unknown: number;
+  };
+  reasonCounts: Record<GraphDependencyReadinessReasonKindV1, number>;
+  evidenceSources: GraphDependencyReadinessEvidenceSourceV1[];
+}
+
+export interface GraphDependencyReadinessNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  readinessDisposition: GraphDependencyReadinessDispositionV1;
+  primaryReasonKind: GraphDependencyReadinessReasonKindV1;
+  readinessEvidenceSources: GraphDependencyReadinessEvidenceSourceV1[];
+  blockingDependencyNodeIds?: string[];
+  unresolvedInputKeys?: string[];
+  upstreamRunDispositions?: GraphCompileRunLinkDispositionV1[];
+  runDisposition?: GraphCompileRunLinkDispositionV1;
+  blockedByRunStatus?: GraphRunStatus;
+}
+
+export interface GraphDependencyReadinessExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  summary: GraphDependencyReadinessSummaryV1;
+  nodes: GraphDependencyReadinessNodeRecordV1[];
+}
+
+export interface GraphDependencyReadinessExplainArtifactEnvelope {
+  kind: "graph_dependency_readiness_explain_artifact";
+  version: "v1";
+  artifact: GraphDependencyReadinessExplainArtifactV1;
+}
+
 export type GraphBlockingDispositionV1 =
   | "not_blocked"
   | "waiting_user"

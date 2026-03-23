@@ -1,4 +1,5 @@
 import { readGraphBlockingExplainArtifactEnvelope } from "@/runtime/graph-blocking-explain-artifact-codec";
+import { readGraphDependencyReadinessExplainArtifactEnvelope } from "@/runtime/graph-dependency-readiness-explain-artifact-codec";
 import {
   GraphDocumentEnvelope,
   buildGraphDocumentExportPayload,
@@ -72,6 +73,7 @@ import type {
   GraphCheckpointCandidateViewModel,
   GraphCompileArtifactV1,
   GraphCompileRunLinkArtifactV1,
+  GraphDependencyReadinessExplainArtifactV1,
   GraphExecutionStage,
   GraphFailureExplainArtifactV1,
   GraphHostEffectExplainArtifactV1,
@@ -1283,6 +1285,15 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphDependencyReadinessExplainArtifact(
+    diagnostics: unknown,
+  ): GraphDependencyReadinessExplainArtifactV1 | null {
+    return (
+      readGraphDependencyReadinessExplainArtifactEnvelope(diagnostics)
+        ?.artifact ?? null
+    );
+  }
+
   function toActiveGraphBlockingExplainArtifact(
     diagnostics: unknown,
   ): GraphBlockingExplainArtifactV1 | null {
@@ -1897,6 +1908,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphBlockingExplainArtifact = computed(() =>
     toActiveGraphBlockingExplainArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphDependencyReadinessExplainArtifact = computed(() =>
+    toActiveGraphDependencyReadinessExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchNodeDiagnostics = computed(() =>
@@ -2839,6 +2854,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphSchedulingExplainArtifact,
     activeGraphTerminalOutcomeExplainArtifact,
     activeGraphBlockingExplainArtifact,
+    activeGraphDependencyReadinessExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,
