@@ -1,6 +1,10 @@
 /* ═══ Module Workbench — Module Registry ═══ */
 /* All 44 atomic modules + composite packages */
 
+import {
+  RESERVED_ACTIVATION_PORT_ID,
+  RESERVED_ACTIVATION_PORT_LABEL,
+} from "./module-types";
 import type {
   HostWriteSummary,
   ModuleBlueprint,
@@ -291,6 +295,34 @@ const jsonOut = (id = "json_out", label = "JSON"): ModulePortDef => ({
   direction: "out",
   dataType: "json",
 });
+const activationIn = (
+  id = RESERVED_ACTIVATION_PORT_ID,
+  label = RESERVED_ACTIVATION_PORT_LABEL,
+  uiHidden = true,
+): ModulePortDef => ({
+  id,
+  label,
+  direction: "in",
+  dataType: "activation",
+  optional: true,
+  uiHidden,
+});
+const activationOut = (id: string, label: string): ModulePortDef => ({
+  id,
+  label,
+  direction: "out",
+  dataType: "activation",
+});
+
+function withReservedActivationInput(module: ModuleBlueprint): ModuleBlueprint {
+  if (module.ports.some((port) => port.id === RESERVED_ACTIVATION_PORT_ID)) {
+    return module;
+  }
+  return {
+    ...module,
+    ports: [activationIn(), ...module.ports],
+  };
+}
 
 function compositeNode(
   id: string,
@@ -1826,6 +1858,49 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
 ];
 
 // ════════════════════════════════════════════════════════════
+// 🧭 Control — 控制流模块
+// ════════════════════════════════════════════════════════════
+
+const CONTROL_MODULES: ModuleBlueprint[] = [
+  {
+    moduleId: "ctl_if",
+    label: "条件分支",
+    category: "control",
+    color: "#f97316",
+    icon: "🧭",
+    description: "根据输入条件输出 then / else 激活信号，用于驱动分支链路。",
+    ports: [
+      {
+        id: "condition",
+        label: "条件",
+        direction: "in",
+        dataType: "any",
+      },
+      activationOut("then", "Then"),
+      activationOut("else", "Else"),
+      {
+        id: "selected_branch",
+        label: "命中分支",
+        direction: "out",
+        dataType: "text",
+      },
+    ],
+    defaultConfig: {
+      negate: false,
+    },
+    configSchema: [
+      {
+        key: "negate",
+        label: "反转条件",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用后把 truthy / falsy 结果反转。",
+      },
+    ],
+  },
+];
+
+// ════════════════════════════════════════════════════════════
 // Registry
 // ════════════════════════════════════════════════════════════
 
@@ -1852,6 +1927,13 @@ const ALL_MODULES_BASE: ModuleBlueprint[] = [
   ...withRuntimeMeta(COMPOSE_MODULES, {
     schemaVersion: 1,
     runtimeKind: "dataflow",
+    sideEffect: "pure",
+    migration: { strategy: "compatible" },
+  }),
+  ...withRuntimeMeta(CONTROL_MODULES, {
+    schemaVersion: 1,
+    runtimeKind: "control",
+    capability: "pure",
     sideEffect: "pure",
     migration: { strategy: "compatible" },
   }),
@@ -1960,7 +2042,8 @@ const MODULE_METADATA_PILOT_BY_ID: Readonly<
   },
 };
 
-const ALL_MODULES: ModuleBlueprint[] = ALL_MODULES_BASE.map((module) => {
+const ALL_MODULES: ModuleBlueprint[] = ALL_MODULES_BASE.map((baseModule) => {
+  const module = withReservedActivationInput(baseModule);
   const pilotMetadata = MODULE_METADATA_PILOT_BY_ID[module.moduleId];
   if (!pilotMetadata) {
     const hasConfigFactSurface =

@@ -53,6 +53,7 @@ function toOptionalExecutionDecisionReason(
   value: unknown,
 ): GraphNodeExecutionDecisionReason | undefined {
   return value === "feature_disabled" ||
+    value === "inactive_control_flow" ||
     value === "ineligible_reuse_verdict" ||
     value === "ineligible_capability" ||
     value === "ineligible_side_effect" ||
@@ -118,6 +119,7 @@ function createEmptyDecisionCounts(): Record<
 > {
   return {
     feature_disabled: 0,
+    inactive_control_flow: 0,
     ineligible_reuse_verdict: 0,
     ineligible_capability: 0,
     ineligible_side_effect: 0,
@@ -159,6 +161,10 @@ function inferFinalReuseDisposition(params: {
   }
 
   if (executionDecision === "feature_disabled") {
+    return "not_applicable";
+  }
+
+  if (executionDecision === "inactive_control_flow") {
     return "not_applicable";
   }
 

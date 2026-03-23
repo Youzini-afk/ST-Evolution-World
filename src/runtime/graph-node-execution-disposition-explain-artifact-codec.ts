@@ -118,6 +118,7 @@ function toReuseDecision(
   value: unknown,
 ): GraphNodeExecutionDecisionReason | undefined {
   return value === "feature_disabled" ||
+    value === "inactive_control_flow" ||
     value === "ineligible_reuse_verdict" ||
     value === "ineligible_capability" ||
     value === "ineligible_side_effect" ||

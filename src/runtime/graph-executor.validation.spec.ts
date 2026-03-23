@@ -14,6 +14,7 @@ import type {
   GraphNodeDiagnosticsView,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
+import { RESERVED_ACTIVATION_PORT_ID } from "../ui/components/graph/module-types";
 import { useEwStore } from "../ui/store";
 import { hasWorkflowsForTiming } from "./events";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
@@ -1019,6 +1020,85 @@ function makeSideEffectHandlerFailureGraph(): WorkbenchGraph {
   };
 }
 
+function makeIfControlGraph(): WorkbenchGraph {
+  return {
+    id: "graph_if_control",
+    name: "If Control Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "ctl_if",
+        moduleId: "ctl_if",
+        position: { x: 220, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "then_filter",
+        moduleId: "flt_mvu_strip",
+        position: { x: 460, y: -120 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "else_filter",
+        moduleId: "flt_mvu_strip",
+        position: { x: 460, y: 120 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_condition",
+        source: "src_text",
+        sourcePort: "text",
+        target: "ctl_if",
+        targetPort: "condition",
+      },
+      {
+        id: "edge_then_activation",
+        source: "ctl_if",
+        sourcePort: "then",
+        target: "then_filter",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_else_activation",
+        source: "ctl_if",
+        sourcePort: "else",
+        target: "else_filter",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_then_text",
+        source: "src_text",
+        sourcePort: "text",
+        target: "then_filter",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_else_text",
+        source: "src_text",
+        sourcePort: "text",
+        target: "else_filter",
+        targetPort: "text_in",
+      },
+    ],
+  };
+}
+
 function makeOptionalMainTakeoverGraph(
   graph: WorkbenchGraph = makeBaseGraph(),
 ): WorkbenchGraph {
@@ -1722,6 +1802,21 @@ async function runValidationSpec(): Promise<void> {
   ];
   assertHasMessage(validateGraph(incompatibleTypeGraph).errors, "类型不兼容");
 
+  const invalidActivationGraph = makeBaseGraph();
+  invalidActivationGraph.edges = [
+    {
+      id: "edge_invalid_activation",
+      source: "src_text",
+      sourcePort: "text",
+      target: "filter_text",
+      targetPort: RESERVED_ACTIVATION_PORT_ID,
+    },
+  ];
+  assertHasMessage(
+    validateGraph(invalidActivationGraph).errors,
+    "仅允许从 activation 输出连接到 activation 输入",
+  );
+
   const multipleIncomingGraph = makeBaseGraph();
   multipleIncomingGraph.nodes.push({
     id: "src_text_2",
@@ -2331,6 +2426,69 @@ async function runValidationSpec(): Promise<void> {
   assert(
     dispatchSmokeExecution.hostWrites?.length === 0,
     `Expected fallback graph not to expose graph-level hostWrites. Actual: ${JSON.stringify(dispatchSmokeExecution.hostWrites)}`,
+  );
+
+  const ifControlGraph = makeIfControlGraph();
+  assert(
+    validateGraph(ifControlGraph).errors.length === 0,
+    `Expected ctl_if graph fixture to validate. Actual: ${JSON.stringify(validateGraph(ifControlGraph).errors)}`,
+  );
+  const ifTrueResult = await executeGraph(
+    ifControlGraph,
+    makeExecutionContext({
+      userInput: "hello control",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(ifTrueResult.ok, "Expected ctl_if truthy execution to succeed");
+  assert(
+    ifTrueResult.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`,
+      )
+      .join(",") ===
+      "src_text:ok:ineligible_source,ctl_if:ok:missing_baseline,then_filter:ok:ineligible_terminal,else_filter:skipped:inactive_control_flow",
+    `Expected ctl_if truthy execution to activate only the then branch. Actual: ${ifTrueResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")}`,
+  );
+  assert(
+    ifTrueResult.executionDecisionSummary?.decisionCounts
+      .inactive_control_flow === 1,
+    `Expected truthy ctl_if execution to count one inactive control-flow skip. Actual: ${JSON.stringify(ifTrueResult.executionDecisionSummary)}`,
+  );
+  assert(
+    ifTrueResult.finalOutputs.then_filter?.text_out === "hello control" &&
+      ifTrueResult.finalOutputs.else_filter === undefined,
+    `Expected only then_filter to contribute final outputs in truthy ctl_if execution. Actual: ${JSON.stringify(ifTrueResult.finalOutputs)}`,
+  );
+
+  const ifFalseResult = await executeGraph(
+    ifControlGraph,
+    makeExecutionContext({
+      userInput: "",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(ifFalseResult.ok, "Expected ctl_if falsy execution to succeed");
+  assert(
+    ifFalseResult.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`,
+      )
+      .join(",") ===
+      "src_text:ok:ineligible_source,ctl_if:ok:ineligible_reuse_verdict,then_filter:skipped:inactive_control_flow,else_filter:ok:ineligible_terminal",
+    `Expected ctl_if falsy execution to activate only the else branch. Actual: ${ifFalseResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")}`,
+  );
+  assert(
+    ifFalseResult.executionDecisionSummary?.decisionCounts
+      .inactive_control_flow === 1,
+    `Expected falsy ctl_if execution to count one inactive control-flow skip. Actual: ${JSON.stringify(ifFalseResult.executionDecisionSummary)}`,
+  );
+  assert(
+    ifFalseResult.finalOutputs.else_filter?.text_out === "" &&
+      ifFalseResult.finalOutputs.then_filter === undefined,
+    `Expected only else_filter to contribute final outputs in falsy ctl_if execution. Actual: ${JSON.stringify(ifFalseResult.finalOutputs)}`,
   );
 
   const dualHostGraphFixture = makeIntegratedSmokeGraph();

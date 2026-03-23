@@ -8,6 +8,7 @@ export type ModuleCategory =
   | "filter" // 过滤 / 处理
   | "transform" // 渲染 / 转换
   | "compose" // 编排
+  | "control" // 控制流
   | "execute" // 执行
   | "output" // 输出
   | "config"; // 配置
@@ -28,8 +29,12 @@ export type PortDataType =
   | "snapshot" // floor binding snapshot
   | "http_response" // raw HTTP response
   | "timing" // before_reply | after_reply
+  | "activation" // control-flow activation token
   | "boolean"
   | "number";
+
+export const RESERVED_ACTIVATION_PORT_ID = "__activation";
+export const RESERVED_ACTIVATION_PORT_LABEL = "激活";
 
 /** Definition of a port on a module blueprint */
 export interface ModulePortDef {
@@ -41,6 +46,8 @@ export interface ModulePortDef {
   multiple?: boolean;
   /** If true, this port is optional (module can execute without it) */
   optional?: boolean;
+  /** If true, this port is hidden from the default node UI */
+  uiHidden?: boolean;
 }
 
 /** Schema for a single config field (used by property panel) */
@@ -1362,6 +1369,7 @@ export interface GraphReuseSummary {
 
 export type GraphNodeExecutionDecisionReason =
   | "feature_disabled"
+  | "inactive_control_flow"
   | "ineligible_reuse_verdict"
   | "ineligible_capability"
   | "ineligible_side_effect"
@@ -2104,9 +2112,10 @@ export const MODULE_CATEGORIES: CategoryInfo[] = [
     order: 2,
   },
   { id: "compose", label: "编排组装", icon: "📝", color: "#10b981", order: 3 },
-  { id: "execute", label: "执行调用", icon: "🚀", color: "#ef4444", order: 4 },
-  { id: "output", label: "输出写入", icon: "📤", color: "#14b8a6", order: 5 },
-  { id: "config", label: "配置参数", icon: "⚙", color: "#6366f1", order: 6 },
+  { id: "control", label: "控制流", icon: "🧭", color: "#f97316", order: 4 },
+  { id: "execute", label: "执行调用", icon: "🚀", color: "#ef4444", order: 5 },
+  { id: "output", label: "输出写入", icon: "📤", color: "#14b8a6", order: 6 },
+  { id: "config", label: "配置参数", icon: "⚙", color: "#6366f1", order: 7 },
 ];
 
 // ── Graph Utilities ──

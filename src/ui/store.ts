@@ -1025,6 +1025,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       string
     > = {
       feature_disabled: "实验开关关闭",
+      inactive_control_flow: "未命中控制流激活",
       ineligible_reuse_verdict: "复用判定未通过",
       ineligible_capability: "能力不满足",
       ineligible_side_effect: "存在副作用",
@@ -1716,6 +1717,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       string
     > = {
       feature_disabled: "实验开关关闭",
+      inactive_control_flow: "未命中控制流激活",
       ineligible_reuse_verdict: "复用判定未通过",
       ineligible_capability: "能力不满足",
       ineligible_side_effect: "存在副作用",

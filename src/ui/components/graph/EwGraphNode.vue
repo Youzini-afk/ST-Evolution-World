@@ -76,6 +76,7 @@ const props = defineProps<{
   selected?: boolean;
   selectedNodes?: Set<string>;
   zIndex?: number;
+  showHiddenPorts?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -125,15 +126,19 @@ const summaryText = computed(() => {
   return blueprint.value?.description ?? "在右侧属性面板中配置此模块";
 });
 
+function shouldRenderPort(port: ModulePortDef): boolean {
+  return !port.uiHidden || props.showHiddenPorts || isPortConnected(port.id);
+}
+
 const inPorts = computed(() =>
   (blueprint.value?.ports ?? []).filter(
-    (p: ModulePortDef) => p.direction === "in",
+    (p: ModulePortDef) => p.direction === "in" && shouldRenderPort(p),
   ),
 );
 
 const outPorts = computed(() =>
   (blueprint.value?.ports ?? []).filter(
-    (p: ModulePortDef) => p.direction === "out",
+    (p: ModulePortDef) => p.direction === "out" && shouldRenderPort(p),
   ),
 );
 

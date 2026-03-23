@@ -62,12 +62,27 @@
 </template>
 
 <script setup lang="ts">
-import { MODULE_CATEGORIES, type ModuleCategory } from './module-types';
+import {
+  MODULE_CATEGORIES,
+  type ModuleCategory,
+  type WorkbenchBuilderMode,
+} from './module-types';
 import { MODULE_REGISTRY, getModulesByCategory, type ModuleBlueprint } from './module-registry';
+
+const props = withDefaults(
+  defineProps<{
+    builderMode?: WorkbenchBuilderMode;
+  }>(),
+  {
+    builderMode: 'advanced',
+  },
+);
 
 const searchQuery = ref('');
 const isCollapsed = ref(false);
-const expandedCategories = reactive(new Set<string>(['source', 'filter', 'compose', 'execute']));
+const expandedCategories = reactive(
+  new Set<string>(['source', 'filter', 'compose', 'control', 'execute']),
+);
 
 function toggleCategory(catId: string) {
   if (expandedCategories.has(catId)) {
@@ -89,8 +104,12 @@ function getModulesForCategory(catId: string): ModuleBlueprint[] {
 }
 
 const filteredCategories = computed(() => {
-  if (!searchQuery.value.trim()) return MODULE_CATEGORIES;
-  return MODULE_CATEGORIES.filter(cat => getModulesForCategory(cat.id).length > 0);
+  const categories =
+    props.builderMode === 'advanced'
+      ? MODULE_CATEGORIES
+      : MODULE_CATEGORIES.filter((cat) => cat.id !== 'control');
+  if (!searchQuery.value.trim()) return categories;
+  return categories.filter(cat => getModulesForCategory(cat.id).length > 0);
 });
 
 function onDragStart(e: DragEvent, moduleId: string) {

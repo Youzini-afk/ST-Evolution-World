@@ -19,6 +19,7 @@ import {
   getModuleMetadataSurface,
   resolveModuleConfigWithDefaults,
 } from "../ui/components/graph/module-registry";
+import { RESERVED_ACTIVATION_PORT_ID } from "../ui/components/graph/module-types";
 import type {
   ExecutionContext,
   GraphCompilePlan,
@@ -1435,6 +1436,7 @@ export function clearGraphExecutorReusableOutputsForTesting(): void {
 const REUSE_ELIGIBLE_CAPABILITIES = new Set<WorkbenchCapability>(["pure"]);
 const EXECUTION_DECISION_REASONS: GraphNodeExecutionDecisionReason[] = [
   "feature_disabled",
+  "inactive_control_flow",
   "ineligible_reuse_verdict",
   "ineligible_capability",
   "ineligible_side_effect",
@@ -2034,6 +2036,8 @@ function readExperimentalReuseSkipFlag(context: ExecutionContext): boolean {
 
 function createExecutionDecision(params: {
   featureEnabled: boolean;
+  isActivationGated: boolean;
+  activationActive: boolean;
   capability?: WorkbenchCapability;
   sideEffect?: WorkbenchSideEffectLevel;
   isSideEffectNode: boolean;
@@ -2046,6 +2050,8 @@ function createExecutionDecision(params: {
 }): GraphNodeExecutionDecision {
   const {
     featureEnabled,
+    isActivationGated,
+    activationActive,
     capability,
     sideEffect,
     isSideEffectNode,
@@ -2059,7 +2065,9 @@ function createExecutionDecision(params: {
 
   let reason: GraphNodeExecutionDecisionReason = "execute";
 
-  if (!featureEnabled) {
+  if (isActivationGated && !activationActive) {
+    reason = "inactive_control_flow";
+  } else if (!featureEnabled) {
     reason = "feature_disabled";
   } else if (isSideEffectNode || sideEffect === "writes_host") {
     reason = "ineligible_side_effect";
@@ -2082,11 +2090,33 @@ function createExecutionDecision(params: {
   }
 
   return {
-    shouldExecute: reason !== "skip_reuse_outputs",
-    shouldSkip: reason === "skip_reuse_outputs",
+    shouldExecute:
+      reason !== "skip_reuse_outputs" && reason !== "inactive_control_flow",
+    shouldSkip:
+      reason === "skip_reuse_outputs" || reason === "inactive_control_flow",
     reason,
     reusableOutputHit: reason === "skip_reuse_outputs",
   };
+}
+
+function isActivationSignalActive(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => isActivationSignalActive(entry));
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "false" || normalized === "0") {
+      return false;
+    }
+    return true;
+  }
+  return value !== undefined && value !== null;
 }
 
 function createExecutionDecisionSummary(
@@ -2378,11 +2408,21 @@ export async function executeCompiledGraph(
       reuseVerdict,
     });
     const inputKeys = Object.keys(inputs);
+    const isActivationGated = graph.edges.some(
+      (edge) =>
+        edge.target === node.id &&
+        edge.targetPort === RESERVED_ACTIVATION_PORT_ID,
+    );
+    const activationActive = !isActivationGated
+      ? true
+      : isActivationSignalActive(inputs[RESERVED_ACTIVATION_PORT_ID]);
     const reusableOutputs = previousReusableOutputsByNode.get(
       `${graph.id}:${node.id}`,
     );
     const executionDecision = createExecutionDecision({
       featureEnabled: reuseSkipEnabled,
+      isActivationGated,
+      activationActive,
       capability: planNode.capability,
       sideEffect: planNode.sideEffect,
       isSideEffectNode: planNode.isSideEffectNode,
@@ -2433,13 +2473,21 @@ export async function executeCompiledGraph(
         nodeId: node.id,
         moduleId: node.moduleId,
         nodeIndex: planNode.order,
-        message: `节点 ${node.id} 已开始执行`,
+        message:
+          executionDecision.reason === "inactive_control_flow"
+            ? `节点 ${node.id} 因未命中控制流激活而跳过`
+            : `节点 ${node.id} 已开始执行`,
       },
     });
 
-    if (executionDecision.shouldSkip && reusableOutputs) {
-      const reusedOutputs = cloneModuleOutput(reusableOutputs);
-      nodeOutputs.set(node.id, reusedOutputs);
+    if (executionDecision.shouldSkip) {
+      const skippedOutputs =
+        executionDecision.reason === "skip_reuse_outputs" && reusableOutputs
+          ? cloneModuleOutput(reusableOutputs)
+          : {};
+      if (executionDecision.reason === "skip_reuse_outputs" && reusableOutputs) {
+        nodeOutputs.set(node.id, skippedOutputs);
+      }
       moduleResults.push({
         nodeId: node.id,
         moduleId: node.moduleId,
@@ -2449,7 +2497,7 @@ export async function executeCompiledGraph(
         inputResolution,
         isDirty,
         dirtyReason,
-        outputs: reusedOutputs,
+        outputs: skippedOutputs,
         elapsedMs: 0,
         stage: "execute",
         status: "skipped",
@@ -3684,6 +3732,24 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
     if (
       sourcePortCtx.port.direction === "out" &&
       targetPortCtx.port.direction === "in" &&
+      ((sourcePortCtx.port.dataType === "activation" &&
+        targetPortCtx.port.dataType !== "activation") ||
+        (sourcePortCtx.port.dataType !== "activation" &&
+          targetPortCtx.port.dataType === "activation"))
+    ) {
+      errors.push({
+        edgeId: edge.id,
+        nodeId: targetNode.id,
+        portId: targetPortCtx.port.id,
+        message: `连线(${edge.id})仅允许从 activation 输出连接到 activation 输入；当前 ${formatNodeRef(sourceNode)} 的 ${formatPortRef(sourcePortCtx.port)} 与 ${formatNodeRef(targetNode)} 的 ${formatPortRef(targetPortCtx.port)} 不满足该约束`,
+      });
+    }
+
+    if (
+      sourcePortCtx.port.direction === "out" &&
+      targetPortCtx.port.direction === "in" &&
+      sourcePortCtx.port.dataType !== "activation" &&
+      targetPortCtx.port.dataType !== "activation" &&
       !isPortDataTypeCompatible(
         sourcePortCtx.port.dataType,
         targetPortCtx.port.dataType,

@@ -2,7 +2,9 @@
   <Teleport to="body" :disabled="!isFullscreen">
     <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
       <!-- Left palette -->
-      <EwModulePalette />
+      <EwModulePalette
+        :builder-mode="props.graph?.runtimeMeta?.builderMode ?? 'advanced'"
+      />
 
       <!-- Main canvas area -->
       <div
@@ -97,6 +99,7 @@
             :selected="selectedNodes.has(node.id)"
             :selected-nodes="selectedNodes"
             :z-index="nodeZIndex.get(node.id) || 1"
+            :show-hidden-ports="showHiddenPorts"
             @move="onNodeMove"
             @group-move="onGroupMove"
             @toggle-collapse="graph.toggleCollapse(node.id)"
@@ -293,6 +296,10 @@ const graphNodeMap = computed(() => {
   for (const n of graphState.nodes) m.set(n.id, n);
   return m;
 });
+
+const showHiddenPorts = computed(
+  () => (props.graph?.runtimeMeta?.builderMode ?? "advanced") === "advanced",
+);
 
 function graphAddNode(
   moduleId: string,
@@ -987,8 +994,19 @@ function getPortWorldPosition(
   }
 
   const blueprint = MODULE_REGISTRY.get(node.moduleId);
+  const shouldRenderPort = (port: { id: string; uiHidden?: boolean }) =>
+    !port.uiHidden ||
+    showHiddenPorts.value ||
+    graph.state.edges.some(
+      (edge) =>
+        direction === "in"
+          ? edge.target === nodeId && edge.targetPort === port.id
+          : edge.source === nodeId && edge.sourcePort === port.id,
+    );
   const ports =
-    blueprint?.ports.filter((port) => port.direction === direction) ?? [];
+    blueprint?.ports.filter(
+      (port) => port.direction === direction && shouldRenderPort(port),
+    ) ?? [];
   const index = Math.max(
     0,
     ports.findIndex((port) => port.id === portId),

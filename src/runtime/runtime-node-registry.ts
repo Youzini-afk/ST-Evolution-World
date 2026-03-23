@@ -874,6 +874,46 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
     }),
   });
 
+  registerNodeHandler({
+    moduleId: "ctl_if",
+    handlerId: "ctl_if",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ node, inputs }) => {
+      const normalizeTruthy = (value: unknown): boolean => {
+        if (Array.isArray(value)) {
+          return value.some((entry) => normalizeTruthy(entry));
+        }
+        if (typeof value === "boolean") {
+          return value;
+        }
+        if (typeof value === "number") {
+          return Number.isFinite(value) && value !== 0;
+        }
+        if (typeof value === "string") {
+          const normalized = value.trim().toLowerCase();
+          if (!normalized || normalized === "false" || normalized === "0") {
+            return false;
+          }
+          return true;
+        }
+        return value !== null && value !== undefined;
+      };
+
+      const baseCondition = normalizeTruthy(inputs.condition);
+      const activeThen =
+        node.config.negate === true ? !baseCondition : baseCondition;
+      return {
+        outputs: {
+          then: activeThen,
+          else: !activeThen,
+          selected_branch: activeThen ? "then" : "else",
+        },
+        handlerId: "ctl_if",
+      };
+    },
+  });
+
   // ── Execute handlers ──
   registerNodeHandler({
     moduleId: "exe_llm_call",
