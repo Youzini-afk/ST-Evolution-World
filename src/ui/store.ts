@@ -3,6 +3,7 @@ import {
   GraphDocumentEnvelope,
   buildGraphDocumentExportPayload,
 } from "@/runtime/graph-document-codec";
+import { readGraphNodeExecutionDispositionExplainArtifactEnvelope } from "@/runtime/graph-node-execution-disposition-explain-artifact-codec";
 import { readGraphTerminalOutcomeExplainArtifactEnvelope } from "@/runtime/graph-terminal-outcome-explain-artifact-codec";
 import _ from "lodash";
 import {
@@ -78,6 +79,7 @@ import type {
   GraphNodeDiagnosticsViewModel,
   GraphNodeDirtyReason,
   GraphNodeExecutionDecisionReason,
+  GraphNodeExecutionDispositionExplainArtifactV1,
   GraphNodeInputResolutionArtifactV1,
   GraphNodeReuseReason,
   GraphOutputExplainArtifactV1,
@@ -1269,6 +1271,15 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     return (
       readGraphTerminalOutcomeExplainArtifactEnvelope(diagnostics)?.artifact ??
       null
+    );
+  }
+
+  function toActiveGraphNodeExecutionDispositionExplainArtifact(
+    diagnostics: unknown,
+  ): GraphNodeExecutionDispositionExplainArtifactV1 | null {
+    return (
+      readGraphNodeExecutionDispositionExplainArtifactEnvelope(diagnostics)
+        ?.artifact ?? null
     );
   }
 

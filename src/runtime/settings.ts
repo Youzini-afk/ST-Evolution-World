@@ -9,6 +9,7 @@ import {
 } from "./graph-document-codec";
 import { readGraphFailureExplainArtifactEnvelope } from "./graph-failure-explain-artifact-codec";
 import { readGraphHostEffectExplainArtifactEnvelope } from "./graph-host-effect-explain-artifact-codec";
+import { readGraphNodeExecutionDispositionExplainArtifactEnvelope } from "./graph-node-execution-disposition-explain-artifact-codec";
 import { readGraphOutputExplainArtifactEnvelope } from "./graph-output-explain-artifact-codec";
 import { readGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
 import { readGraphTerminalOutcomeExplainArtifactEnvelope } from "./graph-terminal-outcome-explain-artifact-codec";
@@ -540,6 +541,9 @@ type WorkflowBridgeFacts = {
   graph_host_effect_explain_artifact?: ReturnType<
     typeof readGraphHostEffectExplainArtifactEnvelope
   >;
+  graph_node_execution_disposition_explain_artifact?: ReturnType<
+    typeof readGraphNodeExecutionDispositionExplainArtifactEnvelope
+  >;
   graph_output_explain_artifact?: ReturnType<
     typeof readGraphOutputExplainArtifactEnvelope
   >;
@@ -631,6 +635,15 @@ function normalizeWorkflowBridgeDiagnostics(
   if (graphHostEffectExplainArtifact) {
     normalized.graph_host_effect_explain_artifact =
       graphHostEffectExplainArtifact;
+  }
+
+  const graphNodeExecutionDispositionExplainArtifact =
+    readGraphNodeExecutionDispositionExplainArtifactEnvelope({
+      bridge: bridgeRecord,
+    });
+  if (graphNodeExecutionDispositionExplainArtifact) {
+    normalized.graph_node_execution_disposition_explain_artifact =
+      graphNodeExecutionDispositionExplainArtifact;
   }
 
   const graphOutputExplainArtifact = readGraphOutputExplainArtifactEnvelope({

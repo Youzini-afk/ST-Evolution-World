@@ -846,6 +846,79 @@ export interface GraphTerminalOutcomeExplainArtifactEnvelope {
   artifact: GraphTerminalOutcomeExplainArtifactV1;
 }
 
+export type GraphNodeExecutionDispositionV1 =
+  | "executed"
+  | "skipped_reuse"
+  | "failed"
+  | "not_reached"
+  | "blocked"
+  | "unknown";
+
+export type GraphNodeExecutionReasonKindV1 =
+  | "executed_by_decision"
+  | "executed_despite_reuse_eligibility"
+  | "reuse_skip"
+  | "dependency_not_reached"
+  | "input_missing_or_unresolved"
+  | "truncated_by_failure"
+  | "non_terminal_blocked"
+  | "terminal_projection_only"
+  | "unknown";
+
+export type GraphNodeExecutionDispositionEvidenceSourceV1 =
+  | "compile_run_link"
+  | "input_resolution"
+  | "reuse_explain"
+  | "failure_explain"
+  | "terminal_outcome"
+  | "blocking_explain"
+  | "run_status";
+
+export interface GraphNodeExecutionDispositionSummaryV1 {
+  nodeCounts: {
+    executed: number;
+    skippedReuse: number;
+    failed: number;
+    notReached: number;
+    blocked: number;
+    unknown: number;
+  };
+  reasonCounts: Record<GraphNodeExecutionReasonKindV1, number>;
+  evidenceSources: GraphNodeExecutionDispositionEvidenceSourceV1[];
+}
+
+export interface GraphNodeExecutionDispositionRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  disposition: GraphNodeExecutionDispositionV1;
+  primaryReasonKind: GraphNodeExecutionReasonKindV1;
+  evidenceSources: GraphNodeExecutionDispositionEvidenceSourceV1[];
+  upstreamNodeIds?: string[];
+  relatedInputKeys?: string[];
+  reuseDecision?: GraphNodeExecutionDecisionReason;
+  runDisposition?: GraphCompileRunLinkDispositionV1;
+  failureStage?: GraphFailureExplainStageV1;
+  blockedByRunStatus?: GraphRunStatus;
+}
+
+export interface GraphNodeExecutionDispositionExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  summary: GraphNodeExecutionDispositionSummaryV1;
+  nodes: GraphNodeExecutionDispositionRecordV1[];
+}
+
+export interface GraphNodeExecutionDispositionExplainArtifactEnvelope {
+  kind: "graph_node_execution_disposition_explain_artifact";
+  version: "v1";
+  artifact: GraphNodeExecutionDispositionExplainArtifactV1;
+}
+
 export type GraphBlockingDispositionV1 =
   | "not_blocked"
   | "waiting_user"

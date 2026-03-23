@@ -5,6 +5,7 @@ import type {
   GraphExecutionResult,
   GraphFailureExplainArtifactEnvelope,
   GraphHostEffectExplainArtifactEnvelope,
+  GraphNodeExecutionDispositionExplainArtifactEnvelope,
   GraphNodeInputResolutionArtifactEnvelope,
   GraphOutputExplainArtifactEnvelope,
   GraphReuseExplainArtifactEnvelope,
@@ -27,6 +28,7 @@ import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphFailureExplainArtifactEnvelope } from "./graph-failure-explain-artifact-codec";
 import { createGraphHostEffectExplainArtifactEnvelope } from "./graph-host-effect-explain-artifact-codec";
 import { createGraphNodeInputResolutionArtifactEnvelope } from "./graph-input-resolution-artifact-codec";
+import { createGraphNodeExecutionDispositionExplainArtifactEnvelope } from "./graph-node-execution-disposition-explain-artifact-codec";
 import { createGraphOutputExplainArtifactEnvelope } from "./graph-output-explain-artifact-codec";
 import { createGraphReuseExplainArtifactEnvelope } from "./graph-reuse-explain-artifact-codec";
 import { createGraphRunSnapshotEnvelope } from "./graph-run-artifact-codec";
@@ -72,6 +74,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_compile_run_link_artifact?: GraphCompileRunLinkArtifactEnvelope;
   graph_failure_explain_artifact?: GraphFailureExplainArtifactEnvelope;
   graph_host_effect_explain_artifact?: GraphHostEffectExplainArtifactEnvelope;
+  graph_node_execution_disposition_explain_artifact?: GraphNodeExecutionDispositionExplainArtifactEnvelope;
   graph_output_explain_artifact?: GraphOutputExplainArtifactEnvelope;
   graph_reuse_explain_artifact?: GraphReuseExplainArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
@@ -853,6 +856,19 @@ export function buildWorkflowBridgeDiagnostics(params: {
     createGraphBlockingExplainArtifactEnvelope({
       runArtifact: effectiveGraphRunOverview ?? null,
     });
+  const graphNodeExecutionDispositionExplainArtifact =
+    createGraphNodeExecutionDispositionExplainArtifactEnvelope({
+      plan: graphCompilePlan ?? null,
+      runArtifact: effectiveGraphRunOverview ?? null,
+      compileRunLinkArtifact: graphCompileRunLinkArtifact?.artifact ?? null,
+      inputResolutionArtifact:
+        graphNodeInputResolutionArtifact?.artifact ?? null,
+      reuseExplainArtifact: graphReuseExplainArtifact?.artifact ?? null,
+      failureExplainArtifact: graphFailureExplainArtifact?.artifact ?? null,
+      terminalOutcomeExplainArtifact:
+        graphTerminalOutcomeExplainArtifact?.artifact ?? null,
+      blockingExplainArtifact: graphBlockingExplainArtifact?.artifact ?? null,
+    });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -894,6 +910,12 @@ export function buildWorkflowBridgeDiagnostics(params: {
     ...(graphHostEffectExplainArtifact
       ? {
           graph_host_effect_explain_artifact: graphHostEffectExplainArtifact,
+        }
+      : {}),
+    ...(graphNodeExecutionDispositionExplainArtifact
+      ? {
+          graph_node_execution_disposition_explain_artifact:
+            graphNodeExecutionDispositionExplainArtifact,
         }
       : {}),
     ...(graphTerminalOutcomeExplainArtifact
