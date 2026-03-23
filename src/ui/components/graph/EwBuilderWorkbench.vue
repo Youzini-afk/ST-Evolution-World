@@ -20,6 +20,30 @@
         </button>
       </div>
       <div class="ew-builder-workbench__controls">
+        <div class="ew-builder-workbench__mode-switch">
+          <button
+            class="ew-builder-workbench__mode-btn"
+            :class="{ active: currentBuilderMode === 'simple' }"
+            @click="setBuilderMode('simple')"
+          >
+            Simple
+          </button>
+          <button
+            class="ew-builder-workbench__mode-btn"
+            :class="{ active: currentBuilderMode === 'advanced' }"
+            @click="setBuilderMode('advanced')"
+          >
+            Advanced
+          </button>
+        </div>
+        <button
+          class="ew-builder-workbench__ctrl-btn"
+          :class="{ active: templateLibraryOpen }"
+          :title="templateLibraryOpen ? '收起模板库' : '展开模板库'"
+          @click="templateLibraryOpen = !templateLibraryOpen"
+        >
+          ◫
+        </button>
         <button
           class="ew-builder-workbench__ctrl-btn"
           :disabled="!activeGraph"
@@ -38,6 +62,7 @@
         </button>
         <button
           class="ew-builder-workbench__ctrl-btn"
+          :disabled="currentBuilderMode !== 'advanced'"
           :class="{ active: advancedSidebarOpen }"
           :title="advancedSidebarOpen ? '收起高级侧栏' : '展开高级侧栏'"
           @click="advancedSidebarOpen = !advancedSidebarOpen"
@@ -46,6 +71,65 @@
         </button>
       </div>
     </div>
+
+    <section
+      v-if="showTemplateLibrary"
+      class="ew-builder-workbench__starter"
+    >
+      <div class="ew-builder-workbench__starter-header">
+        <div>
+          <div class="ew-builder-workbench__eyebrow">Builder First</div>
+          <h3 class="ew-builder-workbench__title">从模板开始</h3>
+        </div>
+        <p class="ew-builder-workbench__starter-copy">
+          先用较大颗粒的起步图把工作流跑起来，再进入底层图继续改。
+        </p>
+      </div>
+      <div class="ew-builder-workbench__template-grid">
+        <article
+          v-for="template in builderTemplates"
+          :key="template.id"
+          class="ew-builder-workbench__template-card"
+          :data-ownership="template.ownership"
+        >
+          <div class="ew-builder-workbench__chips">
+            <span class="ew-builder-workbench__chip">
+              {{ formatOwnership(template.ownership) }}
+            </span>
+            <span class="ew-builder-workbench__chip">
+              {{ formatBuilderMode(template.recommendedBuilderMode) }}
+            </span>
+            <span class="ew-builder-workbench__chip">
+              {{ formatTiming(template.timing) }}
+            </span>
+          </div>
+          <h4 class="ew-builder-workbench__template-title">
+            {{ template.label }}
+          </h4>
+          <p class="ew-builder-workbench__template-summary">
+            {{ template.summary }}
+          </p>
+          <p class="ew-builder-workbench__template-description">
+            {{ template.description }}
+          </p>
+          <div class="ew-builder-workbench__template-tags">
+            <span
+              v-for="tag in template.tags"
+              :key="`${template.id}-${tag}`"
+              class="ew-builder-workbench__template-tag"
+            >
+              {{ tag }}
+            </span>
+          </div>
+          <button
+            class="ew-builder-workbench__template-action"
+            @click="createGraphFromTemplate(template.id)"
+          >
+            {{ replaceEmptyGraph ? "套用到当前空图" : "新建模板图" }}
+          </button>
+        </article>
+      </div>
+    </section>
 
     <div class="ew-builder-workbench__body">
       <div class="ew-builder-workbench__editor">
@@ -59,14 +143,16 @@
       </div>
 
       <aside
-        v-if="advancedSidebarOpen"
+        v-if="showSidebar"
         class="ew-builder-workbench__sidebar"
       >
         <section class="ew-builder-workbench__section">
           <div class="ew-builder-workbench__section-header">
             <div>
-              <div class="ew-builder-workbench__eyebrow">Builder</div>
-              <h3 class="ew-builder-workbench__title">当前图</h3>
+              <div class="ew-builder-workbench__eyebrow">
+                {{ currentBuilderMode === "advanced" ? "Advanced" : "Simple" }}
+              </div>
+              <h3 class="ew-builder-workbench__title">工作流设定</h3>
             </div>
           </div>
           <div class="ew-builder-workbench__summary-grid">
@@ -87,9 +173,54 @@
               <strong>{{ activeGraph?.edges.length ?? 0 }}</strong>
             </article>
           </div>
+          <div class="ew-builder-workbench__stack">
+            <label class="ew-builder-workbench__field">
+              <span class="ew-builder-workbench__field-label">生成定位</span>
+              <select
+                v-model="currentGenerationOwnership"
+                class="ew-builder-workbench__select"
+              >
+                <option value="assistive">辅助工作流</option>
+                <option value="optional_main_takeover">渐进主生成接管</option>
+              </select>
+            </label>
+            <label class="ew-builder-workbench__field">
+              <span class="ew-builder-workbench__field-label">触发时机</span>
+              <select
+                v-model="currentTiming"
+                class="ew-builder-workbench__select"
+              >
+                <option value="default">默认</option>
+                <option value="before_reply">回复前</option>
+                <option value="after_reply">回复后</option>
+              </select>
+            </label>
+            <div class="ew-builder-workbench__kv">
+              <span>模板来源</span>
+              <strong>{{ activeTemplateLabel }}</strong>
+            </div>
+            <p
+              v-if="activeTemplateSummary"
+              class="ew-builder-workbench__text"
+            >
+              {{ activeTemplateSummary }}
+            </p>
+            <p
+              v-if="activeTemplateDescription"
+              class="ew-builder-workbench__text"
+            >
+              {{ activeTemplateDescription }}
+            </p>
+            <p class="ew-builder-workbench__text">
+              {{ generationOwnershipHint }}
+            </p>
+          </div>
         </section>
 
-        <section class="ew-builder-workbench__section">
+        <section
+          v-if="showAdvancedDetails"
+          class="ew-builder-workbench__section"
+        >
           <div class="ew-builder-workbench__section-header">
             <div>
               <div class="ew-builder-workbench__eyebrow">高级诊断</div>
@@ -169,7 +300,10 @@
           </div>
         </section>
 
-        <section class="ew-builder-workbench__section">
+        <section
+          v-if="showAdvancedDetails"
+          class="ew-builder-workbench__section"
+        >
           <div class="ew-builder-workbench__section-header">
             <div>
               <div class="ew-builder-workbench__eyebrow">模块说明</div>
@@ -222,7 +356,7 @@
         </section>
 
         <section
-          v-if="selectedNodeDiagnostics"
+          v-if="showAdvancedDetails && selectedNodeDiagnostics"
           class="ew-builder-workbench__section"
         >
           <div class="ew-builder-workbench__section-header">
@@ -279,6 +413,11 @@
 
 <script setup lang="ts">
 import { klona } from "klona/full";
+import {
+  BUILDER_WORKFLOW_TEMPLATES,
+  createBlankBuilderGraph,
+  findBuilderWorkflowTemplate,
+} from "./builder-templates";
 import EwGraphEditor from "./EwGraphEditor.vue";
 import { getModuleBlueprint, getModuleExplainContract } from "./module-registry";
 import type {
@@ -286,6 +425,8 @@ import type {
   GraphNodeDiagnosticsViewModel,
   GraphRunDiagnosticsSummaryViewModel,
   ModuleExplainContract,
+  WorkbenchBuilderMode,
+  WorkbenchGenerationOwnership,
   WorkbenchGraph,
 } from "./module-types";
 
@@ -304,11 +445,122 @@ const emit = defineEmits<{
 const localGraphs = ref<WorkbenchGraph[]>(klona(props.graphs));
 const activeGraphId = ref(localGraphs.value[0]?.id ?? "");
 const advancedSidebarOpen = ref(true);
+const templateLibraryOpen = ref(true);
 const selectedNodeId = ref<string | null>(null);
+const builderTemplates = BUILDER_WORKFLOW_TEMPLATES;
+
+const BUILDER_MODE_LABELS: Record<WorkbenchBuilderMode, string> = {
+  simple: "Simple",
+  advanced: "Advanced",
+};
+
+const OWNERSHIP_LABELS: Record<WorkbenchGenerationOwnership, string> = {
+  assistive: "辅助工作流",
+  optional_main_takeover: "渐进主生成接管",
+};
+
+const TIMING_LABELS: Record<WorkbenchGraph["timing"], string> = {
+  default: "默认",
+  before_reply: "回复前",
+  after_reply: "回复后",
+};
 
 const activeGraph = computed(() =>
   localGraphs.value.find((graph) => graph.id === activeGraphId.value) ?? null,
 );
+
+const activeTemplate = computed(() =>
+  findBuilderWorkflowTemplate(activeGraph.value?.runtimeMeta?.templateId),
+);
+
+const activeTemplateLabel = computed(() => {
+  return (
+    activeGraph.value?.runtimeMeta?.templateLabel ??
+    activeTemplate.value?.label ??
+    "自定义图"
+  );
+});
+
+const activeTemplateSummary = computed(() => {
+  return activeTemplate.value?.summary ?? null;
+});
+
+const activeTemplateDescription = computed(() => {
+  return activeTemplate.value?.description ?? null;
+});
+
+const isActiveGraphEffectivelyEmpty = computed(() => {
+  return Boolean(
+    activeGraph.value &&
+      activeGraph.value.nodes.length === 0 &&
+      activeGraph.value.edges.length === 0,
+  );
+});
+
+const replaceEmptyGraph = computed(() => isActiveGraphEffectivelyEmpty.value);
+
+const showTemplateLibrary = computed(() => {
+  return (
+    templateLibraryOpen.value ||
+    isActiveGraphEffectivelyEmpty.value ||
+    localGraphs.value.length === 0
+  );
+});
+
+const currentBuilderMode = computed<WorkbenchBuilderMode>({
+  get() {
+    return activeGraph.value?.runtimeMeta?.builderMode === "advanced"
+      ? "advanced"
+      : "simple";
+  },
+  set(mode) {
+    updateActiveGraphRuntimeMeta({ builderMode: mode });
+    advancedSidebarOpen.value = mode === "advanced";
+  },
+});
+
+const currentGenerationOwnership = computed<WorkbenchGenerationOwnership>({
+  get() {
+    return activeGraph.value?.runtimeMeta?.generationOwnership ===
+      "optional_main_takeover"
+      ? "optional_main_takeover"
+      : "assistive";
+  },
+  set(value) {
+    updateActiveGraphRuntimeMeta({ generationOwnership: value });
+  },
+});
+
+const currentTiming = computed<WorkbenchGraph["timing"]>({
+  get() {
+    return activeGraph.value?.timing ?? "default";
+  },
+  set(value) {
+    if (!activeGraph.value) {
+      return;
+    }
+    activeGraph.value.timing = value;
+    emitGraphs();
+  },
+});
+
+const generationOwnershipHint = computed(() => {
+  if (currentGenerationOwnership.value === "optional_main_takeover") {
+    return "这张图会被标记为“渐进主生成接管”预备工作流。当前只是 ownership / takeover 占位，不会切掉 legacy fallback。";
+  }
+  return "这张图会继续作为辅助工作流存在，适合做回复注入、后处理、结果绑定等次级链路。";
+});
+
+const showAdvancedDetails = computed(
+  () => currentBuilderMode.value === "advanced",
+);
+
+const showSidebar = computed(() => {
+  if (!activeGraph.value) {
+    return false;
+  }
+  return currentBuilderMode.value === "simple" || advancedSidebarOpen.value;
+});
 
 const visibleActiveRunSummary = computed(() => {
   const summary = props.activeRunSummary;
@@ -363,6 +615,33 @@ const selectedNodeDiagnostics = computed<GraphNodeDiagnosticsViewModel | null>(
   },
 );
 
+function formatBuilderMode(mode: WorkbenchBuilderMode): string {
+  return BUILDER_MODE_LABELS[mode];
+}
+
+function formatOwnership(ownership: WorkbenchGenerationOwnership): string {
+  return OWNERSHIP_LABELS[ownership];
+}
+
+function formatTiming(timing: WorkbenchGraph["timing"]): string {
+  return TIMING_LABELS[timing];
+}
+
+function updateActiveGraphRuntimeMeta(
+  patch: Partial<NonNullable<WorkbenchGraph["runtimeMeta"]>>,
+) {
+  if (!activeGraph.value) {
+    return;
+  }
+  activeGraph.value.runtimeMeta = {
+    schemaVersion: activeGraph.value.runtimeMeta?.schemaVersion ?? 1,
+    runtimeKind: activeGraph.value.runtimeMeta?.runtimeKind ?? "dataflow",
+    ...(activeGraph.value.runtimeMeta ?? {}),
+    ...patch,
+  };
+  emitGraphs();
+}
+
 watch(
   () => props.graphs,
   (graphs) => {
@@ -382,25 +661,56 @@ watch(
 
 watch(activeGraphId, () => {
   selectedNodeId.value = null;
+  if (currentBuilderMode.value === "simple") {
+    advancedSidebarOpen.value = false;
+  }
 });
 
 function emitGraphs() {
   emit("update:graphs", klona(localGraphs.value));
 }
 
+function setBuilderMode(mode: WorkbenchBuilderMode) {
+  currentBuilderMode.value = mode;
+}
+
+function createGraphFromTemplate(templateId: string) {
+  const template = findBuilderWorkflowTemplate(templateId);
+  if (!template) {
+    return;
+  }
+
+  const nextGraph = template.createGraph();
+  if (replaceEmptyGraph.value && activeGraph.value) {
+    const index = localGraphs.value.findIndex(
+      (graph) => graph.id === activeGraph.value?.id,
+    );
+    if (index >= 0) {
+      localGraphs.value.splice(index, 1, nextGraph);
+    } else {
+      localGraphs.value.push(nextGraph);
+    }
+  } else {
+    localGraphs.value.push(nextGraph);
+  }
+
+  activeGraphId.value = nextGraph.id;
+  selectedNodeId.value = null;
+  advancedSidebarOpen.value = nextGraph.runtimeMeta?.builderMode === "advanced";
+  templateLibraryOpen.value = false;
+  emitGraphs();
+}
+
 function addGraph() {
-  const id = `graph_${Date.now()}`;
-  localGraphs.value.push({
-    id,
+  const nextGraph = createBlankBuilderGraph({
     name: `工作流 ${localGraphs.value.length + 1}`,
-    enabled: true,
-    timing: "default",
-    priority: 100,
-    nodes: [],
-    edges: [],
-    viewport: { x: 0, y: 0, zoom: 1 },
+    builderMode: currentBuilderMode.value,
+    generationOwnership: currentGenerationOwnership.value,
+    timing: currentTiming.value,
   });
-  activeGraphId.value = id;
+  localGraphs.value.push(nextGraph);
+  activeGraphId.value = nextGraph.id;
+  advancedSidebarOpen.value = nextGraph.runtimeMeta?.builderMode === "advanced";
   emitGraphs();
 }
 
@@ -495,6 +805,34 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   gap: 6px;
 }
 
+.ew-builder-workbench__mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ew-builder-workbench__mode-btn {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+}
+
+.ew-builder-workbench__mode-btn.active {
+  background: rgba(99, 102, 241, 0.18);
+  color: rgba(255, 255, 255, 0.92);
+}
+
 .ew-builder-workbench__ctrl-btn {
   width: 32px;
   height: 32px;
@@ -519,6 +857,112 @@ function onGraphUpdated(graph: WorkbenchGraph) {
 .ew-builder-workbench__ctrl-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.ew-builder-workbench__starter {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(135deg, rgba(36, 56, 112, 0.3), rgba(11, 15, 26, 0.84)),
+    rgba(8, 12, 24, 0.78);
+  border-radius: 20px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ew-builder-workbench__starter-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ew-builder-workbench__starter-copy {
+  margin: 0;
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.ew-builder-workbench__template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.ew-builder-workbench__template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ew-builder-workbench__template-card[data-ownership="optional_main_takeover"] {
+  border-color: rgba(251, 191, 36, 0.26);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.ew-builder-workbench__template-title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.ew-builder-workbench__template-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.ew-builder-workbench__template-description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.ew-builder-workbench__template-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ew-builder-workbench__template-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.ew-builder-workbench__template-action {
+  margin-top: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.ew-builder-workbench__template-action:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.36);
+  transform: translateY(-1px);
 }
 
 .ew-builder-workbench__body {
@@ -610,6 +1054,26 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   gap: 10px;
 }
 
+.ew-builder-workbench__field {
+  display: grid;
+  gap: 6px;
+}
+
+.ew-builder-workbench__field-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.ew-builder-workbench__select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 0 12px;
+}
+
 .ew-builder-workbench__chips {
   display: flex;
   flex-wrap: wrap;
@@ -681,6 +1145,12 @@ function onGraphUpdated(graph: WorkbenchGraph) {
 }
 
 @media (max-width: 1180px) {
+  .ew-builder-workbench__topbar,
+  .ew-builder-workbench__starter-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .ew-builder-workbench__body {
     flex-direction: column;
   }

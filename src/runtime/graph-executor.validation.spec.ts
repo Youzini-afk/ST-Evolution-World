@@ -8916,6 +8916,37 @@ async function runValidationSpec(): Promise<void> {
     `G.2b: Expected graph document read path to materialize default-backed required config. Actual: ${JSON.stringify(replyOutputBackfilledConfig)}`,
   );
 
+  // G.2c: Builder-facing graph runtime metadata should roundtrip conservatively
+  const builderMetadataGraph: WorkbenchGraph = {
+    ...baseGraph,
+    id: "graph_builder_metadata",
+    runtimeMeta: {
+      schemaVersion: 1,
+      runtimeKind: "dataflow",
+      builderMode: "simple",
+      generationOwnership: "optional_main_takeover",
+      templateId: "starter_main_takeover",
+      templateLabel: "LLM 接管起步",
+    },
+  };
+  const builderMetadataEnvelope = createGraphDocumentEnvelope({
+    graphs: [builderMetadataGraph],
+    source: "builder_metadata_test",
+  });
+  const builderMetadataRoundtrip = toWorkbenchGraphs(
+    readGraphDocumentEnvelope(builderMetadataEnvelope)!,
+  );
+  assert(
+    builderMetadataRoundtrip[0]?.runtimeMeta?.builderMode === "simple" &&
+      builderMetadataRoundtrip[0]?.runtimeMeta?.generationOwnership ===
+        "optional_main_takeover" &&
+      builderMetadataRoundtrip[0]?.runtimeMeta?.templateId ===
+        "starter_main_takeover" &&
+      builderMetadataRoundtrip[0]?.runtimeMeta?.templateLabel ===
+        "LLM 接管起步",
+    `G.2c: Expected builder-facing graph metadata to roundtrip through graph document codec. Actual: ${JSON.stringify(builderMetadataRoundtrip[0]?.runtimeMeta)}`,
+  );
+
   // G.3: Legacy flow absorption via readGraphDocumentEnvelope
   const legacyFlowPayload = {
     ew_flow_export: true,

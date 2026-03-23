@@ -78,6 +78,10 @@ export type WorkbenchCapability =
  * the previous field name where needed.
  */
 export type WorkbenchSideEffectLevel = WorkbenchCapability;
+export type WorkbenchBuilderMode = "simple" | "advanced";
+export type WorkbenchGenerationOwnership =
+  | "assistive"
+  | "optional_main_takeover";
 
 export interface RuntimeMigrationMeta {
   from?: string;
@@ -331,6 +335,10 @@ export interface WorkbenchGraph {
     capability?: WorkbenchCapability;
     sideEffect?: WorkbenchSideEffectLevel;
     migration?: RuntimeMigrationMeta;
+    builderMode?: WorkbenchBuilderMode;
+    generationOwnership?: WorkbenchGenerationOwnership;
+    templateId?: string;
+    templateLabel?: string;
   };
 }
 
