@@ -234,6 +234,12 @@ export interface ModuleMetadataSurface {
   explain?: ModuleExplainContract;
 }
 
+export interface CompositeTemplateConfigBinding {
+  sourceKey: string;
+  targetNodeId: string;
+  targetConfigKey: string;
+}
+
 /** Blueprint definition for a module type (registered in the registry) */
 export interface ModuleBlueprint {
   /** Unique module type ID, e.g. 'src_char_fields' */
@@ -264,6 +270,7 @@ export interface ModuleBlueprint {
   compositeTemplate?: {
     nodes: WorkbenchNode[];
     edges: WorkbenchEdge[];
+    configBindings?: CompositeTemplateConfigBinding[];
   };
   /** Read-only registry metadata surface used by UI / diagnostics summaries */
   metadata?: ModuleMetadataSurface;

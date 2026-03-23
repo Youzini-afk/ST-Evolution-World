@@ -43,11 +43,17 @@
             :style="{ '--accent': mod.color }"
             draggable="true"
             @dragstart="onDragStart($event, mod.moduleId)"
-            :title="mod.description"
+            :title="
+              mod.isComposite
+                ? `${mod.description}（拖入画布后会直接展开为子图）`
+                : mod.description
+            "
           >
             <span class="ew-module-palette__item-icon">{{ mod.icon }}</span>
             <span class="ew-module-palette__item-label">{{ mod.label }}</span>
-            <span v-if="mod.isComposite" class="ew-module-palette__item-badge">包</span>
+            <span v-if="mod.isComposite" class="ew-module-palette__item-badge">
+              包
+            </span>
           </div>
         </div>
       </div>

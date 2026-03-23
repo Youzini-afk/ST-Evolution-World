@@ -131,6 +131,165 @@
       </div>
     </section>
 
+    <section
+      v-if="compositePackages.length > 0"
+      class="ew-builder-workbench__packages"
+    >
+      <div class="ew-builder-workbench__starter-header">
+        <div>
+          <div class="ew-builder-workbench__eyebrow">Packages</div>
+          <h3 class="ew-builder-workbench__title">大颗粒积木</h3>
+        </div>
+        <p class="ew-builder-workbench__starter-copy">
+          包会在插入时直接展开为真实子图，方便继续深入编辑；如果只想快速起步，优先用上面的模板。
+        </p>
+      </div>
+      <div class="ew-builder-workbench__package-grid">
+        <article
+          v-for="pkg in compositePackages"
+          :key="pkg.moduleId"
+          class="ew-builder-workbench__package-card"
+        >
+          <div class="ew-builder-workbench__chips">
+            <span class="ew-builder-workbench__chip">Package</span>
+            <span class="ew-builder-workbench__chip">{{ pkg.category }}</span>
+          </div>
+          <h4 class="ew-builder-workbench__template-title">
+            {{ pkg.label }}
+          </h4>
+          <p class="ew-builder-workbench__template-summary">
+            {{ pkg.description }}
+          </p>
+
+          <div
+            v-if="(pkg.configSchema?.length ?? 0) > 0"
+            class="ew-builder-workbench__package-fields"
+          >
+            <label
+              v-for="field in pkg.configSchema ?? []"
+              :key="`${pkg.moduleId}-${field.key}`"
+              class="ew-builder-workbench__field"
+            >
+              <span class="ew-builder-workbench__field-label">
+                {{ field.label }}
+              </span>
+              <button
+                v-if="field.type === 'boolean'"
+                type="button"
+                class="ew-builder-workbench__package-toggle"
+                :class="{
+                  active: Boolean(getPackageDraft(pkg.moduleId)[field.key]),
+                }"
+                @click="
+                  setPackageDraftValue(
+                    pkg.moduleId,
+                    field.key,
+                    !Boolean(getPackageDraft(pkg.moduleId)[field.key]),
+                  )
+                "
+              >
+                {{ getPackageDraft(pkg.moduleId)[field.key] ? "ON" : "OFF" }}
+              </button>
+              <select
+                v-else-if="field.type === 'select'"
+                class="ew-builder-workbench__select"
+                :value="getPackageDraft(pkg.moduleId)[field.key]"
+                @change="
+                  setPackageDraftValue(
+                    pkg.moduleId,
+                    field.key,
+                    ($event.target as HTMLSelectElement).value,
+                  )
+                "
+              >
+                <option
+                  v-for="option in field.options ?? []"
+                  :key="`${pkg.moduleId}-${field.key}-${option}`"
+                  :value="option"
+                >
+                  {{ option }}
+                </option>
+              </select>
+              <input
+                v-else-if="field.type === 'number'"
+                type="number"
+                class="ew-builder-workbench__input"
+                :value="getPackageDraft(pkg.moduleId)[field.key]"
+                :min="field.min"
+                :max="field.max"
+                :step="field.step ?? 1"
+                @change="
+                  setPackageDraftValue(
+                    pkg.moduleId,
+                    field.key,
+                    Number(($event.target as HTMLInputElement).value),
+                  )
+                "
+              />
+              <input
+                v-else
+                type="text"
+                class="ew-builder-workbench__input"
+                :value="getPackageDraft(pkg.moduleId)[field.key]"
+                :placeholder="field.placeholder"
+                @change="
+                  setPackageDraftValue(
+                    pkg.moduleId,
+                    field.key,
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+              />
+              <span
+                v-if="field.description"
+                class="ew-builder-workbench__package-help"
+              >
+                {{ field.description }}
+              </span>
+            </label>
+          </div>
+
+          <div class="ew-builder-workbench__package-actions">
+            <button
+              class="ew-builder-workbench__template-action"
+              @click="togglePackagePreview(pkg.moduleId)"
+            >
+              {{
+                expandedPackageIds.has(pkg.moduleId)
+                  ? "收起内部结构"
+                  : "查看内部结构"
+              }}
+            </button>
+            <button
+              class="ew-builder-workbench__template-action"
+              @click="insertPackage(pkg.moduleId)"
+            >
+              插入到当前图
+            </button>
+          </div>
+
+          <div
+            v-if="expandedPackageIds.has(pkg.moduleId)"
+            class="ew-builder-workbench__package-preview"
+          >
+            <div class="ew-builder-workbench__summary-label">内部节点</div>
+            <div class="ew-builder-workbench__template-tags">
+              <span
+                v-for="label in getCompositePreviewLabels(pkg.moduleId)"
+                :key="`${pkg.moduleId}-${label}`"
+                class="ew-builder-workbench__template-tag"
+              >
+                {{ label }}
+              </span>
+            </div>
+            <p class="ew-builder-workbench__template-description">
+              插入后会直接展开为真实子图，你可以继续连线、改参数、删节点，而不是被锁在黑盒包里。
+            </p>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <div class="ew-builder-workbench__body">
       <div class="ew-builder-workbench__editor">
         <EwGraphEditor
@@ -419,8 +578,14 @@ import {
   findBuilderWorkflowTemplate,
 } from "./builder-templates";
 import EwGraphEditor from "./EwGraphEditor.vue";
-import { getModuleBlueprint, getModuleExplainContract } from "./module-registry";
+import {
+  getCompositeModules,
+  getModuleBlueprint,
+  getModuleExplainContract,
+  instantiateCompositeTemplate,
+} from "./module-registry";
 import type {
+  ModuleBlueprint,
   GraphActiveRunSummaryViewModel,
   GraphNodeDiagnosticsViewModel,
   GraphRunDiagnosticsSummaryViewModel,
@@ -448,6 +613,8 @@ const advancedSidebarOpen = ref(true);
 const templateLibraryOpen = ref(true);
 const selectedNodeId = ref<string | null>(null);
 const builderTemplates = BUILDER_WORKFLOW_TEMPLATES;
+const expandedPackageIds = reactive(new Set<string>());
+const packageDrafts = reactive<Record<string, Record<string, any>>>({});
 
 const BUILDER_MODE_LABELS: Record<WorkbenchBuilderMode, string> = {
   simple: "Simple",
@@ -467,6 +634,12 @@ const TIMING_LABELS: Record<WorkbenchGraph["timing"], string> = {
 
 const activeGraph = computed(() =>
   localGraphs.value.find((graph) => graph.id === activeGraphId.value) ?? null,
+);
+
+const compositePackages = computed<ModuleBlueprint[]>(() =>
+  getCompositeModules().filter(
+    (module) => (module.compositeTemplate?.nodes.length ?? 0) > 0,
+  ),
 );
 
 const activeTemplate = computed(() =>
@@ -674,6 +847,70 @@ function setBuilderMode(mode: WorkbenchBuilderMode) {
   currentBuilderMode.value = mode;
 }
 
+function getPackageDraft(moduleId: string): Record<string, any> {
+  if (!packageDrafts[moduleId]) {
+    const blueprint = getModuleBlueprint(moduleId);
+    packageDrafts[moduleId] = klona(blueprint.defaultConfig ?? {});
+  }
+  return packageDrafts[moduleId];
+}
+
+function setPackageDraftValue(moduleId: string, key: string, value: any) {
+  const draft = getPackageDraft(moduleId);
+  draft[key] = value;
+}
+
+function togglePackagePreview(moduleId: string) {
+  if (expandedPackageIds.has(moduleId)) {
+    expandedPackageIds.delete(moduleId);
+  } else {
+    expandedPackageIds.add(moduleId);
+  }
+}
+
+function getCompositePreviewLabels(moduleId: string): string[] {
+  const blueprint = getModuleBlueprint(moduleId);
+  const nodes = blueprint.compositeTemplate?.nodes ?? [];
+  return nodes.map((node) => {
+    try {
+      return getModuleBlueprint(node.moduleId).label;
+    } catch {
+      return node.moduleId;
+    }
+  });
+}
+
+function getNextPackageOrigin(): { x: number; y: number } {
+  const nodes = activeGraph.value?.nodes ?? [];
+  if (nodes.length === 0) {
+    return { x: 80, y: 100 };
+  }
+  const maxX = Math.max(...nodes.map((node) => node.position.x));
+  const minY = Math.min(...nodes.map((node) => node.position.y));
+  return {
+    x: maxX + 280,
+    y: Math.max(60, minY),
+  };
+}
+
+function insertPackage(moduleId: string) {
+  if (!activeGraph.value) {
+    return;
+  }
+  const fragment = instantiateCompositeTemplate({
+    moduleId,
+    origin: getNextPackageOrigin(),
+    exposedConfig: getPackageDraft(moduleId),
+  });
+  if (!fragment) {
+    return;
+  }
+  activeGraph.value.nodes.push(...fragment.nodes);
+  activeGraph.value.edges.push(...fragment.edges);
+  selectedNodeId.value = null;
+  emitGraphs();
+}
+
 function createGraphFromTemplate(templateId: string) {
   const template = findBuilderWorkflowTemplate(templateId);
   if (!template) {
@@ -871,6 +1108,16 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   gap: 14px;
 }
 
+.ew-builder-workbench__packages {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 12, 24, 0.72);
+  border-radius: 20px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .ew-builder-workbench__starter-header {
   display: flex;
   align-items: flex-start;
@@ -892,6 +1139,12 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   gap: 12px;
 }
 
+.ew-builder-workbench__package-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
 .ew-builder-workbench__template-card {
   display: flex;
   flex-direction: column;
@@ -900,6 +1153,16 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.ew-builder-workbench__package-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .ew-builder-workbench__template-card[data-ownership="optional_main_takeover"] {
@@ -963,6 +1226,31 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   background: rgba(99, 102, 241, 0.18);
   border-color: rgba(99, 102, 241, 0.36);
   transform: translateY(-1px);
+}
+
+.ew-builder-workbench__package-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.ew-builder-workbench__package-help {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.ew-builder-workbench__package-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ew-builder-workbench__package-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .ew-builder-workbench__body {
@@ -1072,6 +1360,31 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.92);
   padding: 0 12px;
+}
+
+.ew-builder-workbench__input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.92);
+  padding: 0 12px;
+}
+
+.ew-builder-workbench__package-toggle {
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+
+.ew-builder-workbench__package-toggle.active {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.34);
+  color: rgba(209, 250, 229, 0.96);
 }
 
 .ew-builder-workbench__chips {

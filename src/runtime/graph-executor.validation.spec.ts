@@ -1,9 +1,11 @@
 import { createPinia, setActivePinia } from "pinia";
 
 import {
+  getCompositeModules,
   getModuleExplainContract,
   getModuleMetadataSummary,
   getModuleMetadataSurface,
+  instantiateCompositeTemplate,
 } from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
@@ -1790,13 +1792,12 @@ async function runValidationSpec(): Promise<void> {
         (error.message.includes("metadata-required") ||
           error.message.includes("未知配置键")),
     ) &&
-      !metadataBackwardCompatibleValidation.diagnostics.some(
+      metadataBackwardCompatibleValidation.diagnostics.some(
         (diagnostic) =>
           diagnostic.nodeId === "composite_without_metadata" &&
-          (diagnostic.message.includes("metadata-required") ||
-            diagnostic.message.includes("未知配置键")),
+          diagnostic.message.includes("未知配置键"),
       ),
-    `Expected module without pilot metadata to stay backward compatible for config validation. Actual errors: ${metadataBackwardCompatibleValidation.errors.map((error) => JSON.stringify(error)).join(" | ")} ; diagnostics: ${metadataBackwardCompatibleValidation.diagnostics.map((diagnostic) => JSON.stringify(diagnostic)).join(" | ")}`,
+    `Expected package module with schema-driven metadata to stay backward compatible by keeping legacy payloads as diagnostics-only warnings. Actual errors: ${metadataBackwardCompatibleValidation.errors.map((error) => JSON.stringify(error)).join(" | ")} ; diagnostics: ${metadataBackwardCompatibleValidation.diagnostics.map((diagnostic) => JSON.stringify(diagnostic)).join(" | ")}`,
   );
 
   const cycleGraph = makeBaseGraph();
@@ -8734,6 +8735,50 @@ async function runValidationSpec(): Promise<void> {
       ),
     `Expected builder-facing metadata summary helpers and explain contracts to reuse high-frequency schema facts. Actual apiExplain=${JSON.stringify(apiPresetExplain)} requestTemplateExplain=${JSON.stringify(requestTemplateExplain)} apiSummary=${JSON.stringify(apiPresetMetadataSummary)} genSummary=${JSON.stringify(generationMetadataSummary)}`,
   );
+  const compositeModules = getCompositeModules();
+  const fullWorkflowPackage = compositeModules.find(
+    (module) => module.moduleId === "pkg_full_workflow",
+  );
+  const worldbookPackage = compositeModules.find(
+    (module) => module.moduleId === "pkg_worldbook_engine",
+  );
+  const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
+    moduleId: "pkg_full_workflow",
+    origin: { x: 400, y: 120 },
+    exposedConfig: {
+      context_turns: 12,
+      use_main_api: true,
+      model: "gpt-4.1",
+      request_thinking: true,
+      reasoning_effort: "high",
+    },
+  });
+  assert(
+    fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
+      fullWorkflowPackage.compositeTemplate.edges.length === 5 &&
+      fullWorkflowPackage.configSchema?.some(
+        (field) => field.key === "context_turns",
+      ) &&
+      worldbookPackage?.compositeTemplate?.nodes.length === 6 &&
+      instantiatedFullWorkflowPackage?.nodes.some(
+        (node) =>
+          node.moduleId === "src_chat_history" &&
+          node.config.context_turns === 12,
+      ) &&
+      instantiatedFullWorkflowPackage.nodes.some(
+        (node) =>
+          node.moduleId === "cfg_api_preset" &&
+          node.config.use_main_api === true &&
+          node.config.model === "gpt-4.1",
+      ) &&
+      instantiatedFullWorkflowPackage.nodes.some(
+        (node) =>
+          node.moduleId === "cfg_behavior" &&
+          node.config.request_thinking === true &&
+          node.config.reasoning_effort === "high",
+      ),
+    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings. Actual full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+  );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===
       sourceMetadata?.help?.summary &&
@@ -8790,8 +8835,16 @@ async function runValidationSpec(): Promise<void> {
     "pkg_prompt_assembly",
   );
   assert(
-    fallbackBlueprintMetadata === undefined && fallbackMetadataSummary === null,
-    `Expected fallback blueprint without pilot metadata not to grow UI/schema responsibilities. Actual blueprint=${JSON.stringify(fallbackBlueprintMetadata)} summary=${JSON.stringify(fallbackMetadataSummary)}`,
+    fallbackBlueprintMetadata?.config?.schemaFields?.some(
+      (field) => field.key === "context_turns",
+    ) &&
+      fallbackBlueprintMetadata.help === undefined &&
+      fallbackBlueprintMetadata.constraints === undefined &&
+      fallbackMetadataSummary?.configFields?.some(
+        (field) => field.key === "hide_last_n",
+      ) &&
+      fallbackMetadataSummary?.helpSummary === undefined,
+    `Expected composite package without pilot help/constraint metadata to still expose schema-backed Builder responsibilities without inventing extra docs. Actual blueprint=${JSON.stringify(fallbackBlueprintMetadata)} summary=${JSON.stringify(fallbackMetadataSummary)}`,
   );
 
   // 4. Executor success path without static handler map

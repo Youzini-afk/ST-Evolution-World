@@ -262,7 +262,7 @@ import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
 import EwModulePalette from "./EwModulePalette.vue";
 import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
-import { MODULE_REGISTRY } from "./module-registry";
+import { instantiateCompositeTemplate, MODULE_REGISTRY } from "./module-registry";
 import type {
   WorkbenchEdge,
   WorkbenchGraph,
@@ -310,6 +310,14 @@ function graphAddNode(
   };
   graphState.nodes.push(node);
   return node;
+}
+
+function graphAddFragment(
+  nodes: WorkbenchNode[],
+  edges: WorkbenchEdge[],
+): void {
+  graphState.nodes.push(...nodes);
+  graphState.edges.push(...edges);
 }
 
 function graphRemoveNode(nodeId: string) {
@@ -731,6 +739,18 @@ function onDrop(e: DragEvent) {
   const zoom = graph.state.viewport.zoom;
   const worldX = (e.clientX - rect.left - graph.state.viewport.x) / zoom;
   const worldY = (e.clientY - rect.top - graph.state.viewport.y) / zoom;
+
+  if (bp.isComposite) {
+    const fragment = instantiateCompositeTemplate({
+      moduleId,
+      origin: { x: worldX, y: worldY },
+    });
+    if (fragment) {
+      pushUndo();
+      graphAddFragment(fragment.nodes, fragment.edges);
+      return;
+    }
+  }
 
   graph.addNode(moduleId, worldX, worldY);
 }

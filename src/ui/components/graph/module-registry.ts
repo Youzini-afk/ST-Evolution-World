@@ -292,6 +292,38 @@ const jsonOut = (id = "json_out", label = "JSON"): ModulePortDef => ({
   dataType: "json",
 });
 
+function compositeNode(
+  id: string,
+  moduleId: string,
+  x: number,
+  y: number,
+  config: Record<string, any> = {},
+): NonNullable<ModuleBlueprint["compositeTemplate"]>["nodes"][number] {
+  return {
+    id,
+    moduleId,
+    position: { x, y },
+    config,
+    collapsed: false,
+  };
+}
+
+function compositeEdge(
+  id: string,
+  source: string,
+  sourcePort: string,
+  target: string,
+  targetPort: string,
+): NonNullable<ModuleBlueprint["compositeTemplate"]>["edges"][number] {
+  return {
+    id,
+    source,
+    sourcePort,
+    target,
+    targetPort,
+  };
+}
+
 // ════════════════════════════════════════════════════════════
 // 🔌 Source — 数据源模块
 // ════════════════════════════════════════════════════════════
@@ -1361,7 +1393,111 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
         dataType: "entries",
       },
     ],
-    defaultConfig: {},
+    defaultConfig: {
+      include_character: true,
+      include_persona: true,
+      include_chat: true,
+      include_global: false,
+    },
+    configSchema: [
+      {
+        key: "include_character",
+        label: "角色卡世界书",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "是否纳入角色卡世界书条目。",
+      },
+      {
+        key: "include_persona",
+        label: "Persona 世界书",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "是否纳入 persona 世界书条目。",
+      },
+      {
+        key: "include_chat",
+        label: "聊天世界书",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "是否纳入当前聊天的世界书条目。",
+      },
+      {
+        key: "include_global",
+        label: "全局世界书",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "是否把全局世界书条目也并入这个包骨架。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("src_worldbook", "src_worldbook_raw", 0, 40),
+        compositeNode("keyword_match", "flt_wi_keyword_match", 260, 40),
+        compositeNode("probability_filter", "flt_wi_probability", 520, 40),
+        compositeNode("mutex_group", "flt_wi_mutex_group", 780, 40),
+        compositeNode("controller_expand", "tfm_controller_expand", 1040, 40),
+        compositeNode("bucket_entries", "tfm_wi_bucket", 1300, 40),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_worldbook_to_keyword",
+          "src_worldbook",
+          "entries",
+          "keyword_match",
+          "entries",
+        ),
+        compositeEdge(
+          "edge_keyword_to_probability",
+          "keyword_match",
+          "activated",
+          "probability_filter",
+          "entries_in",
+        ),
+        compositeEdge(
+          "edge_probability_to_mutex",
+          "probability_filter",
+          "entries_out",
+          "mutex_group",
+          "entries_in",
+        ),
+        compositeEdge(
+          "edge_mutex_to_expand",
+          "mutex_group",
+          "entries_out",
+          "controller_expand",
+          "controller",
+        ),
+        compositeEdge(
+          "edge_expand_to_bucket",
+          "controller_expand",
+          "expanded",
+          "bucket_entries",
+          "entries_in",
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "include_character",
+          targetNodeId: "src_worldbook",
+          targetConfigKey: "include_character",
+        },
+        {
+          sourceKey: "include_persona",
+          targetNodeId: "src_worldbook",
+          targetConfigKey: "include_persona",
+        },
+        {
+          sourceKey: "include_chat",
+          targetNodeId: "src_worldbook",
+          targetConfigKey: "include_chat",
+        },
+        {
+          sourceKey: "include_global",
+          targetNodeId: "src_worldbook",
+          targetConfigKey: "include_global",
+        },
+      ],
+    },
     isComposite: true,
   },
   {
@@ -1380,7 +1516,70 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       },
       msgsOut("cleaned", "清洗后"),
     ],
-    defaultConfig: {},
+    defaultConfig: {
+      hide_last_n: 0,
+      limiter_enabled: false,
+      limiter_count: 20,
+    },
+    configSchema: [
+      {
+        key: "hide_last_n",
+        label: "隐藏末尾消息数",
+        type: "number",
+        min: 0,
+        step: 1,
+        exposeInSimpleMode: true,
+        description: "插入后会作用到消息隐藏器。",
+      },
+      {
+        key: "limiter_enabled",
+        label: "启用限制器",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "是否启用消息数量限制器。",
+      },
+      {
+        key: "limiter_count",
+        label: "限制器阈值",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "启用限制器后的消息数量阈值。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("hide_messages", "flt_hide_messages", 0, 60),
+        compositeNode("exclude_messages", "flt_context_exclude", 280, 60),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_hide_to_exclude",
+          "hide_messages",
+          "msgs_out",
+          "exclude_messages",
+          "msgs_in",
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "hide_last_n",
+          targetNodeId: "hide_messages",
+          targetConfigKey: "hide_last_n",
+        },
+        {
+          sourceKey: "limiter_enabled",
+          targetNodeId: "hide_messages",
+          targetConfigKey: "limiter_enabled",
+        },
+        {
+          sourceKey: "limiter_count",
+          targetNodeId: "hide_messages",
+          targetConfigKey: "limiter_count",
+        },
+      ],
+    },
     isComposite: true,
   },
   {
@@ -1393,8 +1592,99 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       "完整组装管线：数据源 → 世界书引擎 → 扩展清洗 → 提示词排序 → 深度注入 → 名称注入",
     ports: [msgsOut("messages", "最终消息列表")],
     defaultConfig: {
-      prompt_order: [],
       context_turns: 8,
+      hide_last_n: 0,
+      limiter_enabled: false,
+      limiter_count: 20,
+    },
+    configSchema: [
+      {
+        key: "context_turns",
+        label: "上下文轮数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: true,
+        description: "读取最近多少轮聊天历史作为提示词骨架。",
+      },
+      {
+        key: "hide_last_n",
+        label: "隐藏末尾消息数",
+        type: "number",
+        min: 0,
+        step: 1,
+        exposeInSimpleMode: true,
+        description: "拼装后对消息列表做轻量裁剪。",
+      },
+      {
+        key: "limiter_enabled",
+        label: "启用限制器",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用消息数量限制器。",
+      },
+      {
+        key: "limiter_count",
+        label: "限制器阈值",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "启用限制器后的消息数量阈值。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("src_messages", "src_chat_history", 0, 40),
+        compositeNode("src_extensions", "src_extension_prompts", 0, 240),
+        compositeNode("concat_messages", "cmp_message_concat", 280, 140),
+        compositeNode("hide_messages", "flt_hide_messages", 560, 140),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_messages_to_concat",
+          "src_messages",
+          "messages",
+          "concat_messages",
+          "a",
+        ),
+        compositeEdge(
+          "edge_extensions_to_concat",
+          "src_extensions",
+          "before_prompt",
+          "concat_messages",
+          "b",
+        ),
+        compositeEdge(
+          "edge_concat_to_hide",
+          "concat_messages",
+          "msgs_out",
+          "hide_messages",
+          "msgs_in",
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "context_turns",
+          targetNodeId: "src_messages",
+          targetConfigKey: "context_turns",
+        },
+        {
+          sourceKey: "hide_last_n",
+          targetNodeId: "hide_messages",
+          targetConfigKey: "hide_last_n",
+        },
+        {
+          sourceKey: "limiter_enabled",
+          targetNodeId: "hide_messages",
+          targetConfigKey: "limiter_enabled",
+        },
+        {
+          sourceKey: "limiter_count",
+          targetNodeId: "hide_messages",
+          targetConfigKey: "limiter_count",
+        },
+      ],
     },
     isComposite: true,
   },
@@ -1410,10 +1700,126 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       { id: "result", label: "执行结果", direction: "out", dataType: "json" },
     ],
     defaultConfig: {
-      name: "新工作流",
-      enabled: true,
-      timing: "after_reply",
-      priority: 100,
+      context_turns: 8,
+      use_main_api: false,
+      model: "",
+      request_thinking: false,
+      reasoning_effort: "auto",
+    },
+    configSchema: [
+      {
+        key: "context_turns",
+        label: "上下文轮数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: true,
+        description: "主链路读取最近多少轮聊天历史。",
+      },
+      {
+        key: "use_main_api",
+        label: "使用主 API",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "启用后让完整工作流优先走酒馆主 API。",
+      },
+      {
+        key: "model",
+        label: "模型名",
+        type: "text",
+        exposeInSimpleMode: true,
+        placeholder: "gpt-4.1 / gemini / claude ...",
+        description: "插入时会写入内部 API 预设节点。",
+      },
+      {
+        key: "request_thinking",
+        label: "请求思考内容",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "插入时会写入行为参数节点。",
+      },
+      {
+        key: "reasoning_effort",
+        label: "Reasoning Effort",
+        type: "select",
+        options: ["auto", "low", "medium", "high"],
+        exposeInSimpleMode: false,
+        description: "插入时会写入行为参数节点。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("src_messages", "src_chat_history", 0, 120),
+        compositeNode("cfg_api", "cfg_api_preset", 0, 320),
+        compositeNode("cfg_generation", "cfg_generation", 0, 500),
+        compositeNode("cfg_behavior", "cfg_behavior", 0, 700),
+        compositeNode("llm_call", "exe_llm_call", 320, 300),
+        compositeNode("out_reply", "out_reply_inject", 620, 300),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_messages_to_llm",
+          "src_messages",
+          "messages",
+          "llm_call",
+          "messages",
+        ),
+        compositeEdge(
+          "edge_api_to_llm",
+          "cfg_api",
+          "config",
+          "llm_call",
+          "api_config",
+        ),
+        compositeEdge(
+          "edge_generation_to_llm",
+          "cfg_generation",
+          "options",
+          "llm_call",
+          "gen_options",
+        ),
+        compositeEdge(
+          "edge_behavior_to_llm",
+          "cfg_behavior",
+          "options",
+          "llm_call",
+          "behavior",
+        ),
+        compositeEdge(
+          "edge_llm_to_reply",
+          "llm_call",
+          "raw_response",
+          "out_reply",
+          "instruction",
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "context_turns",
+          targetNodeId: "src_messages",
+          targetConfigKey: "context_turns",
+        },
+        {
+          sourceKey: "use_main_api",
+          targetNodeId: "cfg_api",
+          targetConfigKey: "use_main_api",
+        },
+        {
+          sourceKey: "model",
+          targetNodeId: "cfg_api",
+          targetConfigKey: "model",
+        },
+        {
+          sourceKey: "request_thinking",
+          targetNodeId: "cfg_behavior",
+          targetConfigKey: "request_thinking",
+        },
+        {
+          sourceKey: "reasoning_effort",
+          targetNodeId: "cfg_behavior",
+          targetConfigKey: "reasoning_effort",
+        },
+      ],
     },
     isComposite: true,
   },
@@ -1627,6 +2033,73 @@ export function resolveModuleConfigWithDefaults(
     ...cloneRecord(blueprint.defaultConfig),
     ...rawConfig,
   };
+}
+
+export function instantiateCompositeTemplate(params: {
+  moduleId: string;
+  origin?: { x: number; y: number };
+  exposedConfig?: Record<string, any>;
+}): { nodes: ModuleBlueprint["compositeTemplate"]["nodes"]; edges: ModuleBlueprint["compositeTemplate"]["edges"] } | null {
+  const blueprint = MODULE_REGISTRY.get(params.moduleId);
+  const template = blueprint?.compositeTemplate;
+  if (!blueprint || !template || template.nodes.length === 0) {
+    return null;
+  }
+
+  const effectiveExposedConfig = {
+    ...cloneRecord(blueprint.defaultConfig),
+    ...cloneRecord(params.exposedConfig),
+  };
+  const origin = params.origin ?? { x: 120, y: 120 };
+  const minX = Math.min(...template.nodes.map((node) => node.position.x));
+  const minY = Math.min(...template.nodes.map((node) => node.position.y));
+  const idSuffix = `${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+  const nodeIdMap = new Map<string, string>();
+
+  const nodes = template.nodes.map((node) => {
+    const nextId = `${node.id}_${idSuffix}`;
+    nodeIdMap.set(node.id, nextId);
+    return {
+      ...node,
+      id: nextId,
+      position: {
+        x: origin.x + (node.position.x - minX),
+        y: origin.y + (node.position.y - minY),
+      },
+      config: resolveModuleConfigWithDefaults(node.moduleId, node.config),
+      runtimeMeta: node.runtimeMeta ? { ...node.runtimeMeta } : undefined,
+    };
+  });
+
+  for (const binding of template.configBindings ?? []) {
+    if (!(binding.sourceKey in effectiveExposedConfig)) {
+      continue;
+    }
+    const targetNodeId = nodeIdMap.get(binding.targetNodeId);
+    if (!targetNodeId) {
+      continue;
+    }
+    const targetNode = nodes.find((node) => node.id === targetNodeId);
+    if (!targetNode) {
+      continue;
+    }
+    targetNode.config = {
+      ...targetNode.config,
+      [binding.targetConfigKey]: effectiveExposedConfig[binding.sourceKey],
+    };
+  }
+
+  const edges = template.edges.map((edge) => ({
+    ...edge,
+    id: `${edge.id}_${idSuffix}`,
+    source: nodeIdMap.get(edge.source) ?? edge.source,
+    target: nodeIdMap.get(edge.target) ?? edge.target,
+    runtimeMeta: edge.runtimeMeta ? { ...edge.runtimeMeta } : undefined,
+  }));
+
+  return { nodes, edges };
 }
 
 export function getModuleMetadataSurface(
