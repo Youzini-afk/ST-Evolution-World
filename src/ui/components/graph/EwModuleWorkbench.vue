@@ -65,6 +65,13 @@
               v-if="activeRunSummary.bridgeIntentSummary"
               class="ew-workbench__diagnostics-item"
             >
+              Bridge 原因
+              {{ activeRunSummary.bridgeIntentSummary.reasonLabel }}
+            </span>
+            <span
+              v-if="activeRunSummary.bridgeIntentSummary"
+              class="ew-workbench__diagnostics-item"
+            >
               Bridge 意图
               {{ activeRunSummary.bridgeIntentSummary.graphIntentLabel }}
             </span>
@@ -199,8 +206,22 @@
               v-if="diagnosticsSummary.bridgeIntentSummary"
               class="ew-workbench__diagnostics-item"
             >
+              Bridge 原因
+              {{ diagnosticsSummary.bridgeIntentSummary.reasonLabel }}
+            </span>
+            <span
+              v-if="diagnosticsSummary.bridgeIntentSummary"
+              class="ew-workbench__diagnostics-item"
+            >
               Bridge 意图
               {{ diagnosticsSummary.bridgeIntentSummary.graphIntentLabel }}
+            </span>
+            <span
+              v-if="diagnosticsSummary.bridgeIntentSummary?.requestedTimingFilter"
+              class="ew-workbench__diagnostics-item"
+            >
+              触发时机
+              {{ diagnosticsSummary.bridgeIntentSummary.requestedTimingLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
               指纹 {{ diagnosticsSummary.compileFingerprintShort }}
@@ -233,6 +254,19 @@
             >
               takeover candidate
               {{ diagnosticsSummary.bridgeIntentSummary.takeoverCandidateCount }}
+            </span>
+            <span
+              v-if="
+                diagnosticsSummary.bridgeIntentSummary
+                  ?.timingFilteredOutGraphIds.length
+              "
+              class="ew-workbench__diagnostics-item"
+            >
+              timing filtered
+              {{
+                diagnosticsSummary.bridgeIntentSummary
+                  .timingFilteredOutGraphIds.length
+              }}
             </span>
           </div>
           <div class="ew-workbench__diagnostics-reasons">

@@ -533,10 +533,13 @@ type WorkflowBridgeFacts = {
   reason: string;
   has_explicit_legacy_flow_selection?: boolean;
   enabled_graph_count?: number;
+  configured_enabled_graph_count?: number;
+  requested_timing_filter?: "before_reply" | "after_reply";
   selected_graph_ids?: string[];
   graph_intent?: "assistive" | "optional_main_takeover";
   assistive_graph_ids?: string[];
   optional_main_takeover_graph_ids?: string[];
+  timing_filtered_out_graph_ids?: string[];
   takeover_candidate_count?: number;
   failure_origin?: string;
   graph_blocking_explain_artifact?: ReturnType<
@@ -609,6 +612,23 @@ function normalizeWorkflowBridgeDiagnostics(
     normalized.enabled_graph_count = enabledGraphCount;
   }
 
+  const configuredEnabledGraphCount = bridgeRecord.configured_enabled_graph_count;
+  if (
+    typeof configuredEnabledGraphCount === "number" &&
+    Number.isInteger(configuredEnabledGraphCount) &&
+    configuredEnabledGraphCount >= 0
+  ) {
+    normalized.configured_enabled_graph_count = configuredEnabledGraphCount;
+  }
+
+  const requestedTimingFilter = bridgeRecord.requested_timing_filter;
+  if (
+    requestedTimingFilter === "before_reply" ||
+    requestedTimingFilter === "after_reply"
+  ) {
+    normalized.requested_timing_filter = requestedTimingFilter;
+  }
+
   const graphContext = _.isPlainObject(bridgeRecord.graph_context)
     ? (bridgeRecord.graph_context as Record<string, unknown>)
     : null;
@@ -655,6 +675,16 @@ function normalizeWorkflowBridgeDiagnostics(
     normalized.optional_main_takeover_graph_ids = [
       ...optionalMainTakeoverGraphIds,
     ];
+  }
+
+  const timingFilteredOutGraphIds = bridgeRecord.timing_filtered_out_graph_ids;
+  if (
+    Array.isArray(timingFilteredOutGraphIds) &&
+    timingFilteredOutGraphIds.every(
+      (entry: unknown) => typeof entry === "string",
+    )
+  ) {
+    normalized.timing_filtered_out_graph_ids = [...timingFilteredOutGraphIds];
   }
 
   const takeoverCandidateCount =

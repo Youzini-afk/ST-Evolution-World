@@ -70,6 +70,9 @@ export type WorkflowBridgeDiagnostics = {
   reason: WorkflowBridgeRouteSelection["reason"];
   has_explicit_legacy_flow_selection: boolean;
   enabled_graph_count: number;
+  configured_enabled_graph_count?: number;
+  requested_timing_filter?: "before_reply" | "after_reply";
+  timing_filtered_out_graph_ids?: string[];
   graph_context?: {
     selected_graph_ids: string[];
     graph_intent: WorkflowBridgeGraphIntent;
@@ -674,8 +677,11 @@ export type WorkflowBridgeGraphIntent =
 export type WorkflowBridgeRouteSelection = {
   route: WorkflowBridgeRoute;
   enabledGraphs: WorkbenchGraph[];
+  configuredEnabledGraphs: WorkbenchGraph[];
   assistiveGraphs: WorkbenchGraph[];
   optionalMainTakeoverGraphs: WorkbenchGraph[];
+  timingFilteredOutGraphs: WorkbenchGraph[];
+  requestedTimingFilter?: "before_reply" | "after_reply";
   graphIntent: WorkflowBridgeGraphIntent;
   hasExplicitLegacyFlowSelection: boolean;
   reason:
@@ -719,13 +725,25 @@ export function selectWorkflowBridgeRoute(params: {
       ? "before_reply"
       : "after_reply";
   const enabledGraphs = workbenchGraphs.filter((graph) => graph.enabled);
-  const eligibleGraphs = params.input.timing_filter
+  const requestedTimingFilter =
+    params.input.timing_filter === "before_reply" ||
+    params.input.timing_filter === "after_reply"
+      ? params.input.timing_filter
+      : undefined;
+  const eligibleGraphs = requestedTimingFilter
     ? enabledGraphs.filter(
         (graph) =>
           getEffectiveGraphTiming(graph, defaultTiming) ===
-          params.input.timing_filter,
+          requestedTimingFilter,
       )
     : enabledGraphs;
+  const timingFilteredOutGraphs = requestedTimingFilter
+    ? enabledGraphs.filter(
+        (graph) =>
+          getEffectiveGraphTiming(graph, defaultTiming) !==
+          requestedTimingFilter,
+      )
+    : [];
   const assistiveGraphs = eligibleGraphs.filter(
     (graph) => getGraphGenerationOwnership(graph) === "assistive",
   );
@@ -744,8 +762,13 @@ export function selectWorkflowBridgeRoute(params: {
     return {
       route: "graph",
       enabledGraphs: eligibleGraphs,
+      configuredEnabledGraphs: enabledGraphs,
       assistiveGraphs,
       optionalMainTakeoverGraphs,
+      timingFilteredOutGraphs,
+      ...(requestedTimingFilter
+        ? { requestedTimingFilter }
+        : {}),
       graphIntent,
       hasExplicitLegacyFlowSelection,
       reason: "graph_first",
@@ -755,15 +778,18 @@ export function selectWorkflowBridgeRoute(params: {
   return {
     route: "legacy",
     enabledGraphs: eligibleGraphs,
+    configuredEnabledGraphs: enabledGraphs,
     assistiveGraphs,
     optionalMainTakeoverGraphs,
+    timingFilteredOutGraphs,
+    ...(requestedTimingFilter ? { requestedTimingFilter } : {}),
     graphIntent,
     hasExplicitLegacyFlowSelection,
     reason: hasExplicitLegacyFlowSelection
       ? enabledGraphs.length > 0
         ? "legacy_flow_selection"
         : "no_enabled_graph"
-      : params.input.timing_filter &&
+      : requestedTimingFilter &&
           enabledGraphs.length > 0 &&
           eligibleGraphs.length === 0
         ? "no_graph_for_timing"
@@ -974,6 +1000,20 @@ export function buildWorkflowBridgeDiagnostics(params: {
     has_explicit_legacy_flow_selection:
       selection.hasExplicitLegacyFlowSelection,
     enabled_graph_count: selection.enabledGraphs.length,
+    ...(selection.requestedTimingFilter
+      ? {
+          requested_timing_filter: selection.requestedTimingFilter,
+          configured_enabled_graph_count:
+            selection.configuredEnabledGraphs.length,
+        }
+      : {}),
+    ...(selection.timingFilteredOutGraphs.length > 0
+      ? {
+          timing_filtered_out_graph_ids: selection.timingFilteredOutGraphs.map(
+            (graph) => graph.id,
+          ),
+        }
+      : {}),
     ...(selection.route === "graph"
       ? {
           graph_context: {

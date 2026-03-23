@@ -362,9 +362,29 @@
               v-if="visibleDiagnosticsSummary?.bridgeIntentSummary"
               class="ew-builder-workbench__kv"
             >
+              <span>Bridge 原因</span>
+              <strong>
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.reasonLabel }}
+              </strong>
+            </div>
+            <div
+              v-if="visibleDiagnosticsSummary?.bridgeIntentSummary"
+              class="ew-builder-workbench__kv"
+            >
               <span>Bridge 意图</span>
               <strong>
                 {{ visibleDiagnosticsSummary.bridgeIntentSummary.graphIntentLabel }}
+              </strong>
+            </div>
+            <div
+              v-if="visibleDiagnosticsSummary?.bridgeIntentSummary?.requestedTimingFilter"
+              class="ew-builder-workbench__kv"
+            >
+              <span>触发时机</span>
+              <strong>
+                {{
+                  visibleDiagnosticsSummary.bridgeIntentSummary.requestedTimingLabel
+                }}
               </strong>
             </div>
             <div
@@ -374,6 +394,21 @@
               <span>接管候选图</span>
               <strong>
                 {{ visibleDiagnosticsSummary.bridgeIntentSummary.takeoverCandidateCount }}
+              </strong>
+            </div>
+            <div
+              v-if="
+                (visibleDiagnosticsSummary?.bridgeIntentSummary
+                  ?.timingFilteredOutGraphIds.length ?? 0) > 0
+              "
+              class="ew-builder-workbench__kv"
+            >
+              <span>时机过滤图</span>
+              <strong>
+                {{
+                  visibleDiagnosticsSummary.bridgeIntentSummary
+                    .timingFilteredOutGraphIds.length
+                }}
               </strong>
             </div>
             <p
@@ -390,6 +425,22 @@
             </p>
             <p class="ew-builder-workbench__text">
               {{ generationOwnershipHint }}
+            </p>
+            <p
+              v-if="
+                (visibleDiagnosticsSummary?.bridgeIntentSummary
+                  ?.timingFilteredOutGraphLabels.length ?? 0) > 0
+              "
+              class="ew-builder-workbench__text"
+            >
+              当前触发时机为
+              {{ visibleDiagnosticsSummary.bridgeIntentSummary.requestedTimingLabel }}，
+              以下已启用图未命中本次执行：
+              {{
+                visibleDiagnosticsSummary.bridgeIntentSummary.timingFilteredOutGraphLabels.join(
+                  "、",
+                )
+              }}。
             </p>
           </div>
         </section>
@@ -470,7 +521,7 @@
                 v-if="visibleDiagnosticsSummary.bridgeIntentSummary"
                 class="ew-builder-workbench__chip"
               >
-                {{ visibleDiagnosticsSummary.bridgeIntentSummary.graphIntentLabel }}
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.reasonLabel }}
               </span>
               <span class="ew-builder-workbench__chip">
                 指纹 {{ visibleDiagnosticsSummary.compileFingerprintShort }}
@@ -494,9 +545,33 @@
               v-if="visibleDiagnosticsSummary.bridgeIntentSummary"
               class="ew-builder-workbench__kv"
             >
+              <span>Bridge 原因</span>
+              <strong>
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.reasonLabel }}
+              </strong>
+            </div>
+            <div
+              v-if="visibleDiagnosticsSummary.bridgeIntentSummary"
+              class="ew-builder-workbench__kv"
+            >
               <span>接管候选图</span>
               <strong>
                 {{ visibleDiagnosticsSummary.bridgeIntentSummary.takeoverCandidateCount }}
+              </strong>
+            </div>
+            <div
+              v-if="
+                visibleDiagnosticsSummary.bridgeIntentSummary
+                  .requestedTimingFilter
+              "
+              class="ew-builder-workbench__kv"
+            >
+              <span>触发时机</span>
+              <strong>
+                {{
+                  visibleDiagnosticsSummary.bridgeIntentSummary
+                    .requestedTimingLabel
+                }}
               </strong>
             </div>
           </div>

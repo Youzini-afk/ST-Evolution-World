@@ -1123,6 +1123,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     const graphContext = _.isPlainObject(bridge.graph_context)
       ? (bridge.graph_context as Record<string, unknown>)
       : null;
+    const reason =
+      typeof bridge.reason === "string" && bridge.reason.trim()
+        ? bridge.reason.trim()
+        : route === "graph"
+          ? "graph_first"
+          : "legacy_flow_selection";
     const selectedGraphIds = Array.isArray(bridge.selected_graph_ids)
       ? bridge.selected_graph_ids
       : graphContext?.selected_graph_ids;
@@ -1134,18 +1140,66 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     )
       ? bridge.optional_main_takeover_graph_ids
       : graphContext?.optional_main_takeover_graph_ids;
+    const timingFilteredOutGraphIds = Array.isArray(
+      bridge.timing_filtered_out_graph_ids,
+    )
+      ? bridge.timing_filtered_out_graph_ids
+      : [];
     const graphIntent =
       bridge.graph_intent ?? graphContext?.graph_intent ?? undefined;
     const enabledGraphCount = Number(bridge.enabled_graph_count ?? 0);
+    const configuredEnabledGraphCount = Number(
+      bridge.configured_enabled_graph_count ?? enabledGraphCount,
+    );
     const takeoverCandidateCount = Number(
       bridge.takeover_candidate_count ??
         graphContext?.takeover_candidate_count ??
         0,
     );
+    const requestedTimingFilter =
+      bridge.requested_timing_filter === "before_reply" ||
+      bridge.requested_timing_filter === "after_reply"
+        ? bridge.requested_timing_filter
+        : null;
+    const graphNameById = new Map(
+      (settings.value.workbench_graphs ?? []).map((graph) => [
+        graph.id,
+        typeof graph.name === "string" && graph.name.trim()
+          ? graph.name.trim()
+          : graph.id,
+      ]),
+    );
+    const normalizeIds = (value: unknown): string[] =>
+      Array.isArray(value)
+        ? value
+            .map((entry) => String(entry ?? "").trim())
+            .filter(Boolean)
+        : [];
+    const resolvedTimingFilteredOutGraphIds = normalizeIds(
+      timingFilteredOutGraphIds,
+    );
 
     return {
       route,
       routeLabel: route === "graph" ? "图工作流" : "Legacy 工作流",
+      reason,
+      reasonLabel:
+        reason === "graph_first"
+          ? "图工作流优先"
+          : reason === "legacy_flow_selection"
+            ? "显式选择 Legacy 工作流"
+            : reason === "no_enabled_graph"
+              ? "没有启用图工作流"
+              : reason === "no_graph_for_timing"
+                ? "当前触发时机未命中图工作流"
+                : reason,
+      requestedTimingFilter,
+      requestedTimingLabel:
+        requestedTimingFilter === "before_reply"
+          ? "回复前"
+          : requestedTimingFilter === "after_reply"
+            ? "回复后"
+            : "未声明",
       graphIntent:
         graphIntent === "assistive" ||
         graphIntent === "optional_main_takeover"
@@ -1156,30 +1210,25 @@ export const useEwStore = defineStore("evolution-world-store", () => {
           ? "渐进主生成接管"
           : graphIntent === "assistive"
             ? "辅助工作流"
-            : route === "legacy"
+          : route === "legacy"
               ? "Legacy 流程"
               : "未声明",
       enabledGraphCount:
         Number.isFinite(enabledGraphCount) && enabledGraphCount >= 0
           ? Math.trunc(enabledGraphCount)
           : 0,
-      selectedGraphIds: Array.isArray(selectedGraphIds)
-        ? selectedGraphIds
-            .map((value) => String(value ?? "").trim())
-            .filter(Boolean)
-        : [],
-      assistiveGraphIds: Array.isArray(assistiveGraphIds)
-        ? assistiveGraphIds
-            .map((value) => String(value ?? "").trim())
-            .filter(Boolean)
-        : [],
-      optionalMainTakeoverGraphIds: Array.isArray(
-        optionalMainTakeoverGraphIds,
-      )
-        ? optionalMainTakeoverGraphIds
-            .map((value) => String(value ?? "").trim())
-            .filter(Boolean)
-        : [],
+      configuredEnabledGraphCount:
+        Number.isFinite(configuredEnabledGraphCount) &&
+        configuredEnabledGraphCount >= 0
+          ? Math.trunc(configuredEnabledGraphCount)
+          : 0,
+      selectedGraphIds: normalizeIds(selectedGraphIds),
+      assistiveGraphIds: normalizeIds(assistiveGraphIds),
+      optionalMainTakeoverGraphIds: normalizeIds(optionalMainTakeoverGraphIds),
+      timingFilteredOutGraphIds: resolvedTimingFilteredOutGraphIds,
+      timingFilteredOutGraphLabels: resolvedTimingFilteredOutGraphIds.map(
+        (graphId) => graphNameById.get(graphId) ?? graphId,
+      ),
       takeoverCandidateCount:
         Number.isFinite(takeoverCandidateCount) && takeoverCandidateCount >= 0
           ? Math.trunc(takeoverCandidateCount)

@@ -154,18 +154,43 @@
                     v-if="store.activeGraphBridgeIntentSummary"
                     class="ew-summary-card"
                   >
-                    <h4>Graph Intent</h4>
+                    <h4>Graph Bridge</h4>
                     <strong>{{
-                      store.activeGraphBridgeIntentSummary.graphIntentLabel
+                      store.activeGraphBridgeIntentSummary.route === "graph"
+                        ? store.activeGraphBridgeIntentSummary.graphIntentLabel
+                        : store.activeGraphBridgeIntentSummary.reasonLabel
                     }}</strong>
                     <small>
                       {{
                         store.activeGraphBridgeIntentSummary.routeLabel
-                      }} · 接管候选
-                      {{
-                        store.activeGraphBridgeIntentSummary
-                          .takeoverCandidateCount
+                      }} · {{
+                        store.activeGraphBridgeIntentSummary.reasonLabel
                       }}
+                      <template
+                        v-if="
+                          store.activeGraphBridgeIntentSummary
+                            .requestedTimingFilter
+                        "
+                      >
+                        · 触发
+                        {{
+                          store.activeGraphBridgeIntentSummary
+                            .requestedTimingLabel
+                        }}
+                      </template>
+                      <template
+                        v-if="
+                          store.activeGraphBridgeIntentSummary
+                            .timingFilteredOutGraphIds.length > 0
+                        "
+                      >
+                        · 过滤
+                        {{
+                          store.activeGraphBridgeIntentSummary
+                            .timingFilteredOutGraphIds.length
+                        }}
+                        图
+                      </template>
                     </small>
                   </article>
                   <article class="ew-summary-card ew-summary-card--env">

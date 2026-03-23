@@ -1931,12 +1931,19 @@ export interface GraphRunDiagnosticsReasonBadge<
 export interface GraphBridgeIntentSummaryViewModel {
   route: "graph" | "legacy";
   routeLabel: string;
+  reason: string;
+  reasonLabel: string;
+  requestedTimingFilter: "before_reply" | "after_reply" | null;
+  requestedTimingLabel: string;
   graphIntent: "assistive" | "optional_main_takeover" | null;
   graphIntentLabel: string;
   enabledGraphCount: number;
+  configuredEnabledGraphCount: number;
   selectedGraphIds: string[];
   assistiveGraphIds: string[];
   optionalMainTakeoverGraphIds: string[];
+  timingFilteredOutGraphIds: string[];
+  timingFilteredOutGraphLabels: string[];
   takeoverCandidateCount: number;
 }
 

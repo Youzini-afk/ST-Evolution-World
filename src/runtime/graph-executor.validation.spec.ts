@@ -1350,9 +1350,12 @@ function assertBridgeRoute(
     route: WorkflowBridgeRouteSelection["route"];
     reason: WorkflowBridgeRouteSelection["reason"];
     enabledGraphIds: string[];
+    configuredEnabledGraphIds?: string[];
     graphIntent?: "assistive" | "optional_main_takeover";
     assistiveGraphIds?: string[];
     optionalMainTakeoverGraphIds?: string[];
+    requestedTimingFilter?: "before_reply" | "after_reply";
+    timingFilteredOutGraphIds?: string[];
     hasExplicitLegacyFlowSelection: boolean;
   },
 ): void {
@@ -1374,6 +1377,13 @@ function assertBridgeRoute(
       expected.enabledGraphIds.join(","),
     `Expected enabled graph ids to be ${expected.enabledGraphIds.join(",")}. Actual: ${actual.enabledGraphs.map((graph) => graph.id).join(",")}`,
   );
+  if (expected.configuredEnabledGraphIds) {
+    assert(
+      actual.configuredEnabledGraphs.map((graph) => graph.id).join(",") ===
+        expected.configuredEnabledGraphIds.join(","),
+      `Expected configured enabled graph ids to be ${expected.configuredEnabledGraphIds.join(",")}. Actual: ${actual.configuredEnabledGraphs.map((graph) => graph.id).join(",")}`,
+    );
+  }
   if (expected.graphIntent) {
     assert(
       actual.graphIntent === expected.graphIntent,
@@ -1394,6 +1404,19 @@ function assertBridgeRoute(
       `Expected optional main takeover graph ids to be ${expected.optionalMainTakeoverGraphIds.join(",")}. Actual: ${actual.optionalMainTakeoverGraphs.map((graph) => graph.id).join(",")}`,
     );
   }
+  if (expected.requestedTimingFilter) {
+    assert(
+      actual.requestedTimingFilter === expected.requestedTimingFilter,
+      `Expected requested timing filter to be ${expected.requestedTimingFilter}. Actual: ${actual.requestedTimingFilter}`,
+    );
+  }
+  if (expected.timingFilteredOutGraphIds) {
+    assert(
+      actual.timingFilteredOutGraphs.map((graph) => graph.id).join(",") ===
+        expected.timingFilteredOutGraphIds.join(","),
+      `Expected timing filtered out graph ids to be ${expected.timingFilteredOutGraphIds.join(",")}. Actual: ${actual.timingFilteredOutGraphs.map((graph) => graph.id).join(",")}`,
+    );
+  }
 }
 
 function assertBridgeDiagnostics(
@@ -1403,10 +1426,13 @@ function assertBridgeDiagnostics(
     reason: WorkflowBridgeRouteSelection["reason"];
     hasExplicitLegacyFlowSelection: boolean;
     enabledGraphCount: number;
+    configuredEnabledGraphCount?: number;
+    requestedTimingFilter?: "before_reply" | "after_reply";
     selectedGraphIds?: string[];
     graphIntent?: "assistive" | "optional_main_takeover";
     assistiveGraphIds?: string[];
     optionalMainTakeoverGraphIds?: string[];
+    timingFilteredOutGraphIds?: string[];
     failureOrigin?:
       | "graph_dispatch"
       | "legacy_dispatch"
@@ -1440,6 +1466,14 @@ function assertBridgeDiagnostics(
   assert(
     bridge.enabled_graph_count === expected.enabledGraphCount,
     `Expected bridge enabled_graph_count to be ${expected.enabledGraphCount}. Actual: ${bridge.enabled_graph_count}`,
+  );
+  assert(
+    bridge.configured_enabled_graph_count === expected.configuredEnabledGraphCount,
+    `Expected bridge configured_enabled_graph_count to be ${expected.configuredEnabledGraphCount}. Actual: ${bridge.configured_enabled_graph_count}`,
+  );
+  assert(
+    bridge.requested_timing_filter === expected.requestedTimingFilter,
+    `Expected bridge requested_timing_filter to be ${expected.requestedTimingFilter}. Actual: ${bridge.requested_timing_filter}`,
   );
 
   if (expected.route === "graph") {
@@ -1500,6 +1534,14 @@ function assertBridgeDiagnostics(
     );
   }
 
+  if (expected.timingFilteredOutGraphIds) {
+    assert(
+      JSON.stringify(bridge.timing_filtered_out_graph_ids) ===
+        JSON.stringify(expected.timingFilteredOutGraphIds),
+      `Expected timing_filtered_out_graph_ids to be ${JSON.stringify(expected.timingFilteredOutGraphIds)}. Actual: ${JSON.stringify(bridge.timing_filtered_out_graph_ids)}`,
+    );
+  }
+
   assert(
     bridge.failure_origin === expected.failureOrigin,
     `Expected bridge failure_origin to be ${expected.failureOrigin}. Actual: ${bridge.failure_origin}`,
@@ -1555,10 +1597,13 @@ function assertRunSummaryBridgeContract(
     bridgeReason: WorkflowBridgeRouteSelection["reason"];
     hasExplicitLegacyFlowSelection: boolean;
     enabledGraphCount: number;
+    configuredEnabledGraphCount?: number;
+    requestedTimingFilter?: "before_reply" | "after_reply";
     selectedGraphIds?: string[];
     graphIntent?: "assistive" | "optional_main_takeover";
     assistiveGraphIds?: string[];
     optionalMainTakeoverGraphIds?: string[];
+    timingFilteredOutGraphIds?: string[];
     failureOrigin?:
       | "graph_dispatch"
       | "legacy_dispatch"
@@ -1591,10 +1636,13 @@ function assertRunSummaryBridgeContract(
     reason: expected.bridgeReason,
     hasExplicitLegacyFlowSelection: expected.hasExplicitLegacyFlowSelection,
     enabledGraphCount: expected.enabledGraphCount,
+    configuredEnabledGraphCount: expected.configuredEnabledGraphCount,
+    requestedTimingFilter: expected.requestedTimingFilter,
     selectedGraphIds: expected.selectedGraphIds,
     graphIntent: expected.graphIntent,
     assistiveGraphIds: expected.assistiveGraphIds,
     optionalMainTakeoverGraphIds: expected.optionalMainTakeoverGraphIds,
+    timingFilteredOutGraphIds: expected.timingFilteredOutGraphIds,
     failureOrigin: expected.failureOrigin,
   });
   assert(
@@ -6489,9 +6537,12 @@ async function runValidationSpec(): Promise<void> {
     route: "graph",
     reason: "graph_first",
     enabledGraphIds: ["graph_before_reply"],
+    configuredEnabledGraphIds: ["graph_test", "graph_before_reply"],
     graphIntent: "assistive",
     assistiveGraphIds: ["graph_before_reply"],
     optionalMainTakeoverGraphIds: [],
+    requestedTimingFilter: "before_reply",
+    timingFilteredOutGraphIds: ["graph_test"],
     hasExplicitLegacyFlowSelection: false,
   });
 
@@ -6509,6 +6560,9 @@ async function runValidationSpec(): Promise<void> {
     route: "legacy",
     reason: "no_graph_for_timing",
     enabledGraphIds: [],
+    configuredEnabledGraphIds: ["graph_test"],
+    requestedTimingFilter: "before_reply",
+    timingFilteredOutGraphIds: ["graph_test"],
     hasExplicitLegacyFlowSelection: false,
   });
 
@@ -6630,10 +6684,13 @@ async function runValidationSpec(): Promise<void> {
       reason: "graph_first",
       hasExplicitLegacyFlowSelection: false,
       enabledGraphCount: 1,
+      configuredEnabledGraphCount: 2,
+      requestedTimingFilter: "before_reply",
       selectedGraphIds: ["graph_before_reply"],
       graphIntent: "assistive",
       assistiveGraphIds: ["graph_before_reply"],
       optionalMainTakeoverGraphIds: [],
+      timingFilteredOutGraphIds: ["graph_test"],
     },
   );
   assertBridgeDiagnostics(
@@ -6643,6 +6700,9 @@ async function runValidationSpec(): Promise<void> {
       reason: "no_graph_for_timing",
       hasExplicitLegacyFlowSelection: false,
       enabledGraphCount: 0,
+      configuredEnabledGraphCount: 1,
+      requestedTimingFilter: "before_reply",
+      timingFilteredOutGraphIds: ["graph_test"],
     },
   );
   assertBridgeDiagnostics(
@@ -8250,8 +8310,25 @@ async function runValidationSpec(): Promise<void> {
       bridgeReason: "no_graph_for_timing",
       hasExplicitLegacyFlowSelection: false,
       enabledGraphCount: 0,
+      configuredEnabledGraphCount: 1,
+      requestedTimingFilter: "before_reply",
+      timingFilteredOutGraphIds: ["graph_test"],
       hasFailure: false,
     },
+  );
+  const noGraphForTimingBridgeSummaryForStore =
+    useEwStore().activeGraphBridgeIntentSummary;
+  assert(
+    noGraphForTimingBridgeSummaryForStore?.reason === "no_graph_for_timing" &&
+      noGraphForTimingBridgeSummaryForStore.requestedTimingFilter ===
+        "before_reply" &&
+      noGraphForTimingBridgeSummaryForStore.timingFilteredOutGraphIds.join(
+        ",",
+      ) === "graph_test" &&
+      noGraphForTimingBridgeSummaryForStore.timingFilteredOutGraphLabels.join(
+        ",",
+      ) === "graph_test",
+    `Expected store bridge intent summary to expose timing-filtered graph context. Actual: ${JSON.stringify(noGraphForTimingBridgeSummaryForStore)}`,
   );
 
   const legacyGlobalSummaryRaw = {
@@ -8458,6 +8535,9 @@ async function runValidationSpec(): Promise<void> {
         reason: "graph_first",
         has_explicit_legacy_flow_selection: false,
         enabled_graph_count: 2,
+        configured_enabled_graph_count: 3,
+        requested_timing_filter: "before_reply",
+        timing_filtered_out_graph_ids: ["graph_c"],
         graph_context: {
           selected_graph_ids: ["graph_a", "graph_b"],
         },
@@ -8484,6 +8564,14 @@ async function runValidationSpec(): Promise<void> {
       ?.has_explicit_legacy_flow_selection === false &&
       whitelistedBridgeSummary?.diagnostics?.bridge?.enabled_graph_count ===
         2 &&
+      whitelistedBridgeSummary?.diagnostics?.bridge
+        ?.configured_enabled_graph_count === 3 &&
+      whitelistedBridgeSummary?.diagnostics?.bridge
+        ?.requested_timing_filter === "before_reply" &&
+      JSON.stringify(
+        whitelistedBridgeSummary?.diagnostics?.bridge
+          ?.timing_filtered_out_graph_ids,
+      ) === JSON.stringify(["graph_c"]) &&
       JSON.stringify(
         whitelistedBridgeSummary?.diagnostics?.bridge?.selected_graph_ids,
       ) === JSON.stringify(["graph_a", "graph_b"]) &&
