@@ -248,6 +248,7 @@
 
         <EwNodePropertyPanel
           :node="editingNode"
+          :builder-mode="props.graph?.runtimeMeta?.builderMode ?? 'advanced'"
           @close="clearSelection"
           @update-config="onUpdateConfig"
         />

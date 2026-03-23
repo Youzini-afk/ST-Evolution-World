@@ -501,6 +501,7 @@
         <!-- Property panel -->
         <EwNodePropertyPanel
           :node="editingNode"
+          builder-mode="advanced"
           @close="editingNode = null"
           @update-config="onUpdateConfig"
         />

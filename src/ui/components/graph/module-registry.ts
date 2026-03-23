@@ -73,6 +73,7 @@ function buildSchemaFieldSummaries(
   return (module.configSchema ?? []).map((field) => ({
     key: field.key,
     label: field.label,
+    required: field.required,
     defaultValueHint: formatDefaultValueHint(module.defaultConfig[field.key]),
     description: field.description,
   }));
@@ -326,6 +327,24 @@ const SOURCE_MODULES: ModuleBlueprint[] = [
       context_turns: 8,
       include_system: false,
     },
+    configSchema: [
+      {
+        key: "context_turns",
+        label: "上下文轮数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: true,
+        description: "向前读取最近多少轮聊天历史消息。",
+      },
+      {
+        key: "include_system",
+        label: "包含系统消息",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "是否把系统消息一并带入历史消息列表。",
+      },
+    ],
   },
   {
     moduleId: "src_worldbook_raw",
@@ -754,6 +773,19 @@ const COMPOSE_MODULES: ModuleBlueprint[] = [
     defaultConfig: {
       template: "",
     },
+    configSchema: [
+      {
+        key: "template",
+        label: "模板文本",
+        type: "textarea",
+        rows: 8,
+        exposeInSimpleMode: false,
+        placeholder:
+          '{\n  "chat_id": "{{chat_id}}",\n  "trigger": "{{trigger}}"\n}',
+        description:
+          "Mustache 风格 JSON 模板，适合做 body 结构试验与占位替换。",
+      },
+    ],
   },
 ];
 
@@ -949,6 +981,17 @@ const OUTPUT_MODULES: ModuleBlueprint[] = [
           },
         ],
       },
+      configSchema: [
+        {
+          key: "target_slot",
+          label: "目标槽位",
+          type: "text",
+          required: true,
+          exposeInSimpleMode: false,
+          placeholder: "reply.instruction",
+          description: "说明当前宿主写入目标槽位，默认写入 reply.instruction。",
+        },
+      ],
     },
     {
       kind: "host_write",
@@ -1008,6 +1051,65 @@ const CONFIG_MODULES: ModuleBlueprint[] = [
       api_source: "openai",
       headers_json: "",
     },
+    configSchema: [
+      {
+        key: "use_main_api",
+        label: "使用主 API",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "启用后优先走酒馆主 API / LLM connector。",
+      },
+      {
+        key: "api_url",
+        label: "API 地址",
+        type: "text",
+        exposeInSimpleMode: true,
+        placeholder: "https://api.example.com/v1",
+        description: "workflow_http 模式下的请求地址。",
+      },
+      {
+        key: "api_key",
+        label: "API Key",
+        type: "text",
+        exposeInSimpleMode: true,
+        secret: true,
+        placeholder: "sk-...",
+        description: "将以密码输入框渲染，不在面板中明文展示。",
+      },
+      {
+        key: "model",
+        label: "模型名",
+        type: "text",
+        exposeInSimpleMode: true,
+        placeholder: "gpt-4.1 / gemini / claude ...",
+        description: "发送给目标后端的模型名。",
+      },
+      {
+        key: "mode",
+        label: "连接模式",
+        type: "select",
+        options: ["workflow_http", "llm_connector"],
+        exposeInSimpleMode: false,
+        description: "workflow_http 为直连，llm_connector 为走酒馆连接器。",
+      },
+      {
+        key: "api_source",
+        label: "API Source",
+        type: "text",
+        exposeInSimpleMode: false,
+        placeholder: "openai",
+        description: "用于部分宿主分支的来源标记。",
+      },
+      {
+        key: "headers_json",
+        label: "附加请求头",
+        type: "textarea",
+        rows: 5,
+        exposeInSimpleMode: false,
+        placeholder: '{\n  "X-Trace": "demo"\n}',
+        description: "额外请求头，要求是合法 JSON 对象字符串。",
+      },
+    ],
   },
   {
     moduleId: "cfg_generation",
@@ -1036,6 +1138,89 @@ const CONFIG_MODULES: ModuleBlueprint[] = [
       n_candidates: 1,
       unlock_context_length: false,
     },
+    configSchema: [
+      {
+        key: "temperature",
+        label: "Temperature",
+        type: "slider",
+        min: 0,
+        max: 2,
+        step: 0.01,
+        exposeInSimpleMode: true,
+        description: "采样温度，越高越发散。",
+      },
+      {
+        key: "top_p",
+        label: "Top P",
+        type: "slider",
+        min: 0,
+        max: 1,
+        step: 0.01,
+        exposeInSimpleMode: true,
+        description: "核采样阈值。",
+      },
+      {
+        key: "max_reply_tokens",
+        label: "最大回复 Token",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: true,
+        description: "单次回复允许的最大 token 数。",
+      },
+      {
+        key: "stream",
+        label: "流式输出",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "是否请求流式输出。",
+      },
+      {
+        key: "frequency_penalty",
+        label: "Frequency Penalty",
+        type: "slider",
+        min: 0,
+        max: 2,
+        step: 0.01,
+        exposeInSimpleMode: false,
+        description: "频率惩罚。",
+      },
+      {
+        key: "presence_penalty",
+        label: "Presence Penalty",
+        type: "slider",
+        min: 0,
+        max: 2,
+        step: 0.01,
+        exposeInSimpleMode: false,
+        description: "存在惩罚。",
+      },
+      {
+        key: "max_context_tokens",
+        label: "最大上下文 Token",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "允许的上下文长度上限。",
+      },
+      {
+        key: "n_candidates",
+        label: "候选数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "请求的候选回复数量。",
+      },
+      {
+        key: "unlock_context_length",
+        label: "解锁上下文长度",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "允许使用更长上下文长度。",
+      },
+    ],
   },
   {
     moduleId: "cfg_behavior",
@@ -1062,6 +1247,67 @@ const CONFIG_MODULES: ModuleBlueprint[] = [
       reasoning_effort: "auto",
       verbosity: "auto",
     },
+    configSchema: [
+      {
+        key: "request_thinking",
+        label: "请求思考内容",
+        type: "boolean",
+        exposeInSimpleMode: true,
+        description: "向支持的后端请求 reasoning / thinking 内容。",
+      },
+      {
+        key: "reasoning_effort",
+        label: "Reasoning Effort",
+        type: "select",
+        options: ["auto", "low", "medium", "high"],
+        exposeInSimpleMode: true,
+        description: "推理强度提示。",
+      },
+      {
+        key: "verbosity",
+        label: "Verbosity",
+        type: "select",
+        options: ["auto", "low", "medium", "high"],
+        exposeInSimpleMode: true,
+        description: "输出冗长度提示。",
+      },
+      {
+        key: "name_behavior",
+        label: "Name Behavior",
+        type: "select",
+        options: ["none", "default", "complete_target", "message_content"],
+        exposeInSimpleMode: false,
+        description: "名字字段拼装策略。",
+      },
+      {
+        key: "continue_prefill",
+        label: "Continue Prefill",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "继续预填充已有 assistant 内容。",
+      },
+      {
+        key: "squash_system_messages",
+        label: "压缩系统消息",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "合并系统消息，降低消息数量。",
+      },
+      {
+        key: "enable_function_calling",
+        label: "启用 Function Calling",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用函数调用能力。",
+      },
+      {
+        key: "send_inline_media",
+        label: "发送内联媒体",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "向支持的模型发送内联媒体。",
+      },
+    ],
   },
   {
     moduleId: "cfg_timing",
@@ -1311,7 +1557,20 @@ const MODULE_METADATA_PILOT_BY_ID: Readonly<
 const ALL_MODULES: ModuleBlueprint[] = ALL_MODULES_BASE.map((module) => {
   const pilotMetadata = MODULE_METADATA_PILOT_BY_ID[module.moduleId];
   if (!pilotMetadata) {
-    return module;
+    const hasConfigFactSurface =
+      (module.configSchema?.length ?? 0) > 0 ||
+      (module.configMetadata?.schemaFields?.length ?? 0) > 0;
+    if (!hasConfigFactSurface) {
+      return module;
+    }
+    return withMetadataSurface(module, {
+      semantic: {
+        runtimeKind: module.runtimeMeta?.runtimeKind,
+        capability: module.runtimeMeta?.capability,
+        sideEffect: module.runtimeMeta?.sideEffect,
+        hostWriteHint: module.runtimeMeta?.hostTargetHint,
+      },
+    });
   }
   return withMetadataSurface(module, {
     semantic: {

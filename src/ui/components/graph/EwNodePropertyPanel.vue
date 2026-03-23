@@ -31,12 +31,133 @@
         <!-- Config fields -->
         <div class="ew-prop-panel__section">
           <div class="ew-prop-panel__section-title">配置</div>
-          <div v-if="configEntries.length === 0" class="ew-prop-panel__empty">
+          <div v-if="showSimpleModeHint" class="ew-prop-panel__hint">
+            当前为 Simple 模式，仅显示推荐配置字段。
+          </div>
+          <div
+            v-if="visibleSchemaFields.length === 0 && fallbackConfigEntries.length === 0"
+            class="ew-prop-panel__empty"
+          >
             此模块无可配置参数
           </div>
-          <div v-for="[key, val] in configEntries" :key="key" class="ew-prop-panel__field">
+          <div
+            v-for="field in visibleSchemaFields"
+            :key="field.key"
+            class="ew-prop-panel__field"
+          >
+            <div class="ew-prop-panel__field-label-row">
+              <label class="ew-prop-panel__field-label">{{ field.label }}</label>
+              <span
+                v-if="field.required"
+                class="ew-prop-panel__field-badge"
+              >
+                必填
+              </span>
+            </div>
+            <div
+              v-if="field.description || getDefaultHint(field.key)"
+              class="ew-prop-panel__field-help"
+            >
+              <span v-if="field.description">{{ field.description }}</span>
+              <span v-if="getDefaultHint(field.key)">
+                默认值：{{ getDefaultHint(field.key) }}
+              </span>
+            </div>
+
+            <button
+              v-if="field.type === 'boolean'"
+              type="button"
+              class="ew-prop-panel__switch"
+              :class="{ active: Boolean(localConfig[field.key]) }"
+              @click="toggleBooleanField(field.key)"
+            >
+              {{ localConfig[field.key] ? 'ON' : 'OFF' }}
+            </button>
+
+            <div
+              v-else-if="field.type === 'slider'"
+              class="ew-prop-panel__slider"
+            >
+              <input
+                type="range"
+                class="ew-prop-panel__slider-input"
+                :min="field.min ?? 0"
+                :max="field.max ?? 100"
+                :step="field.step ?? 1"
+                v-model.number="localConfig[field.key]"
+                @change="emitConfig()"
+              />
+              <span class="ew-prop-panel__slider-value">
+                {{ localConfig[field.key] }}
+              </span>
+            </div>
+
+            <select
+              v-else-if="field.type === 'select'"
+              class="ew-prop-panel__select"
+              v-model="localConfig[field.key]"
+              @change="emitConfig()"
+            >
+              <option
+                v-for="option in field.options ?? []"
+                :key="`${field.key}-${option}`"
+                :value="option"
+              >
+                {{ option }}
+              </option>
+            </select>
+
+            <input
+              v-else-if="field.type === 'number'"
+              type="number"
+              class="ew-prop-panel__input"
+              :min="field.min"
+              :max="field.max"
+              :step="field.step ?? 1"
+              v-model.number="localConfig[field.key]"
+              @change="emitConfig()"
+            />
+
+            <textarea
+              v-else-if="field.type === 'textarea'"
+              class="ew-prop-panel__textarea"
+              :rows="field.rows ?? 4"
+              :placeholder="field.placeholder"
+              v-model="localConfig[field.key]"
+              @change="emitConfig()"
+            />
+
+            <textarea
+              v-else-if="field.type === 'json'"
+              class="ew-prop-panel__textarea ew-prop-panel__textarea--json"
+              :rows="field.rows ?? 5"
+              :placeholder="field.placeholder"
+              :value="toJsonFieldValue(field.key)"
+              @change="onJsonChange(field.key, ($event.target as HTMLTextAreaElement).value)"
+            />
+
+            <input
+              v-else
+              :type="field.secret ? 'password' : 'text'"
+              class="ew-prop-panel__input"
+              :placeholder="field.placeholder"
+              v-model="localConfig[field.key]"
+              @change="emitConfig()"
+            />
+          </div>
+
+          <div
+            v-if="fallbackConfigEntries.length > 0"
+            class="ew-prop-panel__section-subtitle"
+          >
+            其他配置
+          </div>
+          <div
+            v-for="[key, val] in fallbackConfigEntries"
+            :key="key"
+            class="ew-prop-panel__field"
+          >
             <label class="ew-prop-panel__field-label">{{ key }}</label>
-            <!-- Boolean -->
             <button
               v-if="typeof val === 'boolean'"
               type="button"
@@ -46,7 +167,6 @@
             >
               {{ localConfig[key] ? 'ON' : 'OFF' }}
             </button>
-            <!-- Number -->
             <input
               v-else-if="typeof val === 'number'"
               type="number"
@@ -54,7 +174,6 @@
               v-model.number="localConfig[key]"
               @change="emitConfig()"
             />
-            <!-- String (textarea for multiline) -->
             <textarea
               v-else-if="typeof val === 'string' && val.length > 80"
               class="ew-prop-panel__textarea"
@@ -62,7 +181,6 @@
               @change="emitConfig()"
               rows="4"
             />
-            <!-- String (input) -->
             <input
               v-else-if="typeof val === 'string'"
               type="text"
@@ -70,7 +188,6 @@
               v-model="localConfig[key]"
               @change="emitConfig()"
             />
-            <!-- Array / Object — JSON editor -->
             <textarea
               v-else
               class="ew-prop-panel__textarea ew-prop-panel__textarea--json"
@@ -103,21 +220,40 @@
 </template>
 
 <script setup lang="ts">
-import type { WorkbenchNode, ModuleBlueprint } from './module-types';
-import { MODULE_REGISTRY, resolveModuleConfigWithDefaults } from './module-registry';
+import type {
+  ConfigFieldSchema,
+  ModuleBlueprint,
+  WorkbenchBuilderMode,
+  WorkbenchNode,
+} from "./module-types";
+import {
+  MODULE_REGISTRY,
+  getModuleMetadataSurface,
+  resolveModuleConfigWithDefaults,
+} from "./module-registry";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   node: WorkbenchNode | null;
-}>();
+  builderMode?: WorkbenchBuilderMode;
+}>(), {
+  builderMode: "advanced",
+});
 
 const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'update-config', nodeId: string, config: Record<string, any>): void;
+  (e: "close"): void;
+  (e: "update-config", nodeId: string, config: Record<string, any>): void;
 }>();
 
 const blueprint = computed<ModuleBlueprint | null>(() => {
   if (!props.node) return null;
   return MODULE_REGISTRY.get(props.node.moduleId) ?? null;
+});
+
+const metadata = computed(() => {
+  if (!props.node) {
+    return null;
+  }
+  return getModuleMetadataSurface(props.node.moduleId) ?? null;
 });
 
 const localConfig = reactive<Record<string, any>>({});
@@ -143,13 +279,58 @@ watch(
 const configEntries = computed(() => {
   return Object.entries(localConfig).filter(([key]) => {
     // Filter out internal keys
-    return !key.startsWith('_');
+    return !key.startsWith("_");
   });
+});
+
+const configSchema = computed<ConfigFieldSchema[]>(() => {
+  if (blueprint.value?.configSchema?.length) {
+    return blueprint.value.configSchema;
+  }
+  return (metadata.value?.config?.schemaFields ?? []).map((field) => ({
+    key: field.key,
+    label: field.label,
+    type: "text",
+    required: field.required,
+    placeholder: field.defaultValueHint,
+    description: field.description,
+  }));
+});
+
+const visibleSchemaFields = computed(() => {
+  if (configSchema.value.length === 0) {
+    return [];
+  }
+  if (props.builderMode !== "simple") {
+    return configSchema.value;
+  }
+  const recommendedFields = configSchema.value.filter(
+    (field) => field.exposeInSimpleMode === true,
+  );
+  return recommendedFields.length > 0 ? recommendedFields : configSchema.value;
+});
+
+const fallbackConfigEntries = computed(() => {
+  const knownSchemaKeys = new Set(configSchema.value.map((field) => field.key));
+  if (configSchema.value.length === 0) {
+    return configEntries.value;
+  }
+  if (props.builderMode === "simple") {
+    return [];
+  }
+  return configEntries.value.filter(([key]) => !knownSchemaKeys.has(key));
+});
+
+const showSimpleModeHint = computed(() => {
+  return (
+    props.builderMode === "simple" &&
+    configSchema.value.some((field) => field.exposeInSimpleMode === true)
+  );
 });
 
 function emitConfig() {
   if (!props.node) return;
-  emit('update-config', props.node.id, { ...localConfig });
+  emit("update-config", props.node.id, { ...localConfig });
 }
 
 function onJsonChange(key: string, raw: string) {
@@ -158,6 +339,43 @@ function onJsonChange(key: string, raw: string) {
     emitConfig();
   } catch {
     // Invalid JSON, don't update
+  }
+}
+
+function toggleBooleanField(key: string) {
+  localConfig[key] = !localConfig[key];
+  emitConfig();
+}
+
+function getDefaultHint(key: string): string | undefined {
+  const schemaField = metadata.value?.config?.schemaFields?.find(
+    (field) => field.key === key,
+  );
+  if (schemaField?.defaultValueHint) {
+    return schemaField.defaultValueHint;
+  }
+  if (!blueprint.value) {
+    return undefined;
+  }
+  const rawDefault = blueprint.value.defaultConfig?.[key];
+  if (rawDefault === undefined) {
+    return undefined;
+  }
+  if (typeof rawDefault === "string") {
+    return rawDefault.length > 0 ? rawDefault : '""';
+  }
+  try {
+    return JSON.stringify(rawDefault);
+  } catch {
+    return String(rawDefault);
+  }
+}
+
+function toJsonFieldValue(key: string): string {
+  try {
+    return JSON.stringify(localConfig[key], null, 2);
+  } catch {
+    return "";
   }
 }
 </script>
@@ -312,8 +530,34 @@ function onJsonChange(key: string, raw: string) {
   padding: 6px 0;
 }
 
+.ew-prop-panel__hint {
+  margin-bottom: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.12);
+  color: rgba(191, 219, 254, 0.92);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ew-prop-panel__section-subtitle {
+  margin: 10px 0 6px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.28);
+}
+
 .ew-prop-panel__field {
   margin-bottom: 8px;
+}
+
+.ew-prop-panel__field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
 }
 
 .ew-prop-panel__field-label {
@@ -321,7 +565,29 @@ function onJsonChange(key: string, raw: string) {
   font-size: 10px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 3px;
+}
+
+.ew-prop-panel__field-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ew-prop-panel__field-help {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 5px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.38);
 }
 
 .ew-prop-panel__input {
@@ -337,6 +603,22 @@ function onJsonChange(key: string, raw: string) {
 }
 
 .ew-prop-panel__input:focus {
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.ew-prop-panel__select {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.ew-prop-panel__select:focus {
   border-color: rgba(99, 102, 241, 0.5);
 }
 
@@ -380,6 +662,24 @@ function onJsonChange(key: string, raw: string) {
   background: rgba(16, 185, 129, 0.2);
   border-color: rgba(16, 185, 129, 0.4);
   color: #10b981;
+}
+
+.ew-prop-panel__slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ew-prop-panel__slider-input {
+  flex: 1;
+}
+
+.ew-prop-panel__slider-value {
+  min-width: 40px;
+  text-align: right;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: "Consolas", "Monaco", monospace;
 }
 
 /* Meta section */

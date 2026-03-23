@@ -59,6 +59,10 @@ export interface ConfigFieldSchema {
   min?: number;
   max?: number;
   step?: number; // for slider/number
+  required?: boolean;
+  exposeInSimpleMode?: boolean;
+  secret?: boolean;
+  rows?: number;
   description?: string; // tooltip / help text
   placeholder?: string; // input placeholder
 }

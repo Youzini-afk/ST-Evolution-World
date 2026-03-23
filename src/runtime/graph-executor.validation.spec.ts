@@ -8621,6 +8621,13 @@ async function runValidationSpec(): Promise<void> {
   const sourceMetadata = getModuleMetadataSurface("src_user_input");
   const filterMetadata = getModuleMetadataSurface("flt_mvu_strip");
   const outputMetadata = getModuleMetadataSurface("out_reply_inject");
+  const apiPresetMetadata = getModuleMetadataSurface("cfg_api_preset");
+  const generationMetadata = getModuleMetadataSurface("cfg_generation");
+  const behaviorMetadata = getModuleMetadataSurface("cfg_behavior");
+  const requestTemplateMetadata = getModuleMetadataSurface(
+    "cmp_request_template",
+  );
+  const historyMetadata = getModuleMetadataSurface("src_chat_history");
   assert(
     sourceMetadata?.semantic.capability === "source" &&
       sourceMetadata.help?.summary === "读取当前触发图执行的用户输入文本。" &&
@@ -8654,13 +8661,44 @@ async function runValidationSpec(): Promise<void> {
       outputMetadata.constraints?.inputs?.[0]?.summary?.includes("指令文本"),
     `Expected out_reply_inject metadata pilot summary to carry host write hint. Actual: ${JSON.stringify(outputMetadata)}`,
   );
+  assert(
+    apiPresetMetadata?.config?.schemaFields?.some(
+      (field) => field.key === "api_key",
+    ) &&
+      apiPresetMetadata.config.schemaFields.some(
+        (field) => field.key === "model",
+      ) &&
+      apiPresetMetadata.explain?.config.allowedConfigKeys.includes("api_url") &&
+      generationMetadata?.config?.schemaFields?.some(
+        (field) => field.key === "temperature",
+      ) &&
+      generationMetadata.explain?.config.allowedConfigKeys.includes(
+        "max_reply_tokens",
+      ) &&
+      behaviorMetadata?.config?.schemaFields?.some(
+        (field) => field.key === "reasoning_effort",
+      ) &&
+      requestTemplateMetadata?.config?.schemaFields?.some(
+        (field) => field.key === "template",
+      ) &&
+      historyMetadata?.config?.schemaFields?.some(
+        (field) => field.key === "context_turns",
+      ),
+    `Expected high-frequency builder nodes to expose schema-driven config facts via shared metadata surface. Actual api=${JSON.stringify(apiPresetMetadata)} gen=${JSON.stringify(generationMetadata)} behavior=${JSON.stringify(behaviorMetadata)} template=${JSON.stringify(requestTemplateMetadata)} history=${JSON.stringify(historyMetadata)}`,
+  );
 
   const sourceExplain = getModuleExplainContract("src_user_input");
   const filterExplain = getModuleExplainContract("flt_mvu_strip");
   const outputExplain = getModuleExplainContract("out_reply_inject");
+  const apiPresetExplain = getModuleExplainContract("cfg_api_preset");
+  const requestTemplateExplain = getModuleExplainContract(
+    "cmp_request_template",
+  );
   const sourceMetadataSummary = getModuleMetadataSummary("src_user_input");
   const filterMetadataSummary = getModuleMetadataSummary("flt_mvu_strip");
   const outputMetadataSummary = getModuleMetadataSummary("out_reply_inject");
+  const apiPresetMetadataSummary = getModuleMetadataSummary("cfg_api_preset");
+  const generationMetadataSummary = getModuleMetadataSummary("cfg_generation");
   assert(
     filterExplain?.ports.inputs[0]?.summary.includes("期望单段文本输入") &&
       filterExplain?.ports.outputs[0]?.summary.includes("净化文本") &&
@@ -8683,6 +8721,18 @@ async function runValidationSpec(): Promise<void> {
       outputMetadataSummary?.diagnosticsLabel ===
         "reply_instruction:inject_reply_instruction",
     `Expected registry metadata summary helper to reuse host write diagnostics label from explain contract. Actual explain=${JSON.stringify(outputExplain)} summary=${JSON.stringify(outputMetadataSummary)}`,
+  );
+  assert(
+    apiPresetExplain?.config.allowedConfigKeys.includes("api_key") &&
+      apiPresetExplain?.config.allowedConfigKeys.includes("model") &&
+      requestTemplateExplain?.config.allowedConfigKeys.includes("template") &&
+      apiPresetMetadataSummary?.configFields?.some(
+        (field) => field.key === "api_url",
+      ) &&
+      generationMetadataSummary?.configFields?.some(
+        (field) => field.key === "temperature",
+      ),
+    `Expected builder-facing metadata summary helpers and explain contracts to reuse high-frequency schema facts. Actual apiExplain=${JSON.stringify(apiPresetExplain)} requestTemplateExplain=${JSON.stringify(requestTemplateExplain)} apiSummary=${JSON.stringify(apiPresetMetadataSummary)} genSummary=${JSON.stringify(generationMetadataSummary)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===
