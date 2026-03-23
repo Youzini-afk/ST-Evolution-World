@@ -69,6 +69,7 @@ function toReasonKind(
   fallback: GraphExecutionFrontierReasonKindV1 = "unknown",
 ): GraphExecutionFrontierReasonKindV1 {
   return value === "all_prerequisites_satisfied_but_not_executed" ||
+    value === "control_flow_inactive" ||
     value === "dependency_not_ready" ||
     value === "missing_or_unresolved_input" ||
     value === "non_terminal_blocked" ||
@@ -122,6 +123,7 @@ function createEmptyReasonCounts(): Record<
 > {
   return {
     all_prerequisites_satisfied_but_not_executed: 0,
+    control_flow_inactive: 0,
     dependency_not_ready: 0,
     missing_or_unresolved_input: 0,
     non_terminal_blocked: 0,
@@ -476,6 +478,17 @@ function inferNodeRecord(params: {
       ...base,
       frontierDisposition: "ready_frontier",
       primaryReasonKind: "all_prerequisites_satisfied_but_not_executed",
+    };
+  }
+
+  if (
+    dependencyReadinessReason === "control_flow_inactive" ||
+    nodeExecutionReason === "control_flow_inactive"
+  ) {
+    return {
+      ...base,
+      frontierDisposition: "blocked_non_terminal",
+      primaryReasonKind: "control_flow_inactive",
     };
   }
 

@@ -2824,6 +2824,94 @@ async function runValidationSpec(): Promise<void> {
     `Expected ctl_join(all) to keep final execution blocked when only one branch completes. Actual: results=${exclusiveJoinAllResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")} ctl_join=${JSON.stringify(exclusiveJoinAllCtlResult)} final=${JSON.stringify(exclusiveJoinAllResult.finalOutputs)}`,
   );
 
+  const controlCompileRunLinkEnvelope =
+    createGraphCompileRunLinkArtifactEnvelope({
+      plan: exclusiveJoinAllResult.compilePlan,
+      runArtifact: exclusiveJoinAllResult.runArtifact,
+      result: exclusiveJoinAllResult,
+    });
+  const controlReuseExplainEnvelope = createGraphReuseExplainArtifactEnvelope({
+    plan: exclusiveJoinAllResult.compilePlan,
+    runArtifact: exclusiveJoinAllResult.runArtifact,
+    result: exclusiveJoinAllResult,
+    compileRunLinkArtifact: controlCompileRunLinkEnvelope?.artifact ?? null,
+  });
+  const controlNodeDispositionEnvelope =
+    createGraphNodeExecutionDispositionExplainArtifactEnvelope({
+      plan: exclusiveJoinAllResult.compilePlan,
+      runArtifact: exclusiveJoinAllResult.runArtifact,
+      compileRunLinkArtifact: controlCompileRunLinkEnvelope?.artifact ?? null,
+      inputResolutionArtifact:
+        exclusiveJoinAllResult.inputResolutionArtifact ?? null,
+      reuseExplainArtifact: controlReuseExplainEnvelope?.artifact ?? null,
+      failureExplainArtifact: null,
+      terminalOutcomeExplainArtifact: null,
+      blockingExplainArtifact: null,
+    });
+  const controlNodeDispositionFinal =
+    controlNodeDispositionEnvelope?.artifact.nodes.find(
+      (node) => node.nodeId === "final_filter",
+    );
+  assert(
+    controlNodeDispositionEnvelope?.artifact.summary.reasonCounts
+      .control_flow_inactive === 2 &&
+      controlNodeDispositionFinal?.disposition === "blocked" &&
+      controlNodeDispositionFinal.primaryReasonKind ===
+        "control_flow_inactive" &&
+      controlNodeDispositionFinal.reuseDecision === "inactive_control_flow",
+    `Expected node execution disposition explain artifact to preserve inactive control flow as a blocked control reason. Actual: ${JSON.stringify(controlNodeDispositionEnvelope?.artifact)}`,
+  );
+
+  const controlDependencyReadinessEnvelope =
+    createGraphDependencyReadinessExplainArtifactEnvelope({
+      plan: exclusiveJoinAllResult.compilePlan,
+      runArtifact: exclusiveJoinAllResult.runArtifact,
+      compileRunLinkArtifact: controlCompileRunLinkEnvelope?.artifact ?? null,
+      inputResolutionArtifact:
+        exclusiveJoinAllResult.inputResolutionArtifact ?? null,
+      nodeExecutionDispositionExplainArtifact:
+        controlNodeDispositionEnvelope?.artifact ?? null,
+      failureExplainArtifact: null,
+      blockingExplainArtifact: null,
+    });
+  const controlDependencyFinal =
+    controlDependencyReadinessEnvelope?.artifact.nodes.find(
+      (node) => node.nodeId === "final_filter",
+    );
+  assert(
+    controlDependencyReadinessEnvelope?.artifact.summary.reasonCounts
+      .control_flow_inactive === 2 &&
+      controlDependencyFinal?.readinessDisposition === "blocked_non_terminal" &&
+      controlDependencyFinal.primaryReasonKind === "control_flow_inactive",
+    `Expected dependency readiness explain artifact to preserve inactive control flow as blocked_non_terminal instead of generic input/dependency not ready. Actual: ${JSON.stringify(controlDependencyReadinessEnvelope?.artifact)}`,
+  );
+
+  const controlFrontierEnvelope = createGraphExecutionFrontierExplainArtifactEnvelope(
+    {
+      plan: exclusiveJoinAllResult.compilePlan,
+      runArtifact: exclusiveJoinAllResult.runArtifact,
+      compileRunLinkArtifact: controlCompileRunLinkEnvelope?.artifact ?? null,
+      inputResolutionArtifact:
+        exclusiveJoinAllResult.inputResolutionArtifact ?? null,
+      nodeExecutionDispositionExplainArtifact:
+        controlNodeDispositionEnvelope?.artifact ?? null,
+      dependencyReadinessExplainArtifact:
+        controlDependencyReadinessEnvelope?.artifact ?? null,
+      failureExplainArtifact: null,
+      blockingExplainArtifact: null,
+    },
+  );
+  const controlFrontierFinal = controlFrontierEnvelope?.artifact.nodes.find(
+    (node) => node.nodeId === "final_filter",
+  );
+  assert(
+    controlFrontierEnvelope?.artifact.summary.reasonCounts
+      .control_flow_inactive === 2 &&
+      controlFrontierFinal?.frontierDisposition === "blocked_non_terminal" &&
+      controlFrontierFinal.primaryReasonKind === "control_flow_inactive",
+    `Expected execution frontier explain artifact to preserve inactive control flow as a blocked frontier reason. Actual: ${JSON.stringify(controlFrontierEnvelope?.artifact)}`,
+  );
+
   const dualHostGraphFixture = makeIntegratedSmokeGraph();
   const dualHostGraph = {
     ...dualHostGraphFixture,

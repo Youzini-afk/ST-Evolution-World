@@ -79,6 +79,7 @@ function toReasonKind(
   return value === "executed_by_decision" ||
     value === "executed_despite_reuse_eligibility" ||
     value === "reuse_skip" ||
+    value === "control_flow_inactive" ||
     value === "dependency_not_reached" ||
     value === "input_missing_or_unresolved" ||
     value === "truncated_by_failure" ||
@@ -162,6 +163,7 @@ function createEmptyReasonCounts(): Record<
     executed_by_decision: 0,
     executed_despite_reuse_eligibility: 0,
     reuse_skip: 0,
+    control_flow_inactive: 0,
     dependency_not_reached: 0,
     input_missing_or_unresolved: 0,
     truncated_by_failure: 0,
@@ -534,6 +536,14 @@ function inferNodeRecord(params: {
   }
 
   if (runDisposition === "not_reached") {
+    if (reuseNode?.executionDecision === "inactive_control_flow") {
+      return {
+        ...base,
+        disposition: "blocked",
+        primaryReasonKind: "control_flow_inactive",
+      };
+    }
+
     if (
       missingInputKeys.length > 0 &&
       dependencyBlocked &&

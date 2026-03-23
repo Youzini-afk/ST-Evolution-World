@@ -886,6 +886,7 @@ export type GraphNodeExecutionReasonKindV1 =
   | "executed_by_decision"
   | "executed_despite_reuse_eligibility"
   | "reuse_skip"
+  | "control_flow_inactive"
   | "dependency_not_reached"
   | "input_missing_or_unresolved"
   | "truncated_by_failure"
@@ -957,6 +958,7 @@ export type GraphDependencyReadinessDispositionV1 =
 
 export type GraphDependencyReadinessReasonKindV1 =
   | "all_prerequisites_satisfied"
+  | "control_flow_inactive"
   | "dependency_not_ready"
   | "missing_or_unresolved_input"
   | "non_terminal_blocked"
@@ -1025,6 +1027,7 @@ export type GraphExecutionFrontierDispositionV1 =
 
 export type GraphExecutionFrontierReasonKindV1 =
   | "all_prerequisites_satisfied_but_not_executed"
+  | "control_flow_inactive"
   | "dependency_not_ready"
   | "missing_or_unresolved_input"
   | "non_terminal_blocked"
