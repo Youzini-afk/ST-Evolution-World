@@ -150,6 +150,24 @@
                     <strong>{{ store.settings.api_presets.length }}</strong>
                     <small>接口配置</small>
                   </article>
+                  <article
+                    v-if="store.activeGraphBridgeIntentSummary"
+                    class="ew-summary-card"
+                  >
+                    <h4>Graph Intent</h4>
+                    <strong>{{
+                      store.activeGraphBridgeIntentSummary.graphIntentLabel
+                    }}</strong>
+                    <small>
+                      {{
+                        store.activeGraphBridgeIntentSummary.routeLabel
+                      }} · 接管候选
+                      {{
+                        store.activeGraphBridgeIntentSummary
+                          .takeoverCandidateCount
+                      }}
+                    </small>
+                  </article>
                   <article class="ew-summary-card ew-summary-card--env">
                     <h4>环境检查</h4>
                     <strong>{{ environmentStatus.overallLabel }}</strong>

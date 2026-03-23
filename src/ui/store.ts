@@ -70,6 +70,7 @@ import {
 import { getModuleExplainContract } from "./components/graph/module-registry";
 import type {
   GraphActiveRunSummaryViewModel,
+  GraphBridgeIntentSummaryViewModel,
   GraphBlockingExplainArtifactV1,
   GraphCheckpointCandidateViewModel,
   GraphCompileArtifactV1,
@@ -994,6 +995,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   function toDiagnosticsSummaryViewModel(
     overview: GraphRunDiagnosticsOverview | null,
+    bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null,
   ): GraphRunDiagnosticsSummaryViewModel | null {
     if (!overview) {
       return null;
@@ -1101,6 +1103,87 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         overview.executionDecision?.skipReuseOutputNodeIds.length ?? 0,
       primaryReuseReasons,
       primaryExecutionDecisionReasons,
+      bridgeIntentSummary,
+    };
+  }
+
+  function toGraphBridgeIntentSummaryViewModel(
+    diagnostics: unknown,
+  ): GraphBridgeIntentSummaryViewModel | null {
+    if (!_.isPlainObject(diagnostics) || !_.isPlainObject(diagnostics.bridge)) {
+      return null;
+    }
+
+    const bridge = diagnostics.bridge as Record<string, unknown>;
+    const route = bridge.route;
+    if (route !== "graph" && route !== "legacy") {
+      return null;
+    }
+
+    const graphContext = _.isPlainObject(bridge.graph_context)
+      ? (bridge.graph_context as Record<string, unknown>)
+      : null;
+    const selectedGraphIds = Array.isArray(bridge.selected_graph_ids)
+      ? bridge.selected_graph_ids
+      : graphContext?.selected_graph_ids;
+    const assistiveGraphIds = Array.isArray(bridge.assistive_graph_ids)
+      ? bridge.assistive_graph_ids
+      : graphContext?.assistive_graph_ids;
+    const optionalMainTakeoverGraphIds = Array.isArray(
+      bridge.optional_main_takeover_graph_ids,
+    )
+      ? bridge.optional_main_takeover_graph_ids
+      : graphContext?.optional_main_takeover_graph_ids;
+    const graphIntent =
+      bridge.graph_intent ?? graphContext?.graph_intent ?? undefined;
+    const enabledGraphCount = Number(bridge.enabled_graph_count ?? 0);
+    const takeoverCandidateCount = Number(
+      bridge.takeover_candidate_count ??
+        graphContext?.takeover_candidate_count ??
+        0,
+    );
+
+    return {
+      route,
+      routeLabel: route === "graph" ? "图工作流" : "Legacy 工作流",
+      graphIntent:
+        graphIntent === "assistive" ||
+        graphIntent === "optional_main_takeover"
+          ? graphIntent
+          : null,
+      graphIntentLabel:
+        graphIntent === "optional_main_takeover"
+          ? "渐进主生成接管"
+          : graphIntent === "assistive"
+            ? "辅助工作流"
+            : route === "legacy"
+              ? "Legacy 流程"
+              : "未声明",
+      enabledGraphCount:
+        Number.isFinite(enabledGraphCount) && enabledGraphCount >= 0
+          ? Math.trunc(enabledGraphCount)
+          : 0,
+      selectedGraphIds: Array.isArray(selectedGraphIds)
+        ? selectedGraphIds
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+        : [],
+      assistiveGraphIds: Array.isArray(assistiveGraphIds)
+        ? assistiveGraphIds
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+        : [],
+      optionalMainTakeoverGraphIds: Array.isArray(
+        optionalMainTakeoverGraphIds,
+      )
+        ? optionalMainTakeoverGraphIds
+            .map((value) => String(value ?? "").trim())
+            .filter(Boolean)
+        : [],
+      takeoverCandidateCount:
+        Number.isFinite(takeoverCandidateCount) && takeoverCandidateCount >= 0
+          ? Math.trunc(takeoverCandidateCount)
+          : 0,
     };
   }
 
@@ -1649,6 +1732,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     artifact: GraphRunArtifact | null,
     diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null,
     nodeDiagnostics: GraphNodeDiagnosticsViewModel | null,
+    bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null,
   ): GraphActiveRunSummaryViewModel | null {
     if (!artifact) {
       return null;
@@ -1681,6 +1765,15 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     const checkpointCandidate = toCheckpointCandidateViewModel(
       artifact.checkpointCandidate,
     );
+    const generationOwnership =
+      bridgeIntentSummary?.optionalMainTakeoverGraphIds.includes(
+        artifact.graphId,
+      )
+        ? "optional_main_takeover"
+        : bridgeIntentSummary?.assistiveGraphIds.includes(artifact.graphId) ||
+            bridgeIntentSummary?.selectedGraphIds.includes(artifact.graphId)
+          ? "assistive"
+          : null;
 
     const phaseLabels: Record<GraphRunPhase, string> = {
       queued: "排队中",
@@ -1778,6 +1871,13 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       runId: artifact.runId,
       graphId: artifact.graphId,
       hasActiveRun: artifact.terminalOutcome === undefined,
+      generationOwnership,
+      generationOwnershipLabel:
+        generationOwnership === "optional_main_takeover"
+          ? "渐进主生成接管"
+          : generationOwnership === "assistive"
+            ? "辅助工作流"
+            : "未声明",
       status: artifact.status,
       statusLabel:
         statusLabels[artifact.status] ?? `状态 ${String(artifact.status)}`,
@@ -1862,6 +1962,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         : "无 partial output",
       waitingUser: artifact.waitingUser ?? null,
       waitingUserLabel: artifact.waitingUser?.reason ?? "未进入 waiting_user",
+      bridgeIntentSummary,
       controlPreconditionsLabel,
       constraintSummaryLabel,
       diagnosticsSummary,
@@ -1869,12 +1970,19 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     };
   }
 
+  const activeGraphBridgeIntentSummary = computed(() =>
+    toGraphBridgeIntentSummaryViewModel(lastRun.value?.diagnostics),
+  );
+
   const activeWorkbenchDiagnosticsOverview = computed(() =>
     toGraphDiagnosticsOverview(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchDiagnosticsSummary = computed(() =>
-    toDiagnosticsSummaryViewModel(activeWorkbenchDiagnosticsOverview.value),
+    toDiagnosticsSummaryViewModel(
+      activeWorkbenchDiagnosticsOverview.value,
+      activeGraphBridgeIntentSummary.value,
+    ),
   );
 
   const activeGraphCompileArtifact = computed(() =>
@@ -1941,6 +2049,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       activeGraphRunArtifact.value,
       activeWorkbenchDiagnosticsSummary.value,
       activeWorkbenchNodeDiagnostics.value,
+      activeGraphBridgeIntentSummary.value,
     ),
   );
 
@@ -2856,6 +2965,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     settings,
     lastRun,
     lastIo,
+    activeGraphBridgeIntentSummary,
     activeWorkbenchDiagnosticsOverview,
     activeWorkbenchDiagnosticsSummary,
     activeWorkbenchNodeDiagnostics,

@@ -59,6 +59,16 @@
               {{ activeRunSummary.statusLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
+              图定位 {{ activeRunSummary.generationOwnershipLabel }}
+            </span>
+            <span
+              v-if="activeRunSummary.bridgeIntentSummary"
+              class="ew-workbench__diagnostics-item"
+            >
+              Bridge 意图
+              {{ activeRunSummary.bridgeIntentSummary.graphIntentLabel }}
+            </span>
+            <span class="ew-workbench__diagnostics-item">
               运行阶段 {{ activeRunSummary.phaseLabel }}
             </span>
             <span class="ew-workbench__diagnostics-item">
@@ -185,6 +195,13 @@
             >
               {{ diagnosticsSummary.runStatusLabel }}
             </span>
+            <span
+              v-if="diagnosticsSummary.bridgeIntentSummary"
+              class="ew-workbench__diagnostics-item"
+            >
+              Bridge 意图
+              {{ diagnosticsSummary.bridgeIntentSummary.graphIntentLabel }}
+            </span>
             <span class="ew-workbench__diagnostics-item">
               指纹 {{ diagnosticsSummary.compileFingerprintShort }}
             </span>
@@ -209,6 +226,13 @@
             <span class="ew-workbench__diagnostics-item">
               skip_reuse_outputs
               {{ diagnosticsSummary.skipReuseOutputHitCount }}
+            </span>
+            <span
+              v-if="diagnosticsSummary.bridgeIntentSummary"
+              class="ew-workbench__diagnostics-item"
+            >
+              takeover candidate
+              {{ diagnosticsSummary.bridgeIntentSummary.takeoverCandidateCount }}
             </span>
           </div>
           <div class="ew-workbench__diagnostics-reasons">

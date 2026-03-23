@@ -358,6 +358,24 @@
               <span>模板来源</span>
               <strong>{{ activeTemplateLabel }}</strong>
             </div>
+            <div
+              v-if="visibleDiagnosticsSummary?.bridgeIntentSummary"
+              class="ew-builder-workbench__kv"
+            >
+              <span>Bridge 意图</span>
+              <strong>
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.graphIntentLabel }}
+              </strong>
+            </div>
+            <div
+              v-if="visibleDiagnosticsSummary?.bridgeIntentSummary"
+              class="ew-builder-workbench__kv"
+            >
+              <span>接管候选图</span>
+              <strong>
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.takeoverCandidateCount }}
+              </strong>
+            </div>
             <p
               v-if="activeTemplateSummary"
               class="ew-builder-workbench__text"
@@ -395,6 +413,15 @@
                 {{ visibleActiveRunSummary.statusLabel }}
               </span>
               <span class="ew-builder-workbench__chip">
+                {{ visibleActiveRunSummary.generationOwnershipLabel }}
+              </span>
+              <span
+                v-if="visibleActiveRunSummary.bridgeIntentSummary"
+                class="ew-builder-workbench__chip"
+              >
+                {{ visibleActiveRunSummary.bridgeIntentSummary.graphIntentLabel }}
+              </span>
+              <span class="ew-builder-workbench__chip">
                 {{ visibleActiveRunSummary.phaseLabel }}
               </span>
               <span class="ew-builder-workbench__chip">
@@ -408,6 +435,10 @@
             <div class="ew-builder-workbench__kv">
               <span>节点状态</span>
               <strong>{{ visibleActiveRunSummary.latestNodeStatusLabel }}</strong>
+            </div>
+            <div class="ew-builder-workbench__kv">
+              <span>图定位</span>
+              <strong>{{ visibleActiveRunSummary.generationOwnershipLabel }}</strong>
             </div>
             <div class="ew-builder-workbench__kv">
               <span>阻塞契约</span>
@@ -435,6 +466,12 @@
               >
                 {{ visibleDiagnosticsSummary.runStatusLabel }}
               </span>
+              <span
+                v-if="visibleDiagnosticsSummary.bridgeIntentSummary"
+                class="ew-builder-workbench__chip"
+              >
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.graphIntentLabel }}
+              </span>
               <span class="ew-builder-workbench__chip">
                 指纹 {{ visibleDiagnosticsSummary.compileFingerprintShort }}
               </span>
@@ -452,6 +489,15 @@
               <strong>{{
                 visibleDiagnosticsSummary.reuseEligibleNodeCount
               }}</strong>
+            </div>
+            <div
+              v-if="visibleDiagnosticsSummary.bridgeIntentSummary"
+              class="ew-builder-workbench__kv"
+            >
+              <span>接管候选图</span>
+              <strong>
+                {{ visibleDiagnosticsSummary.bridgeIntentSummary.takeoverCandidateCount }}
+              </strong>
             </div>
           </div>
           <div v-else class="ew-builder-workbench__empty">

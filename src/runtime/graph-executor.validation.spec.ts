@@ -8031,6 +8031,17 @@ async function runValidationSpec(): Promise<void> {
     optionalMainTakeoverGraphIds: ["graph_test_takeover"],
     hasFailure: false,
   });
+  const takeoverBridgeSummaryForStore =
+    useEwStore().activeGraphBridgeIntentSummary;
+  assert(
+    takeoverBridgeSummaryForStore?.route === "graph" &&
+      takeoverBridgeSummaryForStore.graphIntent ===
+        "optional_main_takeover" &&
+      takeoverBridgeSummaryForStore.takeoverCandidateCount === 1 &&
+      takeoverBridgeSummaryForStore.optionalMainTakeoverGraphIds.join(",") ===
+        "graph_test_takeover",
+    `Expected store bridge intent summary to expose optional main takeover graph context. Actual: ${JSON.stringify(takeoverBridgeSummaryForStore)}`,
+  );
 
   const legacySuccessSummary = createRunSummaryFixture({
     chatId: "chat_legacy_success",

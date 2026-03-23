@@ -1928,6 +1928,18 @@ export interface GraphRunDiagnosticsReasonBadge<
   count: number;
 }
 
+export interface GraphBridgeIntentSummaryViewModel {
+  route: "graph" | "legacy";
+  routeLabel: string;
+  graphIntent: "assistive" | "optional_main_takeover" | null;
+  graphIntentLabel: string;
+  enabledGraphCount: number;
+  selectedGraphIds: string[];
+  assistiveGraphIds: string[];
+  optionalMainTakeoverGraphIds: string[];
+  takeoverCandidateCount: number;
+}
+
 export interface GraphRunDiagnosticsSummaryViewModel {
   runStatus: GraphRunState["status"];
   runStatusLabel: string;
@@ -1943,6 +1955,7 @@ export interface GraphRunDiagnosticsSummaryViewModel {
   skipReuseOutputHitCount: number;
   primaryReuseReasons: GraphRunDiagnosticsReasonBadge<GraphNodeReuseReason>[];
   primaryExecutionDecisionReasons: GraphRunDiagnosticsReasonBadge<GraphNodeExecutionDecisionReason>[];
+  bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null;
 }
 
 export interface GraphNodeDiagnosticsViewModelItem {
@@ -1985,6 +1998,8 @@ export interface GraphActiveRunSummaryViewModel {
   runId: string;
   graphId: string;
   hasActiveRun: boolean;
+  generationOwnership: WorkbenchGenerationOwnership | null;
+  generationOwnershipLabel: string;
   status: GraphRunStatus;
   statusLabel: string;
   phase: GraphRunPhase;
@@ -2030,6 +2045,7 @@ export interface GraphActiveRunSummaryViewModel {
   latestPartialOutputLabel: string;
   waitingUser: GraphRunWaitingUserSummary | null;
   waitingUserLabel: string;
+  bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null;
   diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null;
   nodeDiagnostics: GraphNodeDiagnosticsViewModel | null;
 }
