@@ -104,7 +104,7 @@
 
 <script setup lang="ts">
 import type { WorkbenchNode, ModuleBlueprint } from './module-types';
-import { MODULE_REGISTRY } from './module-registry';
+import { MODULE_REGISTRY, resolveModuleConfigWithDefaults } from './module-registry';
 
 const props = defineProps<{
   node: WorkbenchNode | null;
@@ -131,8 +131,10 @@ watch(
       delete localConfig[key];
     }
     if (newNode) {
-      const defaults = blueprint.value?.defaultConfig ?? {};
-      Object.assign(localConfig, { ...defaults, ...newNode.config });
+      Object.assign(
+        localConfig,
+        resolveModuleConfigWithDefaults(newNode.moduleId, newNode.config),
+      );
     }
   },
   { immediate: true },

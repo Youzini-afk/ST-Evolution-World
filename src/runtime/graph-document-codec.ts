@@ -17,6 +17,7 @@ import type {
   WorkbenchNode,
   WorkbenchViewport,
 } from "../ui/components/graph/module-types";
+import { resolveModuleConfigWithDefaults } from "../ui/components/graph/module-registry";
 import { migrateFlowToGraph } from "./flow-migrator";
 import { EwFlowConfigSchema } from "./types";
 
@@ -82,9 +83,10 @@ function toFiniteNumber(value: unknown, fallback: number): number {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 function toRequiredString(value: unknown, fallback = ""): string {
@@ -135,7 +137,10 @@ function normalizeNodeV1(value: unknown): GraphDocumentNodeV1 | null {
     id,
     moduleId,
     position,
-    config: { ...config },
+    config: resolveModuleConfigWithDefaults(
+      moduleId,
+      config as Record<string, any>,
+    ),
     collapsed: toBoolean(value.collapsed, false),
   };
 
@@ -435,7 +440,10 @@ export function toWorkbenchGraph(doc: GraphDocumentV1): WorkbenchGraph {
         id: node.id,
         moduleId: node.moduleId,
         position: { ...node.position },
-        config: { ...node.config } as Record<string, any>,
+        config: resolveModuleConfigWithDefaults(
+          node.moduleId,
+          node.config as Record<string, any>,
+        ),
         collapsed: node.collapsed,
         ...(node.runtimeMeta
           ? { runtimeMeta: node.runtimeMeta as WorkbenchNode["runtimeMeta"] }
@@ -489,10 +497,24 @@ export function buildGraphDocumentExportPayload(
     }),
   }));
 
-  return createGraphDocumentEnvelope({
+  const envelope = createGraphDocumentEnvelope({
     graphs: cleanedGraphs,
     source: "export",
   });
+
+  return {
+    ...envelope,
+    graphs: envelope.graphs.map((graph) => ({
+      ...graph,
+      nodes: graph.nodes.map((node) => {
+        const config = { ...node.config };
+        delete config.api_key;
+        delete config.api_url;
+        delete config.headers_json;
+        return { ...node, config };
+      }),
+    })),
+  };
 }
 
 /**

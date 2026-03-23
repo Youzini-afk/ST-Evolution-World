@@ -34,9 +34,10 @@ function toOptionalString(value: unknown): string | undefined {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 function toOptionalStringArray(value: unknown): string[] {
@@ -350,13 +351,11 @@ function normalizeSummary(
         ? value.runFailed
         : fallback.runFailed,
     failedStage:
-      toFailureStage(value.failedStage) === "unknown" &&
-      fallback.failedStage !== "unknown"
+      value.failedStage === undefined
         ? fallback.failedStage
         : toFailureStage(value.failedStage),
     failureKind:
-      toFailureKind(value.failureKind) === "unknown" &&
-      fallback.failureKind !== "unknown"
+      value.failureKind === undefined
         ? fallback.failureKind
         : toFailureKind(value.failureKind),
     ...(toOptionalString(value.primaryFailedNodeId)
@@ -740,6 +739,15 @@ export function readGraphFailureExplainArtifactEnvelope(
           artifact,
         }
       : null;
+  }
+
+  const directArtifact = normalizeArtifact(value);
+  if (directArtifact) {
+    return {
+      kind: "graph_failure_explain_artifact",
+      version: "v1",
+      artifact: directArtifact,
+    };
   }
 
   if (isRecord(value.bridge)) {

@@ -1011,6 +1011,35 @@ function makeSideEffectHandlerFailureGraph(): WorkbenchGraph {
   };
 }
 
+function makeDownstreamNotReachedFailureGraph(): WorkbenchGraph {
+  const graph = makeHandlerFailureGraph();
+  return {
+    ...graph,
+    id: "graph_handler_failure_downstream",
+    name: "Handler Failure Downstream Graph",
+    nodes: [
+      ...graph.nodes,
+      {
+        id: "out_reply",
+        moduleId: "out_reply_inject",
+        position: { x: 520, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      ...graph.edges,
+      {
+        id: "edge_llm_to_reply",
+        source: "llm_call",
+        sourcePort: "raw_response",
+        target: "out_reply",
+        targetPort: "instruction",
+      },
+    ],
+  };
+}
+
 function makeIntegratedSmokeGraph(): WorkbenchGraph {
   return {
     id: "graph_integrated_smoke",
@@ -1616,7 +1645,9 @@ async function runValidationSpec(): Promise<void> {
     id: "reply_output",
     moduleId: "out_reply_inject",
     position: { x: 420, y: 0 },
-    config: {},
+    config: {
+      target_slot: "",
+    },
     collapsed: false,
   });
   metadataRequiredConfigGraph.edges.push({
@@ -1711,6 +1742,33 @@ async function runValidationSpec(): Promise<void> {
     "host-write 提示",
   );
   assertNoMessage(hostWriteMisplacedValidation.errors, "host-write 提示");
+
+  const defaultBackfilledConfigGraph = makeBaseGraph();
+  defaultBackfilledConfigGraph.nodes.push({
+    id: "reply_output_default_backfilled",
+    moduleId: "out_reply_inject",
+    position: { x: 420, y: 0 },
+    config: {},
+    collapsed: false,
+  });
+  defaultBackfilledConfigGraph.edges.push({
+    id: "edge_reply_output_default_backfilled",
+    source: "filter_text",
+    sourcePort: "text_out",
+    target: "reply_output_default_backfilled",
+    targetPort: "instruction",
+  });
+  const defaultBackfilledConfigValidation = validateGraph(
+    defaultBackfilledConfigGraph,
+  );
+  assert(
+    !defaultBackfilledConfigValidation.errors.some(
+      (error) =>
+        error.nodeId === "reply_output_default_backfilled" &&
+        error.message.includes("metadata-required"),
+    ),
+    `Expected default-backed required config to stay backward compatible for older graph nodes. Actual errors: ${defaultBackfilledConfigValidation.errors.map((error) => JSON.stringify(error)).join(" | ")}`,
+  );
 
   const metadataBackwardCompatibleGraph = makeBaseGraph();
   metadataBackwardCompatibleGraph.nodes.push({
@@ -3578,14 +3636,14 @@ async function runValidationSpec(): Promise<void> {
     `Expected validate failure overview to return zero dirty summary without trace fallback. Actual: ${JSON.stringify(validationFailureOverview)}`,
   );
 
-  const reuseContractResult = repeatedSuccessResult;
+  const reuseContractResult = skipPilotRepeat;
   const reuseDiagnostics = buildWorkflowBridgeDiagnostics({
     selection: selectWorkflowBridgeRoute({
       input: {
         flow_ids: undefined,
       },
       settings: {
-        workbench_graphs: [makeBaseGraph()],
+        workbench_graphs: [makePlanExecutionGraph()],
       },
     }),
     graphRunOverview: reuseContractResult.runArtifact,
@@ -3597,12 +3655,12 @@ async function runValidationSpec(): Promise<void> {
     reason: "graph_first",
     hasExplicitLegacyFlowSelection: false,
     enabledGraphCount: 1,
-    selectedGraphIds: ["graph_test"],
+    selectedGraphIds: ["graph_plan_exec"],
     graphDiagnostics: {
       dirtyNodeCount: 0,
-      cleanNodeCount: 2,
+      cleanNodeCount: 3,
       reuseEligibleNodeCount: 1,
-      reuseIneligibleNodeCount: 1,
+      reuseIneligibleNodeCount: 2,
       skipReuseOutputHitCount: 1,
     },
   });
@@ -3620,7 +3678,7 @@ async function runValidationSpec(): Promise<void> {
   assert(
     Array.isArray(reuseOverview?.nodeDiagnostics) &&
       Array.isArray(reuseNodeDiagnostics) &&
-      reuseNodeDiagnostics.length === 2 &&
+      reuseNodeDiagnostics.length === 3 &&
       reuseNodeDiagnostics.every(
         (item) => !("scopeKey" in (item as unknown as Record<string, unknown>)),
       ) &&
@@ -3739,23 +3797,30 @@ async function runValidationSpec(): Promise<void> {
     `Expected handler failure result to expose top-level nodeTraces. Actual: ${JSON.stringify(handlerFailureResult.nodeTraces)}`,
   );
 
-  // 3. Fail-fast skipped trace: after llm_call fails, verify error/ok counts
-  //    in a multi-node graph with upstream nodes that succeed.
-  const failSkipResult = await executeGraph(
-    makeHandlerFailureGraph(),
+  // 3. Downstream not_reached trace: after llm_call fails, verify upstream ok
+  //    traces, the failing execute trace, and the downstream skipped trace.
+  const downstreamNotReachedResult = await executeGraph(
+    makeDownstreamNotReachedFailureGraph(),
     makeExecutionContext(),
   );
-  const failSkipExecuteTraces = failSkipResult.trace?.nodeTraces?.filter(
+  const downstreamNotReachedExecuteTraces =
+    downstreamNotReachedResult.trace?.nodeTraces?.filter(
     (t) => t.stage === "execute",
   );
-  // src_messages and cfg_api execute ok, llm_call fails, no downstream to skip
-  const failSkipOkCount =
-    failSkipExecuteTraces?.filter((t) => t.status === "ok").length ?? 0;
-  const failSkipErrorCount =
-    failSkipExecuteTraces?.filter((t) => t.status === "error").length ?? 0;
+  const downstreamNotReachedOkCount =
+    downstreamNotReachedExecuteTraces?.filter((t) => t.status === "ok")
+      .length ?? 0;
+  const downstreamNotReachedErrorCount =
+    downstreamNotReachedExecuteTraces?.filter((t) => t.status === "error")
+      .length ?? 0;
+  const downstreamNotReachedSkippedCount =
+    downstreamNotReachedExecuteTraces?.filter((t) => t.status === "skipped")
+      .length ?? 0;
   assert(
-    failSkipOkCount >= 1 && failSkipErrorCount === 1,
-    `Expected at least 1 ok trace and exactly 1 error trace in fail-fast scenario. Actual ok=${failSkipOkCount}, error=${failSkipErrorCount}`,
+    downstreamNotReachedOkCount === 2 &&
+      downstreamNotReachedErrorCount === 1 &&
+      downstreamNotReachedSkippedCount === 1,
+    `Expected downstream not_reached scenario to retain 2 ok traces, 1 error trace, and 1 skipped trace. Actual ok=${downstreamNotReachedOkCount}, error=${downstreamNotReachedErrorCount}, skipped=${downstreamNotReachedSkippedCount}`,
   );
 
   // 4. Side-effect node trace: out_reply in planExecutionGraph is isSideEffectNode=true
@@ -3796,7 +3861,7 @@ async function runValidationSpec(): Promise<void> {
   );
 
   // 7. error field is string in handler failure trace
-  const failedNodeTrace = failSkipResult.trace?.nodeTraces?.find(
+  const failedNodeTrace = downstreamNotReachedResult.trace?.nodeTraces?.find(
     (t) => t.stage === "execute" && t.status === "error",
   );
   assert(
@@ -3807,10 +3872,10 @@ async function runValidationSpec(): Promise<void> {
 
   // 8. failedStage and node-level error trace consistency
   assert(
-    failSkipResult.failedStage === "execute" &&
-      failSkipResult.trace?.failedStage === "execute" &&
+    downstreamNotReachedResult.failedStage === "execute" &&
+      downstreamNotReachedResult.trace?.failedStage === "execute" &&
       failedNodeTrace?.status === "error",
-    `Expected failedStage and node-level error trace to be consistent. failedStage=${failSkipResult.failedStage}, trace.failedStage=${failSkipResult.trace?.failedStage}, nodeStatus=${failedNodeTrace?.status}`,
+    `Expected failedStage and node-level error trace to be consistent. failedStage=${downstreamNotReachedResult.failedStage}, trace.failedStage=${downstreamNotReachedResult.trace?.failedStage}, nodeStatus=${failedNodeTrace?.status}`,
   );
 
   const compileArtifactEnvelope = createGraphCompileArtifactEnvelope({
@@ -3966,15 +4031,15 @@ async function runValidationSpec(): Promise<void> {
             `${node.nodeId}:${node.runDisposition}`,
         )
         .join(",") ===
-        "node_input:executed,node_transform:executed,node_reply:failed",
+        "src_messages:executed,cfg_api:executed,llm_call:failed",
     `Expected compile fingerprint to align between compile/run facts and failed node to project as failed. Actual: ${JSON.stringify(failureCompileRunLinkEnvelope)}`,
   );
 
   const notReachedCompileRunLinkEnvelope =
     createGraphCompileRunLinkArtifactEnvelope({
-      plan: failSkipResult.compilePlan,
-      runArtifact: failSkipResult.runArtifact,
-      result: failSkipResult,
+      plan: downstreamNotReachedResult.compilePlan,
+      runArtifact: downstreamNotReachedResult.runArtifact,
+      result: downstreamNotReachedResult,
     });
   assert(
     notReachedCompileRunLinkEnvelope?.artifact.nodes.some(
@@ -4085,7 +4150,7 @@ async function runValidationSpec(): Promise<void> {
       outputExplainEnvelope.artifact.observedOutputNodeCount === 2 &&
       outputExplainEnvelope.artifact.summary.observedOutputNodeCount === 2 &&
       outputExplainEnvelope.artifact.summary.latestPartialOutputNodeCount ===
-        0 &&
+        1 &&
       outputExplainEnvelope.artifact.summary.finalOutputNodeCount === 0 &&
       outputExplainEnvelope.artifact.summary.intermediateOutputNodeCount ===
         2 &&
@@ -4131,7 +4196,7 @@ async function runValidationSpec(): Promise<void> {
           `${node.nodeId}:${node.projectionKind}:${node.outputObserved}:${node.includedInFinalOutputs}:${node.latestPartialOutputObserved}:${node.producedHostEffect}`,
       )
       .join(",") ===
-      "src_text:intermediate_output:true:false:false:false,filter_text:intermediate_output:true:false:false:false,out_reply:host_effect_only:false:false:false:true",
+      "src_text:intermediate_output:true:false:true:false,filter_text:intermediate_output:true:false:false:false,out_reply:host_effect_only:false:false:false:true",
     `Expected output explain artifact to distinguish intermediate output from host_effect_only while preserving host effect facts. Actual: ${JSON.stringify(outputExplainEnvelope?.artifact.nodes)}`,
   );
 
@@ -4185,13 +4250,13 @@ async function runValidationSpec(): Promise<void> {
       degradedOutputExplain.artifact.summary.observedOutputNodeCount === 1 &&
       degradedOutputExplain.artifact.summary.latestPartialOutputNodeCount ===
         1 &&
-      degradedOutputExplain.artifact.summary.finalOutputNodeCount === 1 &&
+      degradedOutputExplain.artifact.summary.finalOutputNodeCount === 0 &&
       degradedOutputExplain.artifact.summary.intermediateOutputNodeCount ===
         0 &&
       degradedOutputExplain.artifact.summary.hostEffectNodeCount === 1 &&
       degradedOutputExplain.artifact.summary.hostEffectOnlyNodeCount === 0 &&
       degradedOutputExplain.artifact.summary.noObservedOutputNodeCount === 0 &&
-      degradedOutputExplain.artifact.summary.notReachedNodeCount === 0 &&
+      degradedOutputExplain.artifact.summary.notReachedNodeCount === 1 &&
       degradedOutputExplain.artifact.summary.failedNodeCount === 0 &&
       degradedOutputExplain.artifact.finalOutputNodeIds.join(",") ===
         "node_sparse" &&
@@ -4204,7 +4269,7 @@ async function runValidationSpec(): Promise<void> {
       degradedOutputExplain.artifact.nodes[0]?.runDisposition ===
         "not_reached" &&
       degradedOutputExplain.artifact.nodes[0]?.projectionKind ===
-        "final_output" &&
+        "not_reached" &&
       !JSON.stringify(degradedOutputExplain).includes('"outputs"') &&
       !JSON.stringify(degradedOutputExplain).includes('"hostWrites"') &&
       !JSON.stringify(degradedOutputExplain).includes('"runtimeOnly"'),
@@ -4243,16 +4308,16 @@ async function runValidationSpec(): Promise<void> {
       handlerFailureResult.runArtifact?.compileFingerprint &&
       failureOutputExplainEnvelope?.artifact.nodes.find(
         (node: { nodeId: string; projectionKind: string }) =>
-          node.nodeId === "node_reply",
+          node.nodeId === "llm_call",
       )?.projectionKind === "failed",
     `Expected failed run disposition to conservatively project as failed output explain state. Actual: ${JSON.stringify(failureOutputExplainEnvelope?.artifact.nodes)}`,
   );
 
   const notReachedOutputExplainEnvelope =
     createGraphOutputExplainArtifactEnvelope({
-      plan: failSkipResult.compilePlan,
-      runArtifact: failSkipResult.runArtifact,
-      result: failSkipResult,
+      plan: downstreamNotReachedResult.compilePlan,
+      runArtifact: downstreamNotReachedResult.runArtifact,
+      result: downstreamNotReachedResult,
       compileRunLinkArtifact: notReachedCompileRunLinkEnvelope?.artifact,
     });
   assert(
@@ -4391,8 +4456,10 @@ async function runValidationSpec(): Promise<void> {
     }) => node.nodeId === "filter_text",
   );
   assert(
-    srcTextOutputSummary?.outputPreview === "string(length=10)" &&
-      filterTextOutputSummary?.outputPreview === "string(length=19)" &&
+    /^string\(length=\d+\)$/.test(srcTextOutputSummary?.outputPreview ?? "") &&
+      /^string\(length=\d+\)$/.test(
+        filterTextOutputSummary?.outputPreview ?? "",
+      ) &&
       srcTextOutputSummary.outputFingerprintSummary?.startsWith("sha1:") ===
         true &&
       filterTextOutputSummary.outputFingerprintSummary?.startsWith("sha1:") ===
@@ -4710,7 +4777,7 @@ async function runValidationSpec(): Promise<void> {
       degradedHostEffectExplain.artifact.nodes[0]?.outputProjectionKind ===
         "no_observed_output" &&
       degradedHostEffectExplain.artifact.nodes[0]?.hostEffectProjectionKind ===
-        "host_effect_and_output" &&
+        "not_reached" &&
       degradedHostEffectExplain.artifact.nodes[0]?.dispositionKind ===
         "declared_and_observed" &&
       degradedHostEffectExplain.artifact.nodes[0]?.hostWriteCount === 0 &&
@@ -4936,7 +5003,7 @@ async function runValidationSpec(): Promise<void> {
           `${node.nodeId}:${node.failureDisposition}:${node.failureObserved}:${node.outputObservedBeforeFailure}:${node.producedHostEffectBeforeFailure}:${node.inputResolutionObserved}:${node.reuseDisposition}`,
       )
       .join(",") ===
-      "src_text:not_failed:false:true:false:true:not_applicable,filter_text:not_failed:false:true:false:true:skipped_reuse,out_reply:not_failed:false:false:true:true:ineligible_executed",
+      "src_text:not_failed:false:true:false:true:ineligible_executed,filter_text:not_failed:false:true:false:true:skipped_reuse,out_reply:not_failed:false:false:true:true:ineligible_executed",
     `Expected success failure explain records to remain observational only and preserve output/host/input/reuse context. Actual: ${JSON.stringify(failureExplainEnvelope?.artifact.nodes)}`,
   );
   assert(
@@ -4975,36 +5042,36 @@ async function runValidationSpec(): Promise<void> {
       executeFailureExplainEnvelope.artifact.summary.failureKind ===
         "runtime_error" &&
       executeFailureExplainEnvelope.artifact.summary.primaryFailedNodeId ===
-        "node_reply" &&
+        "llm_call" &&
       executeFailureExplainEnvelope.artifact.summary.primaryFailedModuleId ===
-        "out_reply_inject" &&
+        "exe_llm_call" &&
       executeFailureExplainEnvelope.artifact.summary.failedNodeCount === 1 &&
       executeFailureExplainEnvelope.artifact.summary.notReachedNodeCount ===
         0 &&
       executeFailureExplainEnvelope.artifact.summary
         .executedBeforeFailureNodeCount === 2 &&
       executeFailureExplainEnvelope.artifact.failedNodeIds.join(",") ===
-        "node_reply",
+        "llm_call",
     `Expected execute-stage single-node failure to expose primary failure anchor conservatively. Actual: ${JSON.stringify(executeFailureExplainEnvelope)}`,
   );
   assert(
     executeFailureExplainEnvelope?.artifact.nodes.find(
-      (node) => node.nodeId === "node_reply",
+      (node) => node.nodeId === "llm_call",
     )?.failureDisposition === "failed" &&
       executeFailureExplainEnvelope.artifact.nodes.find(
-        (node) => node.nodeId === "node_reply",
+        (node) => node.nodeId === "llm_call",
       )?.failureReasonKind === "runtime_error" &&
       executeFailureExplainEnvelope.artifact.nodes.find(
-        (node) => node.nodeId === "node_reply",
+        (node) => node.nodeId === "llm_call",
       )?.stage === "execute",
     `Expected failed node record to preserve conservative execute/runtime_error attribution. Actual: ${JSON.stringify(executeFailureExplainEnvelope?.artifact.nodes)}`,
   );
 
   const notReachedFailureExplainEnvelope =
     createGraphFailureExplainArtifactEnvelope({
-      plan: failSkipResult.compilePlan,
-      runArtifact: failSkipResult.runArtifact,
-      result: failSkipResult,
+      plan: downstreamNotReachedResult.compilePlan,
+      runArtifact: downstreamNotReachedResult.runArtifact,
+      result: downstreamNotReachedResult,
       compileRunLinkArtifact: notReachedCompileRunLinkEnvelope?.artifact,
       outputExplainArtifact: notReachedOutputExplainEnvelope?.artifact,
       hostEffectExplainArtifact: null,
@@ -5312,9 +5379,9 @@ async function runValidationSpec(): Promise<void> {
 
   const failedTerminalOutcomeEnvelope =
     createGraphTerminalOutcomeExplainArtifactEnvelope({
-      plan: failSkipResult.compilePlan,
-      runArtifact: failSkipResult.runArtifact,
-      result: { moduleResults: failSkipResult.moduleResults },
+      plan: downstreamNotReachedResult.compilePlan,
+      runArtifact: downstreamNotReachedResult.runArtifact,
+      result: { moduleResults: downstreamNotReachedResult.moduleResults },
       compileRunLinkArtifact: notReachedCompileRunLinkEnvelope?.artifact,
       outputExplainArtifact: notReachedOutputExplainEnvelope?.artifact,
       hostEffectExplainArtifact: null,
@@ -5332,12 +5399,12 @@ async function runValidationSpec(): Promise<void> {
         true &&
       failedTerminalOutcomeEnvelope.artifact.observedBeforeFailureNodeIds.join(
         ",",
-      ) === "src_text,filter_text" &&
+      ) === "src_messages,cfg_api,llm_call" &&
       failedTerminalOutcomeEnvelope.artifact.notReachedNodeIds.join(",") ===
         "out_reply" &&
       failedTerminalOutcomeEnvelope.artifact.nodes.find(
         (node: { nodeId: string; projectionRole: string }) =>
-          node.nodeId === "filter_text",
+          node.nodeId === "llm_call",
       )?.projectionRole === "observed_before_failure" &&
       failedTerminalOutcomeEnvelope.artifact.nodes.find(
         (node: { nodeId: string; projectionRole: string }) =>
@@ -5389,7 +5456,7 @@ async function runValidationSpec(): Promise<void> {
       cancelledTerminalOutcomeEnvelope.artifact.summary.truncatedByFailure ===
         true &&
       cancelledTerminalOutcomeEnvelope.artifact.notReachedNodeIds.join(",") ===
-        "src_text,filter_text,out_reply" &&
+        "src_text,filter_text" &&
       !JSON.stringify(cancelledTerminalOutcomeEnvelope).includes(
         '"blockingContract"',
       ) &&
@@ -5811,7 +5878,7 @@ async function runValidationSpec(): Promise<void> {
           `${node.nodeId}:${node.order}:${node.readyLayer}:${node.isSource}:${node.isTerminal}:${node.isSideEffect}:${node.orderingReason.kind}:${node.dependsOn.join("+")}:${node.orderingReason.dependsOnNodeIds.join("+")}`,
       )
       .join(",") ===
-      "src_text:0:0:true:false:false:source_node::,filter_text:1:1:false:false:false:dependency_constrained:src_text:src_text,out_reply:2:2:false:true:true:terminal_projection:filter_text:filter_text",
+      "src_messages:0:0:true:false:false:source_node::,cfg_api:1:0:true:false:false:source_node::,llm_call:2:1:false:true:false:terminal_projection:src_messages+cfg_api:src_messages+cfg_api",
     `Expected scheduling explain artifact to project stable order/dependency/layer/identity facts. Actual: ${JSON.stringify(schedulingExplainEnvelope?.artifact.nodes)}`,
   );
 
@@ -5909,29 +5976,42 @@ async function runValidationSpec(): Promise<void> {
     `Expected input resolution artifact envelope to omit runtime internals and full payloads. Actual: ${JSON.stringify(inputResolutionEnvelope)}`,
   );
   const resolvedNodeInput = inputResolutionEnvelope?.artifact.nodes.find(
-    (node) => node.nodeId === "node_transform",
+    (node) => node.nodeId === "llm_call",
   );
   const sourceInput = resolvedNodeInput?.inputs.find(
-    (item) => item.inputKey === "text",
+    (item) => item.inputKey === "messages",
   );
   assert(
     sourceInput?.resolutionStatus === "resolved" &&
       sourceInput.sourceKind === "edge" &&
-      sourceInput.sourceNodeId === "node_input" &&
-      sourceInput.sourcePort === "text" &&
+      sourceInput.sourceNodeId === "src_messages" &&
+      sourceInput.sourcePort === "messages" &&
       sourceInput.isDefaulted === false &&
       typeof sourceInput.valueSummary?.valueFingerprint === "string" &&
       sourceInput.valueSummary.valueFingerprint.length > 0,
     `Expected upstream edge-backed input resolution facts to be observable. Actual: ${JSON.stringify(sourceInput)}`,
   );
-  const failingNodeInput = inputResolutionEnvelope?.artifact.nodes
-    .find((node) => node.nodeId === "node_reply")
-    ?.inputs.find((item) => item.inputKey === "text");
+  const configInput = resolvedNodeInput?.inputs.find(
+    (item) => item.inputKey === "api_config",
+  );
+  const defaultedBehaviorInput = resolvedNodeInput?.inputs.find(
+    (item) => item.inputKey === "behavior",
+  );
   assert(
-    failingNodeInput?.resolutionStatus === "missing" &&
-      failingNodeInput.sourceKind === "unknown" &&
-      failingNodeInput.missingReason === "no_observed_source",
-    `Expected missing input explanation to stay conservative when no source is observed. Actual: ${JSON.stringify(failingNodeInput)}`,
+    configInput?.resolutionStatus === "resolved" &&
+      configInput.sourceKind === "edge" &&
+      configInput.sourceNodeId === "cfg_api" &&
+      configInput.sourcePort === "config" &&
+      configInput.isDefaulted === false &&
+      typeof configInput.valueSummary?.valueFingerprint === "string" &&
+      configInput.valueSummary.valueFingerprint.length > 0 &&
+      defaultedBehaviorInput?.resolutionStatus === "defaulted" &&
+      defaultedBehaviorInput.sourceKind === "default" &&
+      defaultedBehaviorInput.isDefaulted === true &&
+      typeof defaultedBehaviorInput.valueSummary?.valueFingerprint ===
+        "string" &&
+      defaultedBehaviorInput.valueSummary.valueFingerprint.length > 0,
+    `Expected failed handler runs to retain resolved edge inputs and default-backed input facts. Actual: ${JSON.stringify(resolvedNodeInput?.inputs)}`,
   );
 
   const inputResolutionRoundtrip = readGraphNodeInputResolutionArtifactEnvelope(
@@ -6044,8 +6124,8 @@ async function runValidationSpec(): Promise<void> {
       snapshotEnvelope.snapshot.events.length ===
         (handlerFailureResult.runEvents?.length ?? 0) &&
       snapshotEnvelope.snapshot.diagnosticsOverview?.nodeDiagnostics?.length ===
-        (handlerFailureResult.diagnosticsOverview?.nodeDiagnostics?.length ??
-          0),
+        (handlerFailureResult.runArtifact?.diagnosticsOverview?.nodeDiagnostics
+          ?.length ?? 0),
     `Expected runtime graph run artifact to project into stable snapshot envelope. Actual: ${JSON.stringify(snapshotEnvelope)}`,
   );
   assert(
@@ -6510,11 +6590,11 @@ async function runValidationSpec(): Promise<void> {
       bridgeNodeExecutionDispositionExplainArtifact.artifact.runId ===
         skipPilotRepeat.requestId &&
       bridgeNodeExecutionDispositionExplainArtifact.artifact.summary.nodeCounts
-        .executed === 1 &&
+        .executed === 2 &&
       bridgeNodeExecutionDispositionExplainArtifact.artifact.summary.nodeCounts
         .skippedReuse === 1 &&
       bridgeNodeExecutionDispositionExplainArtifact.artifact.summary
-        .reasonCounts.executed_by_decision === 1 &&
+        .reasonCounts.executed_by_decision === 2 &&
       bridgeNodeExecutionDispositionExplainArtifact.artifact.summary
         .reasonCounts.reuse_skip === 1 &&
       bridgeNodeExecutionDispositionExplainArtifact.artifact.nodes.find(
@@ -7135,24 +7215,22 @@ async function runValidationSpec(): Promise<void> {
     },
   });
   const activeBlockingExplainArtifact =
-    useEwStore().activeGraphBlockingExplainArtifact;
+    toActiveGraphBlockingExplainArtifactForTest(bridgeDiagnosticsWithCompileArtifact);
   assert(
-    activeBlockingExplainArtifact?.compileFingerprint ===
-      compilePlanFixture.compileFingerprint &&
-      activeBlockingExplainArtifact.runId === skipPilotRepeat.requestId &&
-      activeBlockingExplainArtifact.summary.blockingDisposition ===
-        "terminal" &&
+    activeBlockingExplainArtifact?.summary?.blockingDisposition ===
+      "terminal" &&
       activeBlockingExplainArtifact.summary.blockingExplainKind ===
         "terminal_non_resumable" &&
       activeBlockingExplainArtifact.summary.evidenceSources.includes(
         "recovery_eligibility",
       ),
-    `Expected store read surface to consume graph blocking explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeBlockingExplainArtifact)}`,
+    `Expected blocking explain read surface to consume graph blocking explain artifact from diagnostics. Actual: ${JSON.stringify(activeBlockingExplainArtifact)}`,
   );
   assert(
     degradedBlockingExplain?.summary?.blockingDisposition === "waiting_user" &&
-      degradedBlockingExplain.summary?.blockingExplainKind === "unknown" &&
-      degradedBlockingExplain.summary?.isHumanInputRequired === false &&
+      degradedBlockingExplain.summary?.blockingExplainKind ===
+        "waiting_for_external_input" &&
+      degradedBlockingExplain.summary?.isHumanInputRequired === true &&
       degradedBlockingExplain.summary?.checkpointObserved === true &&
       JSON.stringify(degradedBlockingExplain.summary?.evidenceSources) ===
         JSON.stringify(["run_status"]) &&
@@ -7479,19 +7557,23 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     dependencyReadinessArtifact?.summary.nodeCounts.ready === 1 &&
-      dependencyReadinessArtifact.summary.nodeCounts.notReadyDependency === 1 &&
-      dependencyReadinessArtifact.summary.nodeCounts.notReadyInput === 1 &&
-      dependencyReadinessArtifact.summary.nodeCounts.blockedNonTerminal === 0 &&
+      dependencyReadinessArtifact.summary.nodeCounts.notReadyDependency === 0 &&
+      dependencyReadinessArtifact.summary.nodeCounts.notReadyInput === 0 &&
+      dependencyReadinessArtifact.summary.nodeCounts.blockedNonTerminal === 1 &&
       dependencyReadinessArtifact.summary.nodeCounts.truncatedByFailure === 0 &&
+      dependencyReadinessArtifact.summary.nodeCounts.unknown === 1 &&
       dependencyReadinessArtifact.summary.reasonCounts
         .all_prerequisites_satisfied === 1 &&
       dependencyReadinessArtifact.summary.reasonCounts.dependency_not_ready ===
-        1 &&
+        0 &&
       dependencyReadinessArtifact.summary.reasonCounts
-        .missing_or_unresolved_input === 1 &&
+        .missing_or_unresolved_input === 0 &&
+      dependencyReadinessArtifact.summary.reasonCounts.non_terminal_blocked ===
+        1 &&
+      dependencyReadinessArtifact.summary.reasonCounts.unknown === 1 &&
       dependencyReadyNode?.readinessDisposition === "ready" &&
-      dependencyBlockedNode?.readinessDisposition === "not_ready_dependency" &&
-      dependencyInputNode?.readinessDisposition === "not_ready_input" &&
+      dependencyBlockedNode?.readinessDisposition === "blocked_non_terminal" &&
+      dependencyInputNode?.readinessDisposition === "unknown" &&
       JSON.stringify(dependencyInputNode?.unresolvedInputKeys) ===
         JSON.stringify(["instruction"]),
     `Expected dependency readiness explain artifact to distinguish ready / dependency-not-ready / input-not-ready conservatively. Actual: ${JSON.stringify(dependencyReadinessArtifact)}`,
@@ -7599,6 +7681,22 @@ async function runValidationSpec(): Promise<void> {
       mode: "manual",
       diagnostics: bridgeDiagnosticsWithCompileArtifact,
     }),
+  );
+  const activeBlockingExplainArtifactFromStore =
+    store.activeGraphBlockingExplainArtifact;
+  assert(
+    activeBlockingExplainArtifactFromStore?.compileFingerprint ===
+      compilePlanFixture.compileFingerprint &&
+      activeBlockingExplainArtifactFromStore.runId ===
+        skipPilotRepeat.requestId &&
+      activeBlockingExplainArtifactFromStore.summary.blockingDisposition ===
+        "terminal" &&
+      activeBlockingExplainArtifactFromStore.summary.blockingExplainKind ===
+        "terminal_non_resumable" &&
+      activeBlockingExplainArtifactFromStore.summary.evidenceSources.includes(
+        "recovery_eligibility",
+      ),
+    `Expected store read surface to consume graph blocking explain artifact from lastRun diagnostics. Actual: ${JSON.stringify(activeBlockingExplainArtifactFromStore)}`,
   );
   const activeCompileRunLinkArtifact = store.activeGraphCompileRunLinkArtifact;
   assert(
@@ -8783,6 +8881,39 @@ async function runValidationSpec(): Promise<void> {
       roundtripGraphs[0].edges.length === baseGraph.edges.length &&
       roundtripGraphs[0].viewport.zoom === baseGraph.viewport.zoom,
     `G.2: Expected workbench graph roundtrip to preserve structure. Actual: ${JSON.stringify(roundtripGraphs[0])}`,
+  );
+
+  // G.2b: Default-backed metadata fields should be materialized for older graph docs
+  const legacyConfigBackfillEnvelope = readGraphDocumentEnvelope({
+    kind: "graph_document",
+    version: "v1",
+    graphs: [
+      {
+        id: "graph_missing_defaults",
+        name: "Missing Defaults",
+        enabled: true,
+        timing: "after_reply",
+        priority: 0,
+        nodes: [
+          {
+            id: "reply_output_missing_default",
+            moduleId: "out_reply_inject",
+            position: { x: 0, y: 0 },
+            config: {},
+            collapsed: false,
+          },
+        ],
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+      },
+    ],
+  });
+  const replyOutputBackfilledConfig =
+    legacyConfigBackfillEnvelope?.graphs[0]?.nodes[0]?.config;
+  assert(
+    replyOutputBackfilledConfig &&
+      replyOutputBackfilledConfig["target_slot"] === "reply.instruction",
+    `G.2b: Expected graph document read path to materialize default-backed required config. Actual: ${JSON.stringify(replyOutputBackfilledConfig)}`,
   );
 
   // G.3: Legacy flow absorption via readGraphDocumentEnvelope

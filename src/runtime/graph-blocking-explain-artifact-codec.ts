@@ -29,9 +29,10 @@ function toOptionalString(value: unknown): string | undefined {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 const BLOCKING_EXPLAIN_EVIDENCE_SOURCES: GraphBlockingExplainEvidenceSourceV1[] =
@@ -759,6 +760,19 @@ export function readGraphBlockingExplainArtifactEnvelope(
       kind: "graph_blocking_explain_artifact",
       version: "v1",
       artifact,
+    };
+  }
+
+  const directArtifact = normalizeArtifact(value);
+  if (directArtifact) {
+    directArtifact.summary.evidenceSources =
+      directArtifact.summary.evidenceSources.length
+        ? directArtifact.summary.evidenceSources
+        : deriveEvidenceSources(directArtifact);
+    return {
+      kind: "graph_blocking_explain_artifact",
+      version: "v1",
+      artifact: directArtifact,
     };
   }
 

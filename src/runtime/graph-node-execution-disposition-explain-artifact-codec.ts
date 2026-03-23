@@ -28,9 +28,10 @@ function toRequiredString(value: unknown, fallback = ""): string {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 function toOptionalString(value: unknown): string | undefined {
@@ -39,7 +40,10 @@ function toOptionalString(value: unknown): string | undefined {
 
 function toOptionalStringArray(value: unknown): string[] {
   return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
+    ? value.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.trim().length > 0,
+      )
     : [];
 }
 

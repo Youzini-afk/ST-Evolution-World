@@ -143,9 +143,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 function toOptionalString(value: unknown): string | undefined {

@@ -31,9 +31,10 @@ function toOptionalString(value: unknown): string | undefined {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 function toOptionalStringArray(value: unknown): string[] {
@@ -664,6 +665,15 @@ export function readGraphHostEffectExplainArtifactEnvelope(
           artifact,
         }
       : null;
+  }
+
+  const directArtifact = normalizeArtifact(value);
+  if (directArtifact) {
+    return {
+      kind: "graph_host_effect_explain_artifact",
+      version: "v1",
+      artifact: directArtifact,
+    };
   }
 
   if (isRecord(value.bridge)) {

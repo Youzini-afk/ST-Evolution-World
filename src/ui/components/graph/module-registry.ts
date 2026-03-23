@@ -1340,6 +1340,36 @@ export function getModuleBlueprint(moduleId: string): ModuleBlueprint {
   return bp;
 }
 
+function cloneRecord<T extends Record<string, any> | undefined>(
+  value: T,
+): Record<string, any> {
+  return value && typeof value === "object" ? { ...value } : {};
+}
+
+/**
+ * Resolve the effective node config by layering persisted config over module defaults.
+ *
+ * This keeps older graph documents and fixtures backward compatible when new
+ * default-backed metadata fields are introduced later.
+ *
+ * Unknown modules are preserved as-is to honor the graph document codec's
+ * forward-compatibility contract.
+ */
+export function resolveModuleConfigWithDefaults(
+  moduleId: string,
+  config: Record<string, any> | undefined,
+): Record<string, any> {
+  const rawConfig = cloneRecord(config);
+  const blueprint = MODULE_REGISTRY.get(moduleId);
+  if (!blueprint) {
+    return rawConfig;
+  }
+  return {
+    ...cloneRecord(blueprint.defaultConfig),
+    ...rawConfig,
+  };
+}
+
 export function getModuleMetadataSurface(
   moduleId: string,
 ): ModuleBlueprint["metadata"] | undefined {

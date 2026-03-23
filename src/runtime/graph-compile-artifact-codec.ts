@@ -19,9 +19,10 @@ function toRequiredString(value: unknown, fallback = ""): string {
 
 function toNonNegativeInt(value: unknown, fallback = 0): number {
   const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric >= 0
-    ? Math.trunc(numeric)
-    : fallback;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric >= 0 ? Math.trunc(numeric) : 0;
 }
 
 function toOptionalStringArray(value: unknown): string[] {
@@ -178,7 +179,7 @@ function normalizeArtifactV1(value: unknown): GraphCompileArtifactV1 | null {
     nodeCount:
       value.nodeCount === undefined
         ? nodes.length
-        : toNonNegativeInt(value.nodeCount, nodes.length),
+        : toNonNegativeInt(value.nodeCount),
     edgeCount: toNonNegativeInt(value.edgeCount),
     nodeOrder,
     terminalNodeIds,

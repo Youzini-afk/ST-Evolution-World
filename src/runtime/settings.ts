@@ -1,6 +1,7 @@
 import { klona } from "klona";
 import _ from "lodash";
 import { createDefaultApiPreset, createDefaultFlow } from "./factory";
+import { readGraphBlockingExplainArtifactEnvelope } from "./graph-blocking-explain-artifact-codec";
 import { migrateAllFlows } from "./flow-migrator";
 import { readGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import { readGraphDependencyReadinessExplainArtifactEnvelope } from "./graph-dependency-readiness-explain-artifact-codec";
@@ -534,6 +535,9 @@ type WorkflowBridgeFacts = {
   enabled_graph_count?: number;
   selected_graph_ids?: string[];
   failure_origin?: string;
+  graph_blocking_explain_artifact?: ReturnType<
+    typeof readGraphBlockingExplainArtifactEnvelope
+  >;
   graph_compile_run_link_artifact?: ReturnType<
     typeof readGraphCompileRunLinkArtifactEnvelope
   >;
@@ -620,6 +624,13 @@ function normalizeWorkflowBridgeDiagnostics(
     if (normalizedFailureOrigin) {
       normalized.failure_origin = normalizedFailureOrigin;
     }
+  }
+
+  const graphBlockingExplainArtifact = readGraphBlockingExplainArtifactEnvelope({
+    bridge: bridgeRecord,
+  });
+  if (graphBlockingExplainArtifact) {
+    normalized.graph_blocking_explain_artifact = graphBlockingExplainArtifact;
   }
 
   const graphCompileRunLinkArtifact = readGraphCompileRunLinkArtifactEnvelope({

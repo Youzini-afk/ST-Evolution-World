@@ -17,6 +17,7 @@ import {
   getModuleExplainContract,
   getModuleMetadataSummary,
   getModuleMetadataSurface,
+  resolveModuleConfigWithDefaults,
 } from "../ui/components/graph/module-registry";
 import type {
   ExecutionContext,
@@ -342,6 +343,10 @@ function createNodeFingerprint(
   hostWriteSummary?: HostWriteSummary,
   hostCommitSummary?: HostCommitSummary,
 ): string {
+  const effectiveConfig = resolveModuleConfigWithDefaults(
+    node.moduleId,
+    node.config,
+  );
   return hashFingerprint(
     stableSerialize({
       scope: "graph_node",
@@ -353,7 +358,7 @@ function createNodeFingerprint(
       isTerminal,
       capability,
       sideEffect,
-      config: node.config,
+      config: effectiveConfig,
       runtimeMeta: node.runtimeMeta,
       hostWriteSummary,
       hostCommitSummary,
@@ -2308,6 +2313,10 @@ export async function executeCompiledGraph(
     if (!node) {
       throw new Error(`compile plan 引用了不存在的节点: ${planNode.nodeId}`);
     }
+    const effectiveNode: WorkbenchNode = {
+      ...node,
+      config: resolveModuleConfigWithDefaults(node.moduleId, node.config),
+    };
 
     const nodeStart = Date.now();
     const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
@@ -2379,7 +2388,7 @@ export async function executeCompiledGraph(
       isSideEffectNode: planNode.isSideEffectNode,
       isTerminal: planNode.isTerminal,
       isFallbackNode:
-        resolveNodeHandler(node.moduleId).resolvedVia === "fallback",
+        resolveNodeHandler(effectiveNode.moduleId).resolvedVia === "fallback",
       dirtyReason,
       previousInputFingerprint,
       reuseVerdict,
@@ -2490,17 +2499,17 @@ export async function executeCompiledGraph(
     context.onProgress?.({
       phase: "module_executing",
       request_id: context.requestId,
-      module_id: node.moduleId,
+      module_id: effectiveNode.moduleId,
       node_id: node.id,
       stage: "execute",
-      message: `正在执行模块「${getModuleBlueprint(node.moduleId).label}」…`,
+      message: `正在执行模块「${getModuleBlueprint(effectiveNode.moduleId).label}」…`,
       graph_id: graph.id,
     });
 
     try {
       const dispatchResult = await dispatchNodeExecution({
         planNode,
-        node,
+        node: effectiveNode,
         inputs,
         context,
         modules: runtimeModules,
@@ -2531,21 +2540,21 @@ export async function executeCompiledGraph(
         });
       }
 
-      if (node.config?.observationState === "waiting_user") {
+      if (effectiveNode.config?.observationState === "waiting_user") {
         emitNodeEvent("waiting_user", {
           status: "waiting_user",
           nodeId: node.id,
-          moduleId: node.moduleId,
+          moduleId: effectiveNode.moduleId,
           nodeIndex: planNode.order,
           waitingUser: {
             timestamp: Date.now(),
             nodeId: node.id,
-            moduleId: node.moduleId,
+            moduleId: effectiveNode.moduleId,
             nodeIndex: planNode.order,
             reason:
-              typeof node.config?.waitingUserReason === "string" &&
-              node.config.waitingUserReason.trim()
-                ? node.config.waitingUserReason.trim()
+              typeof effectiveNode.config?.waitingUserReason === "string" &&
+              effectiveNode.config.waitingUserReason.trim()
+                ? effectiveNode.config.waitingUserReason.trim()
                 : `节点 ${node.id} 进入 waiting_user 观测态`,
           },
         });
@@ -2769,11 +2778,24 @@ export async function executeGraph(
   let latestPartialOutput: GraphRunArtifact["latestPartialOutput"];
   let waitingUser: GraphRunArtifact["waitingUser"];
 
-  const buildOverview = (
-    runState: GraphExecutionResult["runState"],
-    dirtySetSummary?: GraphDirtySetSummary,
-    compilePlan?: GraphCompilePlan,
-  ): GraphRunDiagnosticsOverview => {
+  const buildOverview = (params: {
+    runState: GraphExecutionResult["runState"];
+    dirtySetSummary?: GraphDirtySetSummary;
+    compilePlan?: GraphCompilePlan;
+    reuseSummary?: GraphReuseSummary;
+    executionDecisionSummary?: GraphExecutionDecisionSummary;
+    moduleResults?: ModuleExecutionResult[];
+    nodeTraces?: NonNullable<GraphExecutionResult["trace"]>["nodeTraces"];
+  }): GraphRunDiagnosticsOverview => {
+    const {
+      runState,
+      dirtySetSummary,
+      compilePlan,
+      reuseSummary,
+      executionDecisionSummary,
+      moduleResults,
+      nodeTraces,
+    } = params;
     const reasonCounts: Record<GraphNodeDirtyReason, number> = {
       initial_run: 0,
       input_changed: 0,
@@ -2785,6 +2807,19 @@ export async function executeGraph(
         reasonCounts[entry.dirtyReason] += 1;
       }
     }
+    const nodeDiagnosticsSource =
+      nodeTraces?.filter((trace) => trace.stage === "execute") ??
+      moduleResults?.map((moduleResult) => ({
+        nodeId: moduleResult.nodeId,
+        moduleId: moduleResult.moduleId,
+        inputSources: moduleResult.inputSources,
+        dirtyReason: moduleResult.dirtyReason,
+        cacheKeyFacts: moduleResult.cacheKeyFacts,
+        reuseVerdict: moduleResult.reuseVerdict,
+        executionDecision: moduleResult.executionDecision,
+      })) ??
+      [];
+
     return {
       run: { ...runState },
       compile: {
@@ -2814,6 +2849,39 @@ export async function executeGraph(
         cleanNodeIds: [...(dirtySetSummary?.cleanNodeIds ?? [])],
         reasonCounts,
       },
+      ...(reuseSummary
+        ? {
+            reuse: {
+              eligibleNodeCount: reuseSummary.eligibleNodeCount,
+              ineligibleNodeCount: reuseSummary.ineligibleNodeCount,
+              eligibleNodeIds: [...reuseSummary.eligibleNodeIds],
+              ineligibleNodeIds: [...reuseSummary.ineligibleNodeIds],
+              verdictCounts: { ...reuseSummary.verdictCounts },
+            },
+          }
+        : {}),
+      ...(executionDecisionSummary
+        ? {
+            executionDecision: {
+              featureEnabled: executionDecisionSummary.featureEnabled,
+              skippedNodeCount: executionDecisionSummary.skippedNodeCount,
+              executedNodeCount: executionDecisionSummary.executedNodeCount,
+              skippedNodeIds: [...executionDecisionSummary.skippedNodeIds],
+              executedNodeIds: [...executionDecisionSummary.executedNodeIds],
+              skipReuseOutputNodeIds: [
+                ...(executionDecisionSummary.skipReuseOutputNodeIds ?? []),
+              ],
+              decisionCounts: { ...executionDecisionSummary.decisionCounts },
+            },
+          }
+        : {}),
+      ...(nodeDiagnosticsSource.length > 0
+        ? {
+            nodeDiagnostics: nodeDiagnosticsSource.map((trace) =>
+              createNodeDiagnosticsView(trace),
+            ),
+          }
+        : {}),
     };
   };
 
@@ -2912,7 +2980,7 @@ export async function executeGraph(
       currentStage: "validate",
       failedStage: "validate",
     });
-    const diagnosticsOverview = buildOverview(runState);
+    const diagnosticsOverview = buildOverview({ runState });
     emitRunEvent("stage_finished", {
       status: "failed",
       stage: "validate",
@@ -3050,7 +3118,7 @@ export async function executeGraph(
       currentStage: "compile",
       failedStage: "compile",
     });
-    const diagnosticsOverview = buildOverview(runState);
+    const diagnosticsOverview = buildOverview({ runState });
     emitRunEvent("stage_finished", {
       status: "failed",
       stage: "compile",
@@ -3150,11 +3218,15 @@ export async function executeGraph(
       currentStage: "execute",
       compileFingerprint: compilePlan.compileFingerprint,
     });
-    const diagnosticsOverview = buildOverview(
+    const diagnosticsOverview = buildOverview({
       runState,
-      execution.dirtySetSummary,
+      dirtySetSummary: execution.dirtySetSummary,
       compilePlan,
-    );
+      reuseSummary: execution.reuseSummary,
+      executionDecisionSummary: execution.executionDecisionSummary,
+      moduleResults: execution.moduleResults,
+      nodeTraces: execution.nodeTraces,
+    });
     emitRunEvent("stage_finished", {
       status: "completed",
       stage: "execute",
@@ -3266,13 +3338,25 @@ export async function executeGraph(
       failedStage: "execute",
       compileFingerprint: compilePlan.compileFingerprint,
     });
-    const diagnosticsOverview = buildOverview(
+    const diagnosticsOverview = buildOverview({
       runState,
-      error instanceof GraphExecutionStageError
-        ? error.dirtySetSummary
-        : undefined,
+      dirtySetSummary:
+        error instanceof GraphExecutionStageError
+          ? error.dirtySetSummary
+          : undefined,
       compilePlan,
-    );
+      reuseSummary:
+        error instanceof GraphExecutionStageError
+          ? error.reuseSummary
+          : undefined,
+      executionDecisionSummary:
+        error instanceof GraphExecutionStageError
+          ? error.executionDecisionSummary
+          : undefined,
+      moduleResults:
+        error instanceof GraphExecutionStageError ? error.moduleResults : [],
+      nodeTraces: combinedNodeTraces,
+    });
     emitRunEvent("stage_finished", {
       status: cancelled ? "cancelled" : "failed",
       stage: "execute",
@@ -3489,11 +3573,15 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
         explain?.config.requiredConfigKeys ??
         validation?.requiredConfigKeys ??
         [];
-      const configRecord =
+      const rawConfigRecord =
         node.config && typeof node.config === "object" ? node.config : {};
+      const effectiveConfigRecord = resolveModuleConfigWithDefaults(
+        node.moduleId,
+        rawConfigRecord,
+      );
 
       for (const requiredKey of requiredConfigKeys) {
-        if (hasMeaningfulConfigValue(configRecord[requiredKey])) {
+        if (hasMeaningfulConfigValue(effectiveConfigRecord[requiredKey])) {
           continue;
         }
         const fieldLabel = knownFieldLabelByKey.get(requiredKey) ?? requiredKey;
@@ -3507,7 +3595,7 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
       }
 
       if (allowedConfigKeys.size > 0) {
-        for (const rawKey of Object.keys(configRecord)) {
+        for (const rawKey of Object.keys(rawConfigRecord)) {
           if (allowedConfigKeys.has(rawKey)) {
             continue;
           }
