@@ -1344,6 +1344,100 @@ function makeExclusiveJoinGraph(mode: "all" | "any"): WorkbenchGraph {
   };
 }
 
+function makeBranchRouterPackageGraph(
+  options: {
+    negate?: boolean;
+    joinMode?: "all" | "any";
+  } = {},
+): WorkbenchGraph {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "pkg_control_branch_router",
+    origin: { x: 220, y: 0 },
+    exposedConfig: {
+      negate: options.negate === true,
+      join_mode: options.joinMode ?? "any",
+    },
+  });
+  if (!fragment) {
+    throw new Error("Expected pkg_control_branch_router to instantiate.");
+  }
+
+  const routeIf = fragment.nodes.find((node) => node.moduleId === "ctl_if");
+  const routeJoin = fragment.nodes.find((node) => node.moduleId === "ctl_join");
+  const thenStage = fragment.nodes.find(
+    (node) =>
+      node.moduleId === "cmp_passthrough" &&
+      node.config?._label === "Then 占位",
+  );
+  const elseStage = fragment.nodes.find(
+    (node) =>
+      node.moduleId === "cmp_passthrough" &&
+      node.config?._label === "Else 占位",
+  );
+  const afterJoin = fragment.nodes.find(
+    (node) =>
+      node.moduleId === "cmp_passthrough" &&
+      node.config?._label === "汇合后",
+  );
+
+  if (!routeIf || !routeJoin || !thenStage || !elseStage || !afterJoin) {
+    throw new Error(
+      `Expected branch router package nodes to exist. Actual: ${JSON.stringify(fragment.nodes)}`,
+    );
+  }
+
+  return {
+    id: `graph_branch_router_${options.joinMode ?? "any"}_${options.negate === true ? "negated" : "normal"}`,
+    name: "Branch Router Package Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      ...fragment.nodes,
+    ],
+    edges: [
+      ...fragment.edges,
+      {
+        id: "edge_package_condition",
+        source: "src_text",
+        sourcePort: "text",
+        target: routeIf.id,
+        targetPort: "condition",
+      },
+      {
+        id: "edge_package_then_value",
+        source: "src_text",
+        sourcePort: "text",
+        target: thenStage.id,
+        targetPort: "value",
+      },
+      {
+        id: "edge_package_else_value",
+        source: "src_text",
+        sourcePort: "text",
+        target: elseStage.id,
+        targetPort: "value",
+      },
+      {
+        id: "edge_package_after_join_value",
+        source: "src_text",
+        sourcePort: "text",
+        target: afterJoin.id,
+        targetPort: "value",
+      },
+    ],
+  };
+}
+
 function makeOptionalMainTakeoverGraph(
   graph: WorkbenchGraph = makeBaseGraph(),
 ): WorkbenchGraph {
@@ -2822,6 +2916,87 @@ async function runValidationSpec(): Promise<void> {
       exclusiveJoinAllCtlResult.outputs.pending_count === 1 &&
       exclusiveJoinAllResult.finalOutputs.final_filter === undefined,
     `Expected ctl_join(all) to keep final execution blocked when only one branch completes. Actual: results=${exclusiveJoinAllResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")} ctl_join=${JSON.stringify(exclusiveJoinAllCtlResult)} final=${JSON.stringify(exclusiveJoinAllResult.finalOutputs)}`,
+  );
+
+  const branchRouterPackageGraph = makeBranchRouterPackageGraph();
+  const branchRouterValidation = validateGraph(branchRouterPackageGraph);
+  assert(
+    branchRouterValidation.errors.length === 0,
+    `Expected pkg_control_branch_router graph fixture to validate. Actual: ${JSON.stringify(branchRouterValidation.errors)}`,
+  );
+  const branchRouterPackageResult = await executeGraph(
+    branchRouterPackageGraph,
+    makeExecutionContext({
+      userInput: "package-router",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    branchRouterPackageResult.ok,
+    "Expected pkg_control_branch_router execution to succeed",
+  );
+  const packageThenStageResult = branchRouterPackageResult.moduleResults.find(
+    (result) =>
+      result.moduleId === "cmp_passthrough" &&
+      result.outputs?.value_out === "package-router" &&
+      result.status === "ok",
+  );
+  const packageElseStageResult = branchRouterPackageResult.moduleResults.find(
+    (result) =>
+      result.moduleId === "cmp_passthrough" &&
+      result.status === "skipped" &&
+      result.executionDecision?.reason === "inactive_control_flow",
+  );
+  const packageJoinResult = branchRouterPackageResult.moduleResults.find(
+    (result) => result.moduleId === "ctl_join",
+  );
+  const packageAfterJoinResult = branchRouterPackageResult.moduleResults.find(
+    (result) =>
+      result.moduleId === "cmp_passthrough" &&
+      result.executionDecision?.reason !== "inactive_control_flow" &&
+      result.outputs?.value_out === "package-router" &&
+      result.nodeId !== packageThenStageResult?.nodeId,
+  );
+  assert(
+    packageThenStageResult?.status === "ok" &&
+      packageElseStageResult?.status === "skipped" &&
+      packageJoinResult?.outputs.joined === true &&
+      packageJoinResult.outputs.mode === "any" &&
+      packageAfterJoinResult?.status === "ok" &&
+      branchRouterPackageResult.executionDecisionSummary?.decisionCounts
+        .inactive_control_flow === 1 &&
+      branchRouterPackageResult.finalOutputs[packageAfterJoinResult.nodeId]
+        ?.value_out === "package-router",
+    `Expected branch router package to execute selected branch, skip the inactive branch, and unlock the post-join node. Actual: ${JSON.stringify(branchRouterPackageResult.moduleResults)}`,
+  );
+
+  const negatedBranchRouterResult = await executeGraph(
+    makeBranchRouterPackageGraph({ negate: true }),
+    makeExecutionContext({
+      userInput: "package-router",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    negatedBranchRouterResult.ok,
+    "Expected negated pkg_control_branch_router execution to succeed",
+  );
+  const negatedInactiveNode = negatedBranchRouterResult.moduleResults.find(
+    (result) =>
+      result.moduleId === "cmp_passthrough" &&
+      result.status === "skipped" &&
+      result.executionDecision?.reason === "inactive_control_flow",
+  );
+  const negatedExecutedNodes = negatedBranchRouterResult.moduleResults.filter(
+    (result) =>
+      result.moduleId === "cmp_passthrough" &&
+      result.status === "ok" &&
+      result.outputs?.value_out === "package-router",
+  );
+  assert(
+    negatedInactiveNode !== undefined &&
+      negatedExecutedNodes.length >= 2,
+    `Expected negated branch router package to flip the selected branch while preserving post-join execution. Actual: ${JSON.stringify(negatedBranchRouterResult.moduleResults)}`,
   );
 
   const controlCompileRunLinkEnvelope =
@@ -9749,6 +9924,9 @@ async function runValidationSpec(): Promise<void> {
   const worldbookPackage = compositeModules.find(
     (module) => module.moduleId === "pkg_worldbook_engine",
   );
+  const controlBranchPackage = compositeModules.find(
+    (module) => module.moduleId === "pkg_control_branch_router",
+  );
   const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
     moduleId: "pkg_full_workflow",
     origin: { x: 400, y: 120 },
@@ -9760,8 +9938,32 @@ async function runValidationSpec(): Promise<void> {
       reasoning_effort: "high",
     },
   });
+  const instantiatedControlBranchPackage = instantiateCompositeTemplate({
+    moduleId: "pkg_control_branch_router",
+    origin: { x: 240, y: 320 },
+    exposedConfig: {
+      negate: true,
+      join_mode: "all",
+    },
+  });
   assert(
-    fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
+    controlBranchPackage?.compositeTemplate?.nodes.length === 5 &&
+      controlBranchPackage.compositeTemplate.edges.length === 5 &&
+      controlBranchPackage.configSchema?.some(
+        (field) => field.key === "join_mode",
+      ) &&
+      instantiatedControlBranchPackage?.nodes.some(
+        (node) =>
+          node.moduleId === "ctl_if" && node.config.negate === true,
+      ) &&
+      instantiatedControlBranchPackage.nodes.some(
+        (node) =>
+          node.moduleId === "ctl_join" && node.config.mode === "all",
+      ) &&
+      instantiatedControlBranchPackage.nodes.filter(
+        (node) => node.moduleId === "cmp_passthrough",
+      ).length === 3 &&
+      fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
       fullWorkflowPackage.compositeTemplate.edges.length === 5 &&
       fullWorkflowPackage.configSchema?.some(
         (field) => field.key === "context_turns",
@@ -9784,7 +9986,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings. Actual full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings. Actual control=${JSON.stringify(controlBranchPackage)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===

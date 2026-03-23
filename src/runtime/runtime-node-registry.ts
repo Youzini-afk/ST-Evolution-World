@@ -880,6 +880,19 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
   });
 
   registerNodeHandler({
+    moduleId: "cmp_passthrough",
+    handlerId: "cmp_passthrough",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ inputs }) => ({
+      outputs: {
+        value_out: inputs.value ?? null,
+      },
+      handlerId: "cmp_passthrough",
+    }),
+  });
+
+  registerNodeHandler({
     moduleId: "ctl_if",
     handlerId: "ctl_if",
     kind: "builtin",

@@ -1056,6 +1056,9 @@ function getCompositePreviewLabels(moduleId: string): string[] {
   const blueprint = getModuleBlueprint(moduleId);
   const nodes = blueprint.compositeTemplate?.nodes ?? [];
   return nodes.map((node) => {
+    if (typeof node.config?._label === "string" && node.config._label.trim()) {
+      return node.config._label;
+    }
     try {
       return getModuleBlueprint(node.moduleId).label;
     } catch {

@@ -1,5 +1,5 @@
 /* ═══ Module Workbench — Module Registry ═══ */
-/* All 44 atomic modules + composite packages */
+/* All atomic modules + composite packages */
 
 import {
   RESERVED_ACTIVATION_PORT_ID,
@@ -865,6 +865,31 @@ const COMPOSE_MODULES: ModuleBlueprint[] = [
       },
     ],
   },
+  {
+    moduleId: "cmp_passthrough",
+    label: "直通",
+    category: "compose",
+    color: "#10b981",
+    icon: "↦",
+    description:
+      "原样透传任意输入值；未接输入时保守输出 null，适合作为分支占位或 fragment 脚手架节点。",
+    ports: [
+      {
+        id: "value",
+        label: "输入值",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "value_out",
+        label: "透传值",
+        direction: "out",
+        dataType: "any",
+      },
+    ],
+    defaultConfig: {},
+  },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -1420,6 +1445,125 @@ const CONFIG_MODULES: ModuleBlueprint[] = [
 // ════════════════════════════════════════════════════════════
 
 const COMPOSITE_MODULES: ModuleBlueprint[] = [
+  {
+    moduleId: "pkg_control_branch_router",
+    label: "🧭 两路分支脚手架",
+    category: "control",
+    color: "#f97316",
+    icon: "🧭",
+    description:
+      "Builder 宏脚手架：条件分支 → Then/Else 占位 → 分支汇合 → 汇合后节点，插入后直接展开成可编辑子图。",
+    ports: [
+      {
+        id: "condition",
+        label: "条件",
+        direction: "in",
+        dataType: "any",
+      },
+      {
+        id: "value",
+        label: "透传值",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "value_out",
+        label: "汇合后值",
+        direction: "out",
+        dataType: "any",
+      },
+    ],
+    defaultConfig: {
+      negate: false,
+      join_mode: "any",
+    },
+    configSchema: [
+      {
+        key: "negate",
+        label: "反转条件",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "插入时写入内部条件分支节点。启用后 then / else 命中结果会反转。",
+      },
+      {
+        key: "join_mode",
+        label: "汇合策略",
+        type: "select",
+        options: ["any", "all"],
+        exposeInSimpleMode: false,
+        description:
+          "any 适合普通两路路由；all 适合后续把占位扩展成并行分支后再汇合。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("route_if", "ctl_if", 0, 0, { _label: "路由判断" }),
+        compositeNode("branch_then", "cmp_passthrough", 260, -140, {
+          _label: "Then 占位",
+        }),
+        compositeNode("branch_else", "cmp_passthrough", 260, 140, {
+          _label: "Else 占位",
+        }),
+        compositeNode("route_join", "ctl_join", 540, 0, {
+          _label: "分支汇合",
+        }),
+        compositeNode("after_join", "cmp_passthrough", 820, 0, {
+          _label: "汇合后",
+        }),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_then_activation",
+          "route_if",
+          "then",
+          "branch_then",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_else_activation",
+          "route_if",
+          "else",
+          "branch_else",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_then_done",
+          "branch_then",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "route_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_else_done",
+          "branch_else",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "route_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_join_activation",
+          "route_join",
+          "joined",
+          "after_join",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "negate",
+          targetNodeId: "route_if",
+          targetConfigKey: "negate",
+        },
+        {
+          sourceKey: "join_mode",
+          targetNodeId: "route_join",
+          targetConfigKey: "mode",
+        },
+      ],
+    },
+    isComposite: true,
+  },
   {
     moduleId: "pkg_worldbook_engine",
     label: "📖 世界书引擎",
