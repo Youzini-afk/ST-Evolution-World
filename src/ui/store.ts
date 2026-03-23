@@ -4,6 +4,7 @@ import {
   GraphDocumentEnvelope,
   buildGraphDocumentExportPayload,
 } from "@/runtime/graph-document-codec";
+import { readGraphExecutionFrontierExplainArtifactEnvelope } from "@/runtime/graph-execution-frontier-explain-artifact-codec";
 import { readGraphNodeExecutionDispositionExplainArtifactEnvelope } from "@/runtime/graph-node-execution-disposition-explain-artifact-codec";
 import { readGraphTerminalOutcomeExplainArtifactEnvelope } from "@/runtime/graph-terminal-outcome-explain-artifact-codec";
 import _ from "lodash";
@@ -74,6 +75,7 @@ import type {
   GraphCompileArtifactV1,
   GraphCompileRunLinkArtifactV1,
   GraphDependencyReadinessExplainArtifactV1,
+  GraphExecutionFrontierExplainArtifactV1,
   GraphExecutionStage,
   GraphFailureExplainArtifactV1,
   GraphHostEffectExplainArtifactV1,
@@ -1302,6 +1304,15 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     );
   }
 
+  function toActiveGraphExecutionFrontierExplainArtifact(
+    diagnostics: unknown,
+  ): GraphExecutionFrontierExplainArtifactV1 | null {
+    return (
+      readGraphExecutionFrontierExplainArtifactEnvelope(diagnostics)
+        ?.artifact ?? null
+    );
+  }
+
   function toActiveGraphRunArtifact(
     diagnostics: unknown,
   ): GraphRunArtifact | null {
@@ -1912,6 +1923,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   const activeGraphDependencyReadinessExplainArtifact = computed(() =>
     toActiveGraphDependencyReadinessExplainArtifact(lastRun.value?.diagnostics),
+  );
+
+  const activeGraphExecutionFrontierExplainArtifact = computed(() =>
+    toActiveGraphExecutionFrontierExplainArtifact(lastRun.value?.diagnostics),
   );
 
   const activeWorkbenchNodeDiagnostics = computed(() =>
@@ -2855,6 +2870,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphTerminalOutcomeExplainArtifact,
     activeGraphBlockingExplainArtifact,
     activeGraphDependencyReadinessExplainArtifact,
+    activeGraphExecutionFrontierExplainArtifact,
     activeGraphRunArtifact,
     activeGraphRunSummary,
     getModuleExplainContractView,

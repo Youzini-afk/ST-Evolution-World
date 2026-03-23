@@ -3,6 +3,7 @@ import type {
   GraphCompilePlan,
   GraphCompileRunLinkArtifactEnvelope,
   GraphDependencyReadinessExplainArtifactEnvelope,
+  GraphExecutionFrontierExplainArtifactEnvelope,
   GraphExecutionResult,
   GraphFailureExplainArtifactEnvelope,
   GraphHostEffectExplainArtifactEnvelope,
@@ -26,6 +27,7 @@ import { createGraphBlockingExplainArtifactEnvelope } from "./graph-blocking-exp
 import { createGraphCompileArtifactEnvelope } from "./graph-compile-artifact-codec";
 import { createGraphCompileRunLinkArtifactEnvelope } from "./graph-compile-run-link-artifact-codec";
 import { createGraphDependencyReadinessExplainArtifactEnvelope } from "./graph-dependency-readiness-explain-artifact-codec";
+import { createGraphExecutionFrontierExplainArtifactEnvelope } from "./graph-execution-frontier-explain-artifact-codec";
 import { executeGraph, validateGraph } from "./graph-executor";
 import { createGraphFailureExplainArtifactEnvelope } from "./graph-failure-explain-artifact-codec";
 import { createGraphHostEffectExplainArtifactEnvelope } from "./graph-host-effect-explain-artifact-codec";
@@ -78,6 +80,7 @@ export type WorkflowBridgeDiagnostics = {
   graph_host_effect_explain_artifact?: GraphHostEffectExplainArtifactEnvelope;
   graph_node_execution_disposition_explain_artifact?: GraphNodeExecutionDispositionExplainArtifactEnvelope;
   graph_dependency_readiness_explain_artifact?: GraphDependencyReadinessExplainArtifactEnvelope;
+  graph_execution_frontier_explain_artifact?: GraphExecutionFrontierExplainArtifactEnvelope;
   graph_output_explain_artifact?: GraphOutputExplainArtifactEnvelope;
   graph_reuse_explain_artifact?: GraphReuseExplainArtifactEnvelope;
   graph_scheduling_explain_artifact?: GraphSchedulingExplainArtifactEnvelope;
@@ -884,6 +887,20 @@ export function buildWorkflowBridgeDiagnostics(params: {
       failureExplainArtifact: graphFailureExplainArtifact?.artifact ?? null,
       blockingExplainArtifact: graphBlockingExplainArtifact?.artifact ?? null,
     });
+  const graphExecutionFrontierExplainArtifact =
+    createGraphExecutionFrontierExplainArtifactEnvelope({
+      plan: graphCompilePlan ?? null,
+      runArtifact: effectiveGraphRunOverview ?? null,
+      compileRunLinkArtifact: graphCompileRunLinkArtifact?.artifact ?? null,
+      inputResolutionArtifact:
+        graphNodeInputResolutionArtifact?.artifact ?? null,
+      nodeExecutionDispositionExplainArtifact:
+        graphNodeExecutionDispositionExplainArtifact?.artifact ?? null,
+      dependencyReadinessExplainArtifact:
+        graphDependencyReadinessExplainArtifact?.artifact ?? null,
+      failureExplainArtifact: graphFailureExplainArtifact?.artifact ?? null,
+      blockingExplainArtifact: graphBlockingExplainArtifact?.artifact ?? null,
+    });
   const diagnostics: WorkflowBridgeDiagnostics = {
     route: selection.route,
     reason: selection.reason,
@@ -937,6 +954,12 @@ export function buildWorkflowBridgeDiagnostics(params: {
       ? {
           graph_dependency_readiness_explain_artifact:
             graphDependencyReadinessExplainArtifact,
+        }
+      : {}),
+    ...(graphExecutionFrontierExplainArtifact
+      ? {
+          graph_execution_frontier_explain_artifact:
+            graphExecutionFrontierExplainArtifact,
         }
       : {}),
     ...(graphTerminalOutcomeExplainArtifact

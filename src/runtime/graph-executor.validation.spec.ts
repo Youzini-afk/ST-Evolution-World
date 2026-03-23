@@ -38,6 +38,10 @@ import {
   toWorkbenchGraphs,
 } from "./graph-document-codec";
 import {
+  createGraphExecutionFrontierExplainArtifactEnvelope,
+  readGraphExecutionFrontierExplainArtifactEnvelope,
+} from "./graph-execution-frontier-explain-artifact-codec";
+import {
   buildGraphRunDiagnosticsOverview,
   clearGraphExecutorReusableOutputsForTesting,
   compileGraphPlan,
@@ -342,6 +346,39 @@ function toActiveGraphDependencyReadinessExplainArtifactForTest(
         }))
       : [],
   };
+}
+
+function toActiveGraphExecutionFrontierExplainArtifactForTest(
+  diagnostics: Record<string, any>,
+): {
+  summary?: {
+    nodeCounts?: {
+      readyFrontier?: number;
+      blockedDependency?: number;
+      blockedInput?: number;
+      blockedNonTerminal?: number;
+      unreachable?: number;
+      unknown?: number;
+    };
+    reasonCounts?: Record<string, number>;
+    evidenceSources?: string[];
+  };
+  nodes?: Array<{
+    nodeId?: string;
+    frontierDisposition?: string;
+    primaryReasonKind?: string;
+    unresolvedInputKeys?: string[];
+    blockingDependencyNodeIds?: string[];
+    blockedByRunStatus?: string;
+    runDisposition?: string;
+  }>;
+} | null {
+  const artifact =
+    readGraphExecutionFrontierExplainArtifactEnvelope(diagnostics)?.artifact;
+  if (!artifact || typeof artifact !== "object") {
+    return null;
+  }
+  return artifact as any;
 }
 
 function toActiveGraphRunArtifactForTest(diagnostics: Record<string, any>): {
@@ -8982,7 +9019,1415 @@ async function runValidationSpec(): Promise<void> {
   );
 }
 
+async function runExecutionFrontierValidationSpec(): Promise<void> {
+  setActivePinia(createPinia());
+
+  const compilePlanFixture: GraphCompilePlan = {
+    compileFingerprint: "frontier_test_fp",
+    fingerprintVersion: 1,
+    fingerprintSource: {
+      graphId: "graph_frontier",
+      nodeCount: 4,
+      edgeCount: 3,
+    },
+    nodeOrder: ["src_a", "filter_b", "filter_c", "out_d"],
+    terminalNodeIds: ["out_d"],
+    sideEffectNodeIds: ["out_d"],
+    nodes: [
+      {
+        nodeId: "src_a",
+        moduleId: "src_user_input",
+        nodeFingerprint: "fp_a",
+        order: 0,
+        sequence: 0,
+        dependsOn: [],
+        isTerminal: false,
+        isSideEffectNode: false,
+      },
+      {
+        nodeId: "filter_b",
+        moduleId: "flt_mvu_strip",
+        nodeFingerprint: "fp_b",
+        order: 1,
+        sequence: 1,
+        dependsOn: ["src_a"],
+        isTerminal: false,
+        isSideEffectNode: false,
+      },
+      {
+        nodeId: "filter_c",
+        moduleId: "flt_mvu_strip",
+        nodeFingerprint: "fp_c",
+        order: 2,
+        sequence: 2,
+        dependsOn: ["filter_b"],
+        isTerminal: false,
+        isSideEffectNode: false,
+      },
+      {
+        nodeId: "out_d",
+        moduleId: "out_reply_inject",
+        nodeFingerprint: "fp_d",
+        order: 3,
+        sequence: 3,
+        dependsOn: ["filter_c"],
+        isTerminal: true,
+        isSideEffectNode: true,
+      },
+    ] as any,
+  };
+
+  // --- Test 1: ready_frontier (prerequisites satisfied but not executed) ---
+  const readyFrontierEnvelope =
+    createGraphExecutionFrontierExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_frontier_1",
+        graphId: "graph_frontier",
+        compileFingerprint: "frontier_test_fp",
+        status: "completed",
+        phase: "terminal",
+        phaseLabel: "terminal",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      } as any,
+      compileRunLinkArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_1",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            dependsOn: [],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "executed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            dependsOn: ["src_a"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            dependsOn: ["filter_b"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            dependsOn: ["filter_c"],
+            isTerminal: true,
+            isSideEffect: true,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+        ],
+      },
+      dependencyReadinessExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_1",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          nodeCounts: {
+            ready: 2,
+            notReadyDependency: 1,
+            notReadyInput: 0,
+            blockedNonTerminal: 0,
+            truncatedByFailure: 0,
+            unknown: 1,
+          },
+          reasonCounts: {
+            all_prerequisites_satisfied: 2,
+            dependency_not_ready: 1,
+            missing_or_unresolved_input: 0,
+            non_terminal_blocked: 0,
+            truncated_by_failure: 0,
+            unknown: 1,
+          },
+          evidenceSources: ["compile_run_link"],
+        },
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            readinessDisposition: "not_ready_dependency",
+            primaryReasonKind: "dependency_not_ready",
+            readinessEvidenceSources: ["compile_run_link"],
+            blockingDependencyNodeIds: ["filter_b"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            readinessDisposition: "not_ready_dependency",
+            primaryReasonKind: "dependency_not_ready",
+            readinessEvidenceSources: ["compile_run_link"],
+            blockingDependencyNodeIds: ["filter_c"],
+            runDisposition: "not_reached",
+          },
+        ],
+      },
+    });
+  const frontierArtifact1 = readyFrontierEnvelope?.artifact;
+  const frontierNodeB = frontierArtifact1?.nodes.find(
+    (n) => n.nodeId === "filter_b",
+  );
+  assert(
+    readyFrontierEnvelope?.kind ===
+      "graph_execution_frontier_explain_artifact" &&
+      readyFrontierEnvelope.version === "v1" &&
+      frontierNodeB?.frontierDisposition === "ready_frontier" &&
+      frontierNodeB?.primaryReasonKind ===
+        "all_prerequisites_satisfied_but_not_executed",
+    `F.1: Expected filter_b to be ready_frontier. Actual: ${JSON.stringify(frontierNodeB)}`,
+  );
+
+  // --- Test 2: blocked_dependency ---
+  const frontierNodeC = frontierArtifact1?.nodes.find(
+    (n) => n.nodeId === "filter_c",
+  );
+  assert(
+    frontierNodeC?.frontierDisposition === "blocked_dependency" &&
+      frontierNodeC?.primaryReasonKind === "dependency_not_ready",
+    `F.2: Expected filter_c to be blocked_dependency. Actual: ${JSON.stringify(frontierNodeC)}`,
+  );
+
+  // --- Test 3: blocked_input ---
+  const blockedInputEnvelope =
+    createGraphExecutionFrontierExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_frontier_input",
+        graphId: "graph_frontier",
+        compileFingerprint: "frontier_test_fp",
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "blocked",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      } as any,
+      compileRunLinkArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_input",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            dependsOn: [],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "executed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            dependsOn: ["src_a"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            dependsOn: ["filter_b"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            dependsOn: ["filter_c"],
+            isTerminal: true,
+            isSideEffect: true,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+        ],
+      },
+      inputResolutionArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_input",
+        compileFingerprint: "frontier_test_fp",
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            inputs: [],
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            inputs: [
+              {
+                inputKey: "text",
+                resolutionStatus: "missing",
+                sourceKind: "unknown",
+                isDefaulted: false,
+                missingReason: "value_unavailable",
+              },
+            ],
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            inputs: [],
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            inputs: [],
+          },
+        ],
+      },
+      dependencyReadinessExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_input",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          nodeCounts: {
+            ready: 1,
+            notReadyDependency: 0,
+            notReadyInput: 1,
+            blockedNonTerminal: 0,
+            truncatedByFailure: 0,
+            unknown: 2,
+          },
+          reasonCounts: {
+            all_prerequisites_satisfied: 1,
+            dependency_not_ready: 0,
+            missing_or_unresolved_input: 1,
+            non_terminal_blocked: 0,
+            truncated_by_failure: 0,
+            unknown: 2,
+          },
+          evidenceSources: ["compile_run_link", "input_resolution"],
+        },
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            readinessDisposition: "not_ready_input",
+            primaryReasonKind: "missing_or_unresolved_input",
+            readinessEvidenceSources: ["compile_run_link", "input_resolution"],
+            unresolvedInputKeys: ["text"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            readinessDisposition: "not_ready_dependency",
+            primaryReasonKind: "dependency_not_ready",
+            readinessEvidenceSources: ["compile_run_link"],
+            blockingDependencyNodeIds: ["filter_b"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            readinessDisposition: "not_ready_dependency",
+            primaryReasonKind: "dependency_not_ready",
+            readinessEvidenceSources: ["compile_run_link"],
+            blockingDependencyNodeIds: ["filter_c"],
+            runDisposition: "not_reached",
+          },
+        ],
+      },
+    });
+  const blockedInputNode = blockedInputEnvelope?.artifact?.nodes.find(
+    (n) => n.nodeId === "filter_b",
+  );
+  assert(
+    blockedInputNode?.frontierDisposition === "blocked_input" &&
+      blockedInputNode?.primaryReasonKind === "missing_or_unresolved_input" &&
+      JSON.stringify(blockedInputNode?.unresolvedInputKeys) ===
+        JSON.stringify(["text"]),
+    `F.3: Expected filter_b to be blocked_input. Actual: ${JSON.stringify(blockedInputNode)}`,
+  );
+
+  // --- Test 4: blocked_non_terminal ---
+  const blockedNonTerminalEnvelope =
+    createGraphExecutionFrontierExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_frontier_nt",
+        graphId: "graph_frontier",
+        compileFingerprint: "frontier_test_fp",
+        status: "waiting_user",
+        phase: "blocked",
+        phaseLabel: "blocked",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      } as any,
+      compileRunLinkArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_nt",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            dependsOn: [],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "executed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            dependsOn: ["src_a"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            dependsOn: ["filter_b"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            dependsOn: ["filter_c"],
+            isTerminal: true,
+            isSideEffect: true,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+        ],
+      },
+      dependencyReadinessExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_nt",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          nodeCounts: {
+            ready: 1,
+            notReadyDependency: 0,
+            notReadyInput: 0,
+            blockedNonTerminal: 3,
+            truncatedByFailure: 0,
+            unknown: 0,
+          },
+          reasonCounts: {
+            all_prerequisites_satisfied: 1,
+            dependency_not_ready: 0,
+            missing_or_unresolved_input: 0,
+            non_terminal_blocked: 3,
+            truncated_by_failure: 0,
+            unknown: 0,
+          },
+          evidenceSources: ["compile_run_link", "blocking_explain"],
+        },
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            readinessDisposition: "blocked_non_terminal",
+            primaryReasonKind: "non_terminal_blocked",
+            readinessEvidenceSources: ["compile_run_link", "blocking_explain"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            readinessDisposition: "blocked_non_terminal",
+            primaryReasonKind: "non_terminal_blocked",
+            readinessEvidenceSources: ["compile_run_link", "blocking_explain"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            readinessDisposition: "blocked_non_terminal",
+            primaryReasonKind: "non_terminal_blocked",
+            readinessEvidenceSources: ["compile_run_link", "blocking_explain"],
+            runDisposition: "not_reached",
+          },
+        ],
+      },
+      blockingExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_nt",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        summary: {
+          runStatus: "waiting_user",
+          phase: "blocked",
+          blockingDisposition: "waiting_user",
+          blockingExplainKind: "waiting_for_external_input",
+          isHumanInputRequired: true,
+          checkpointObserved: false,
+          evidenceSources: ["run_status"],
+        },
+      },
+    });
+  const blockedNtNode = blockedNonTerminalEnvelope?.artifact?.nodes.find(
+    (n) => n.nodeId === "filter_b",
+  );
+  assert(
+    blockedNtNode?.frontierDisposition === "blocked_non_terminal" &&
+      blockedNtNode?.primaryReasonKind === "non_terminal_blocked",
+    `F.4: Expected filter_b to be blocked_non_terminal. Actual: ${JSON.stringify(blockedNtNode)}`,
+  );
+
+  // --- Test 5: unreachable (failure truncation) ---
+  const unreachableEnvelope =
+    createGraphExecutionFrontierExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_frontier_fail",
+        graphId: "graph_frontier",
+        compileFingerprint: "frontier_test_fp",
+        status: "failed",
+        phase: "terminal",
+        phaseLabel: "terminal",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      } as any,
+      compileRunLinkArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_fail",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            dependsOn: [],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "executed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            dependsOn: ["src_a"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "failed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            dependsOn: ["filter_b"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            dependsOn: ["filter_c"],
+            isTerminal: true,
+            isSideEffect: true,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+        ],
+      },
+      dependencyReadinessExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_fail",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          nodeCounts: {
+            ready: 2,
+            notReadyDependency: 0,
+            notReadyInput: 0,
+            blockedNonTerminal: 0,
+            truncatedByFailure: 2,
+            unknown: 0,
+          },
+          reasonCounts: {
+            all_prerequisites_satisfied: 2,
+            dependency_not_ready: 0,
+            missing_or_unresolved_input: 0,
+            non_terminal_blocked: 0,
+            truncated_by_failure: 2,
+            unknown: 0,
+          },
+          evidenceSources: ["compile_run_link", "failure_explain"],
+        },
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "failed",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            readinessDisposition: "truncated_by_failure",
+            primaryReasonKind: "truncated_by_failure",
+            readinessEvidenceSources: ["compile_run_link", "failure_explain"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            readinessDisposition: "truncated_by_failure",
+            primaryReasonKind: "truncated_by_failure",
+            readinessEvidenceSources: ["compile_run_link", "failure_explain"],
+            runDisposition: "not_reached",
+          },
+        ],
+      },
+      failureExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_fail",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          runFailed: true,
+          failedStage: "execute",
+          failureKind: "node_handler_error",
+          failedNodeCount: 1,
+          notReachedNodeCount: 2,
+          executedBeforeFailureNodeCount: 1,
+          failureEvidenceSources: ["compile_run_link"],
+        },
+        failedNodeIds: ["filter_b"],
+        notReachedNodeIds: ["filter_c", "out_d"],
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            runDisposition: "executed",
+            failureDisposition: "not_failed",
+            failureObserved: false,
+            stage: "unknown",
+            failureReasonKind: "none",
+            isTerminal: false,
+            isSideEffect: false,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "no_observed_output",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            runDisposition: "failed",
+            failureDisposition: "failed",
+            failureObserved: true,
+            stage: "execute",
+            failureReasonKind: "node_handler_error",
+            isTerminal: false,
+            isSideEffect: false,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "no_observed_output",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            runDisposition: "not_reached",
+            failureDisposition: "not_reached",
+            failureObserved: false,
+            stage: "unknown",
+            failureReasonKind: "dependency_not_reached",
+            isTerminal: false,
+            isSideEffect: false,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "not_reached",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            runDisposition: "not_reached",
+            failureDisposition: "not_reached",
+            failureObserved: false,
+            stage: "unknown",
+            failureReasonKind: "dependency_not_reached",
+            isTerminal: true,
+            isSideEffect: true,
+            outputObservedBeforeFailure: false,
+            outputProjectionKind: "not_reached",
+            producedHostEffectBeforeFailure: false,
+            hostEffectProjectionKind: "no_host_effect",
+            inputResolutionObserved: true,
+            reuseDisposition: "not_applicable",
+          },
+        ],
+      } as any,
+    });
+  const unreachableNodeC = unreachableEnvelope?.artifact?.nodes.find(
+    (n) => n.nodeId === "filter_c",
+  );
+  assert(
+    unreachableNodeC?.frontierDisposition === "unreachable" &&
+      unreachableNodeC?.primaryReasonKind === "truncated_or_unreachable",
+    `F.5: Expected filter_c to be unreachable. Actual: ${JSON.stringify(unreachableNodeC)}`,
+  );
+
+  // --- Test 6: conflict → unknown fallback ---
+  const conflictEnvelope = createGraphExecutionFrontierExplainArtifactEnvelope({
+    plan: compilePlanFixture,
+    runArtifact: {
+      runId: "run_frontier_conflict",
+      graphId: "graph_frontier",
+      compileFingerprint: "frontier_test_fp",
+      status: "waiting_user",
+      phase: "blocked",
+      phaseLabel: "blocked",
+      eventCount: 0,
+      updatedAt: Date.now(),
+    } as any,
+    compileRunLinkArtifact: {
+      graphId: "graph_frontier",
+      runId: "run_frontier_conflict",
+      compileFingerprint: "frontier_test_fp",
+      fingerprintVersion: 1,
+      nodeCount: 4,
+      terminalOutputNodeIds: [],
+      hostEffectNodeIds: [],
+      nodes: [
+        {
+          nodeId: "src_a",
+          moduleId: "src_user_input",
+          nodeFingerprint: "fp_a",
+          compileOrder: 0,
+          dependsOn: [],
+          isTerminal: false,
+          isSideEffect: false,
+          runDisposition: "executed",
+          includedInFinalOutputs: false,
+          producedHostEffect: false,
+          inputResolutionObserved: true,
+        },
+        {
+          nodeId: "filter_b",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint: "fp_b",
+          compileOrder: 1,
+          dependsOn: ["src_a"],
+          isTerminal: false,
+          isSideEffect: false,
+          runDisposition: "not_reached",
+          includedInFinalOutputs: false,
+          producedHostEffect: false,
+          inputResolutionObserved: true,
+        },
+        {
+          nodeId: "filter_c",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint: "fp_c",
+          compileOrder: 2,
+          dependsOn: ["filter_b"],
+          isTerminal: false,
+          isSideEffect: false,
+          runDisposition: "not_reached",
+          includedInFinalOutputs: false,
+          producedHostEffect: false,
+          inputResolutionObserved: true,
+        },
+        {
+          nodeId: "out_d",
+          moduleId: "out_reply_inject",
+          nodeFingerprint: "fp_d",
+          compileOrder: 3,
+          dependsOn: ["filter_c"],
+          isTerminal: true,
+          isSideEffect: true,
+          runDisposition: "not_reached",
+          includedInFinalOutputs: false,
+          producedHostEffect: false,
+          inputResolutionObserved: true,
+        },
+      ],
+    },
+    inputResolutionArtifact: {
+      graphId: "graph_frontier",
+      runId: "run_frontier_conflict",
+      compileFingerprint: "frontier_test_fp",
+      nodes: [
+        {
+          nodeId: "src_a",
+          moduleId: "src_user_input",
+          nodeFingerprint: "fp_a",
+          inputs: [],
+        },
+        {
+          nodeId: "filter_b",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint: "fp_b",
+          inputs: [
+            {
+              inputKey: "text",
+              resolutionStatus: "missing",
+              sourceKind: "unknown",
+              isDefaulted: false,
+              missingReason: "value_unavailable",
+            },
+          ],
+        },
+        {
+          nodeId: "filter_c",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint: "fp_c",
+          inputs: [],
+        },
+        {
+          nodeId: "out_d",
+          moduleId: "out_reply_inject",
+          nodeFingerprint: "fp_d",
+          inputs: [],
+        },
+      ],
+    },
+    dependencyReadinessExplainArtifact: {
+      graphId: "graph_frontier",
+      runId: "run_frontier_conflict",
+      compileFingerprint: "frontier_test_fp",
+      fingerprintVersion: 1,
+      nodeCount: 4,
+      summary: {
+        nodeCounts: {
+          ready: 1,
+          notReadyDependency: 1,
+          notReadyInput: 1,
+          blockedNonTerminal: 0,
+          truncatedByFailure: 0,
+          unknown: 1,
+        },
+        reasonCounts: {
+          all_prerequisites_satisfied: 1,
+          dependency_not_ready: 1,
+          missing_or_unresolved_input: 1,
+          non_terminal_blocked: 0,
+          truncated_by_failure: 0,
+          unknown: 1,
+        },
+        evidenceSources: ["compile_run_link", "input_resolution"],
+      },
+      nodes: [
+        {
+          nodeId: "src_a",
+          moduleId: "src_user_input",
+          nodeFingerprint: "fp_a",
+          compileOrder: 0,
+          readinessDisposition: "ready",
+          primaryReasonKind: "all_prerequisites_satisfied",
+          readinessEvidenceSources: ["compile_run_link"],
+          runDisposition: "executed",
+        },
+        {
+          nodeId: "filter_b",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint: "fp_b",
+          compileOrder: 1,
+          readinessDisposition: "not_ready_input",
+          primaryReasonKind: "missing_or_unresolved_input",
+          readinessEvidenceSources: ["compile_run_link", "input_resolution"],
+          unresolvedInputKeys: ["text"],
+          runDisposition: "not_reached",
+        },
+        {
+          nodeId: "filter_c",
+          moduleId: "flt_mvu_strip",
+          nodeFingerprint: "fp_c",
+          compileOrder: 2,
+          readinessDisposition: "not_ready_dependency",
+          primaryReasonKind: "dependency_not_ready",
+          readinessEvidenceSources: ["compile_run_link"],
+          blockingDependencyNodeIds: ["filter_b"],
+          runDisposition: "not_reached",
+        },
+        {
+          nodeId: "out_d",
+          moduleId: "out_reply_inject",
+          nodeFingerprint: "fp_d",
+          compileOrder: 3,
+          readinessDisposition: "not_ready_dependency",
+          primaryReasonKind: "dependency_not_ready",
+          readinessEvidenceSources: ["compile_run_link"],
+          blockingDependencyNodeIds: ["filter_c"],
+          runDisposition: "not_reached",
+        },
+      ],
+    },
+    blockingExplainArtifact: {
+      graphId: "graph_frontier",
+      runId: "run_frontier_conflict",
+      compileFingerprint: "frontier_test_fp",
+      fingerprintVersion: 1,
+      summary: {
+        runStatus: "waiting_user",
+        phase: "blocked",
+        blockingDisposition: "waiting_user",
+        blockingExplainKind: "waiting_for_external_input",
+        isHumanInputRequired: true,
+        checkpointObserved: false,
+        evidenceSources: ["run_status"],
+      },
+    },
+  });
+  const conflictNodeB = conflictEnvelope?.artifact?.nodes.find(
+    (n) => n.nodeId === "filter_b",
+  );
+  assert(
+    conflictNodeB?.frontierDisposition === "unknown" &&
+      conflictNodeB?.primaryReasonKind === "unknown",
+    `F.6: Expected filter_b with conflicting evidence to fall back to unknown. Actual: ${JSON.stringify(conflictNodeB)}`,
+  );
+
+  // --- Test 7: unknown evidence must not be promoted to ready_frontier ---
+  const unknownEvidenceEnvelope =
+    createGraphExecutionFrontierExplainArtifactEnvelope({
+      plan: compilePlanFixture,
+      runArtifact: {
+        runId: "run_frontier_unknown",
+        graphId: "graph_frontier",
+        compileFingerprint: "frontier_test_fp",
+        status: "completed",
+        phase: "terminal",
+        phaseLabel: "terminal",
+        eventCount: 0,
+        updatedAt: Date.now(),
+      } as any,
+      compileRunLinkArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_unknown",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        terminalOutputNodeIds: [],
+        hostEffectNodeIds: [],
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            dependsOn: [],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "executed",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: true,
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            dependsOn: ["src_a"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: false,
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            dependsOn: ["filter_b"],
+            isTerminal: false,
+            isSideEffect: false,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: false,
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            dependsOn: ["filter_c"],
+            isTerminal: true,
+            isSideEffect: true,
+            runDisposition: "not_reached",
+            includedInFinalOutputs: false,
+            producedHostEffect: false,
+            inputResolutionObserved: false,
+          },
+        ],
+      },
+      dependencyReadinessExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_unknown",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          nodeCounts: {
+            ready: 1,
+            notReadyDependency: 1,
+            notReadyInput: 0,
+            blockedNonTerminal: 0,
+            truncatedByFailure: 0,
+            unknown: 2,
+          },
+          reasonCounts: {
+            all_prerequisites_satisfied: 1,
+            dependency_not_ready: 1,
+            missing_or_unresolved_input: 0,
+            non_terminal_blocked: 0,
+            truncated_by_failure: 0,
+            unknown: 2,
+          },
+          evidenceSources: ["compile_run_link"],
+        },
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            readinessDisposition: "ready",
+            primaryReasonKind: "all_prerequisites_satisfied",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            readinessDisposition: "unknown",
+            primaryReasonKind: "unknown",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            readinessDisposition: "not_ready_dependency",
+            primaryReasonKind: "dependency_not_ready",
+            readinessEvidenceSources: ["compile_run_link"],
+            blockingDependencyNodeIds: ["filter_b"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            readinessDisposition: "unknown",
+            primaryReasonKind: "unknown",
+            readinessEvidenceSources: ["compile_run_link"],
+            runDisposition: "not_reached",
+          },
+        ],
+      },
+      nodeExecutionDispositionExplainArtifact: {
+        graphId: "graph_frontier",
+        runId: "run_frontier_unknown",
+        compileFingerprint: "frontier_test_fp",
+        fingerprintVersion: 1,
+        nodeCount: 4,
+        summary: {
+          nodeCounts: {
+            executed: 1,
+            reused: 0,
+            failed: 0,
+            dependencyNotReached: 1,
+            inputMissingOrUnresolved: 0,
+            truncatedByFailure: 0,
+            blockedNonTerminal: 0,
+            unknown: 2,
+          },
+          reasonCounts: {
+            executed: 1,
+            reused: 0,
+            failed: 0,
+            dependency_not_reached: 1,
+            input_missing_or_unresolved: 0,
+            truncated_by_failure: 0,
+            blocked_non_terminal: 0,
+            unknown: 2,
+          },
+          evidenceSources: ["compile_run_link"],
+        },
+        nodes: [
+          {
+            nodeId: "src_a",
+            moduleId: "src_user_input",
+            nodeFingerprint: "fp_a",
+            compileOrder: 0,
+            executionDisposition: "executed",
+            primaryReasonKind: "executed",
+            executionEvidenceSources: ["compile_run_link"],
+            runDisposition: "executed",
+          },
+          {
+            nodeId: "filter_b",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_b",
+            compileOrder: 1,
+            executionDisposition: "unknown",
+            primaryReasonKind: "unknown",
+            executionEvidenceSources: ["compile_run_link"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "filter_c",
+            moduleId: "flt_mvu_strip",
+            nodeFingerprint: "fp_c",
+            compileOrder: 2,
+            executionDisposition: "not_reached",
+            primaryReasonKind: "dependency_not_reached",
+            executionEvidenceSources: ["compile_run_link"],
+            runDisposition: "not_reached",
+          },
+          {
+            nodeId: "out_d",
+            moduleId: "out_reply_inject",
+            nodeFingerprint: "fp_d",
+            compileOrder: 3,
+            executionDisposition: "unknown",
+            primaryReasonKind: "unknown",
+            executionEvidenceSources: ["compile_run_link"],
+            runDisposition: "not_reached",
+          },
+        ],
+      } as any,
+    });
+  const unknownEvidenceNode = unknownEvidenceEnvelope?.artifact?.nodes.find(
+    (n) => n.nodeId === "filter_b",
+  );
+  assert(
+    unknownEvidenceNode?.frontierDisposition === "unknown" &&
+      unknownEvidenceNode?.primaryReasonKind === "unknown" &&
+      unknownEvidenceNode?.runDisposition === "not_reached",
+    `F.7: Expected filter_b with unknown readiness/execution evidence to remain unknown instead of ready_frontier. Actual: ${JSON.stringify(unknownEvidenceNode)}`,
+  );
+
+  // --- Test 8: sparse/malformed reader degradation ---
+  const degradedFrontier = readGraphExecutionFrontierExplainArtifactEnvelope({
+    bridge: {
+      graph_execution_frontier_explain_artifact: {
+        kind: "graph_execution_frontier_explain_artifact",
+        version: "v1",
+        artifact: {
+          graphId: "graph_sparse",
+          runId: "run_sparse",
+          compileFingerprint: "frontier_test_fp",
+          nodeCount: "broken",
+          summary: {
+            nodeCounts: {
+              readyFrontier: "broken",
+              blockedDependency: 2,
+              blockedNonTerminal: -1,
+            },
+            reasonCounts: {
+              dependency_not_ready: 2,
+              truncated_or_unreachable: 1,
+            },
+            evidenceSources: ["run_status", "secret_source"],
+          },
+          nodes: [
+            {
+              nodeId: "node_sparse",
+              moduleId: "mod_sparse",
+              nodeFingerprint: "fp_sparse",
+              compileOrder: 1,
+              frontierDisposition: "blocked_dependency",
+              primaryReasonKind: "dependency_not_ready",
+              evidenceSources: ["compile_run_link", "secret_source"],
+              blockingDependencyNodeIds: ["dep_a", 3],
+              upstreamRunDispositions: ["not_reached", "broken"],
+              taskId: "omit_me",
+              actionPayload: { leak: true },
+            },
+            {
+              nodeId: "node_unknown",
+              moduleId: "mod_unknown",
+              nodeFingerprint: "fp_unknown",
+              compileOrder: 2,
+              frontierDisposition: "invented_disposition",
+              primaryReasonKind: "invented_reason",
+              evidenceSources: ["run_status"],
+              resumeToken: "omit_me",
+            },
+            { nodeId: "broken_only" },
+          ],
+        },
+      },
+    },
+  });
+  const degradedFrontierArtifact = degradedFrontier?.artifact;
+  assert(
+    degradedFrontierArtifact?.nodeCount === 2 &&
+      degradedFrontierArtifact.summary.nodeCounts.readyFrontier === 0 &&
+      degradedFrontierArtifact.summary.nodeCounts.blockedDependency === 2 &&
+      degradedFrontierArtifact.summary.nodeCounts.blockedNonTerminal === 0 &&
+      degradedFrontierArtifact.nodes[0]?.blockingDependencyNodeIds?.join(
+        ",",
+      ) === "dep_a" &&
+      degradedFrontierArtifact.nodes[0]?.upstreamRunDispositions?.join(",") ===
+        "not_reached" &&
+      degradedFrontierArtifact.nodes[1]?.frontierDisposition === "unknown" &&
+      degradedFrontierArtifact.nodes[1]?.primaryReasonKind === "unknown" &&
+      !JSON.stringify(degradedFrontierArtifact).includes("taskId") &&
+      !JSON.stringify(degradedFrontierArtifact).includes("actionPayload") &&
+      !JSON.stringify(degradedFrontierArtifact).includes("resumeToken"),
+    `F.7: Expected sparse/malformed frontier payloads to conservatively degrade and stay de-sensitized. Actual: ${JSON.stringify(degradedFrontierArtifact)}`,
+  );
+
+  // --- Test 9: bridge/store consumability ---
+  const store = useEwStore();
+  const frontierBridgeDiagnostics: Record<string, any> = {
+    route: "graph",
+    reason: "graph_first",
+    has_explicit_legacy_flow_selection: false,
+    enabled_graph_count: 1,
+    graph_execution_frontier_explain_artifact: readyFrontierEnvelope,
+  };
+  setLastRun(
+    RunSummarySchema.parse({
+      at: Date.now(),
+      ok: true,
+      reason: "store frontier artifact",
+      request_id: "run_frontier_1",
+      chat_id: "chat_frontier_test",
+      flow_count: 1,
+      elapsed_ms: 100,
+      mode: "manual",
+      diagnostics: frontierBridgeDiagnostics,
+    }),
+  );
+  const activeFrontier = store.activeGraphExecutionFrontierExplainArtifact;
+  assert(
+    activeFrontier?.compileFingerprint === "frontier_test_fp" &&
+      activeFrontier.runId === "run_frontier_1" &&
+      activeFrontier.summary.nodeCounts.readyFrontier >= 1,
+    `F.8: Expected store to consume execution frontier explain artifact. Actual: ${JSON.stringify(activeFrontier)}`,
+  );
+
+  // --- Test 9: de-sensitization (no sensitive runtime fields) ---
+  const serialized = JSON.stringify(readyFrontierEnvelope);
+  assert(
+    !serialized.includes("resumeToken") &&
+      !serialized.includes("actionId") &&
+      !serialized.includes("internalCommand") &&
+      !serialized.includes("controlAction") &&
+      !serialized.includes('"payload"') &&
+      !serialized.includes("taskId") &&
+      !serialized.includes("timeline") &&
+      !serialized.includes("attemptHistory"),
+    `F.9: Expected frontier artifact to be de-sensitized. Actual contains sensitive fields.`,
+  );
+}
+
 runValidationSpec()
+  .then(() => runExecutionFrontierValidationSpec())
   .then(() => {
     console.info("[graph-executor.validation.spec] validation checks passed");
   })

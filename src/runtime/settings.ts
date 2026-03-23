@@ -8,6 +8,7 @@ import {
   createGraphDocumentEnvelope,
   readGraphDocumentAsWorkbenchGraphs,
 } from "./graph-document-codec";
+import { readGraphExecutionFrontierExplainArtifactEnvelope } from "./graph-execution-frontier-explain-artifact-codec";
 import { readGraphFailureExplainArtifactEnvelope } from "./graph-failure-explain-artifact-codec";
 import { readGraphHostEffectExplainArtifactEnvelope } from "./graph-host-effect-explain-artifact-codec";
 import { readGraphNodeExecutionDispositionExplainArtifactEnvelope } from "./graph-node-execution-disposition-explain-artifact-codec";
@@ -548,6 +549,9 @@ type WorkflowBridgeFacts = {
   graph_dependency_readiness_explain_artifact?: ReturnType<
     typeof readGraphDependencyReadinessExplainArtifactEnvelope
   >;
+  graph_execution_frontier_explain_artifact?: ReturnType<
+    typeof readGraphExecutionFrontierExplainArtifactEnvelope
+  >;
   graph_output_explain_artifact?: ReturnType<
     typeof readGraphOutputExplainArtifactEnvelope
   >;
@@ -657,6 +661,15 @@ function normalizeWorkflowBridgeDiagnostics(
   if (graphDependencyReadinessExplainArtifact) {
     normalized.graph_dependency_readiness_explain_artifact =
       graphDependencyReadinessExplainArtifact;
+  }
+
+  const graphExecutionFrontierExplainArtifact =
+    readGraphExecutionFrontierExplainArtifactEnvelope({
+      bridge: bridgeRecord,
+    });
+  if (graphExecutionFrontierExplainArtifact) {
+    normalized.graph_execution_frontier_explain_artifact =
+      graphExecutionFrontierExplainArtifact;
   }
 
   const graphOutputExplainArtifact = readGraphOutputExplainArtifactEnvelope({

@@ -987,6 +987,75 @@ export interface GraphDependencyReadinessExplainArtifactEnvelope {
   artifact: GraphDependencyReadinessExplainArtifactV1;
 }
 
+export type GraphExecutionFrontierDispositionV1 =
+  | "ready_frontier"
+  | "blocked_dependency"
+  | "blocked_input"
+  | "blocked_non_terminal"
+  | "unreachable"
+  | "unknown";
+
+export type GraphExecutionFrontierReasonKindV1 =
+  | "all_prerequisites_satisfied_but_not_executed"
+  | "dependency_not_ready"
+  | "missing_or_unresolved_input"
+  | "non_terminal_blocked"
+  | "truncated_or_unreachable"
+  | "unknown";
+
+export type GraphExecutionFrontierEvidenceSourceV1 =
+  | "compile_run_link"
+  | "input_resolution"
+  | "node_execution_disposition"
+  | "dependency_readiness"
+  | "failure_explain"
+  | "blocking_explain"
+  | "run_status";
+
+export interface GraphExecutionFrontierSummaryV1 {
+  nodeCounts: {
+    readyFrontier: number;
+    blockedDependency: number;
+    blockedInput: number;
+    blockedNonTerminal: number;
+    unreachable: number;
+    unknown: number;
+  };
+  reasonCounts: Record<GraphExecutionFrontierReasonKindV1, number>;
+  evidenceSources: GraphExecutionFrontierEvidenceSourceV1[];
+}
+
+export interface GraphExecutionFrontierNodeRecordV1 {
+  nodeId: string;
+  moduleId: string;
+  nodeFingerprint: string;
+  compileOrder: number;
+  frontierDisposition: GraphExecutionFrontierDispositionV1;
+  primaryReasonKind: GraphExecutionFrontierReasonKindV1;
+  evidenceSources: GraphExecutionFrontierEvidenceSourceV1[];
+  blockingDependencyNodeIds?: string[];
+  unresolvedInputKeys?: string[];
+  upstreamRunDispositions?: GraphCompileRunLinkDispositionV1[];
+  runDisposition?: GraphCompileRunLinkDispositionV1;
+  blockedByRunStatus?: GraphRunStatus;
+}
+
+export interface GraphExecutionFrontierExplainArtifactV1 {
+  graphId: string;
+  runId: string;
+  compileFingerprint: string;
+  fingerprintVersion: 1;
+  nodeCount: number;
+  summary: GraphExecutionFrontierSummaryV1;
+  nodes: GraphExecutionFrontierNodeRecordV1[];
+}
+
+export interface GraphExecutionFrontierExplainArtifactEnvelope {
+  kind: "graph_execution_frontier_explain_artifact";
+  version: "v1";
+  artifact: GraphExecutionFrontierExplainArtifactV1;
+}
+
 export type GraphBlockingDispositionV1 =
   | "not_blocked"
   | "waiting_user"
