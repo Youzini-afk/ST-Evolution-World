@@ -3,8 +3,7 @@ export type TabKey =
   | "api"
   | "global"
   | "flows"
-  | "graph"
-  | "workbench"
+  | "builder"
   | "debug"
   | "history";
 
@@ -27,8 +26,7 @@ export const PANEL_TABS: TabMeta[] = [
   { key: "api", label: "API配置" },
   { key: "global", label: "全局配置" },
   { key: "flows", label: "工作流配置" },
-  { key: "graph", label: "工作流图" },
-  { key: "workbench", label: "工作台" },
+  { key: "builder", label: "Builder" },
   { key: "history", label: "历史" },
   { key: "debug", label: "调试" },
 ];

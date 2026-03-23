@@ -345,7 +345,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
       if (
         uiOpen &&
-        (tab === "debug" || tab === "workbench") &&
+        (tab === "debug" || tab === "builder") &&
         (!prevUiOpen || prevTab !== tab)
       ) {
         refreshDebugRecords({ silent: true });

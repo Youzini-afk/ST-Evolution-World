@@ -739,40 +739,17 @@
               </template>
             </template>
 
-            <template v-else-if="store.activeTab === 'graph'">
-              <EwGraphEditor
-                :graph="activeEditorGraph"
+            <template v-else-if="store.activeTab === 'builder'">
+              <EwBuilderWorkbench
+                :graphs="workbenchGraphs"
                 :saved-slots="store.settings.graph_canvas_slots"
+                :diagnostics-summary="store.activeWorkbenchDiagnosticsSummary"
+                :active-run-summary="store.activeGraphRunSummary"
                 @save-slots="
                   (slots: any[]) => {
                     store.settings.graph_canvas_slots = slots;
                   }
                 "
-                @update:graph="
-                  (graph: any) => {
-                    const existing =
-                      (store.settings as any).workbench_graphs ?? [];
-                    if (!graph) {
-                      return;
-                    }
-                    if (existing.length === 0) {
-                      (store.settings as any).workbench_graphs = [graph];
-                      return;
-                    }
-                    (store.settings as any).workbench_graphs = [
-                      graph,
-                      ...existing.slice(1),
-                    ];
-                  }
-                "
-              />
-            </template>
-
-            <template v-else-if="store.activeTab === 'workbench'">
-              <EwModuleWorkbench
-                :graphs="workbenchGraphs"
-                :diagnostics-summary="store.activeWorkbenchDiagnosticsSummary"
-                :active-run-summary="store.activeGraphRunSummary"
                 @update:graphs="
                   (g: any[]) => {
                     (store.settings as any).workbench_graphs = g;
@@ -907,8 +884,7 @@ import EwFlowCard from "./components/EwFlowCard.vue";
 import EwHistoryPanel from "./components/EwHistoryPanel.vue";
 import EwPanelShell from "./components/EwPanelShell.vue";
 import EwSectionCard from "./components/EwSectionCard.vue";
-import EwGraphEditor from "./components/graph/EwGraphEditor.vue";
-import EwModuleWorkbench from "./components/graph/EwModuleWorkbench.vue";
+import EwBuilderWorkbench from "./components/graph/EwBuilderWorkbench.vue";
 import { getFieldHelp, PANEL_TABS } from "./help-meta";
 import { showEwNotice } from "./notice";
 import { useEwStore } from "./store";
@@ -924,7 +900,6 @@ const crossfadeRef = ref<HTMLDivElement | null>(null);
 const workbenchGraphs = computed(
   () => (store.settings as any).workbench_graphs ?? [],
 );
-const activeEditorGraph = computed(() => workbenchGraphs.value[0] ?? null);
 
 let crossfadePrevHeight = 0;
 let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
