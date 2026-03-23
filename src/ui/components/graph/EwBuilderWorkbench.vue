@@ -282,6 +282,34 @@
                 {{ label }}
               </span>
             </div>
+            <template
+              v-if="getCompositeEntryContractLabels(pkg.moduleId).length > 0"
+            >
+              <div class="ew-builder-workbench__summary-label">入口约定</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="label in getCompositeEntryContractLabels(pkg.moduleId)"
+                  :key="`${pkg.moduleId}-entry-${label}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ label }}
+                </span>
+              </div>
+            </template>
+            <template
+              v-if="getCompositeExitContractLabels(pkg.moduleId).length > 0"
+            >
+              <div class="ew-builder-workbench__summary-label">出口约定</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="label in getCompositeExitContractLabels(pkg.moduleId)"
+                  :key="`${pkg.moduleId}-exit-${label}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ label }}
+                </span>
+              </div>
+            </template>
             <p class="ew-builder-workbench__template-description">
               插入后会直接展开为真实子图，你可以继续连线、改参数、删节点，而不是被锁在黑盒包里。
             </p>
@@ -764,6 +792,7 @@ import {
 import EwGraphEditor from "./EwGraphEditor.vue";
 import {
   getCompositeModules,
+  getCompositeTemplateContract,
   getModuleBlueprint,
   getModuleExplainContract,
   instantiateCompositeTemplate,
@@ -1064,6 +1093,35 @@ function getCompositePreviewLabels(moduleId: string): string[] {
     } catch {
       return node.moduleId;
     }
+  });
+}
+
+function formatCompositeContractTarget(target: {
+  nodeLabel: string;
+  portLabel: string;
+  kind: "data" | "activation";
+}): string {
+  return `${target.nodeLabel}.${target.portLabel}${target.kind === "activation" ? " (activation)" : ""}`;
+}
+
+function getCompositeEntryContractLabels(moduleId: string): string[] {
+  const contract = getCompositeTemplateContract(moduleId);
+  if (!contract || contract.entries.length === 0) {
+    return [];
+  }
+  return contract.entries.map((entry) => {
+    const targets = entry.targets.map(formatCompositeContractTarget).join("、");
+    return `${entry.label} · ${targets}`;
+  });
+}
+
+function getCompositeExitContractLabels(moduleId: string): string[] {
+  const contract = getCompositeTemplateContract(moduleId);
+  if (!contract || contract.exits.length === 0) {
+    return [];
+  }
+  return contract.exits.map((entry) => {
+    return `${entry.label} · ${formatCompositeContractTarget(entry.source)}`;
   });
 }
 

@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 
 import {
   getCompositeModules,
+  getCompositeTemplateContract,
   getModuleExplainContract,
   getModuleMetadataSummary,
   getModuleMetadataSurface,
@@ -1362,27 +1363,35 @@ function makeBranchRouterPackageGraph(
     throw new Error("Expected pkg_control_branch_router to instantiate.");
   }
 
-  const routeIf = fragment.nodes.find((node) => node.moduleId === "ctl_if");
-  const routeJoin = fragment.nodes.find((node) => node.moduleId === "ctl_join");
-  const thenStage = fragment.nodes.find(
-    (node) =>
-      node.moduleId === "cmp_passthrough" &&
-      node.config?._label === "Then 占位",
+  const conditionEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "condition",
   );
-  const elseStage = fragment.nodes.find(
-    (node) =>
-      node.moduleId === "cmp_passthrough" &&
-      node.config?._label === "Else 占位",
+  const valueEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "value",
   );
-  const afterJoin = fragment.nodes.find(
-    (node) =>
-      node.moduleId === "cmp_passthrough" &&
-      node.config?._label === "汇合后",
+  const valueExit = fragment.contract.exits.find(
+    (entry) => entry.key === "value_out",
   );
 
-  if (!routeIf || !routeJoin || !thenStage || !elseStage || !afterJoin) {
+  if (!conditionEntry || !valueEntry || !valueExit) {
     throw new Error(
-      `Expected branch router package nodes to exist. Actual: ${JSON.stringify(fragment.nodes)}`,
+      `Expected branch router package contract to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
+    );
+  }
+
+  const routeIfTarget = conditionEntry.targets[0];
+  const afterJoinInputTarget = valueEntry.targets.find(
+    (target) => target.nodeId === valueExit.source.nodeId,
+  );
+  const valueTargets = valueEntry.targets.filter(
+    (target) => target.nodeId !== afterJoinInputTarget?.nodeId,
+  );
+  const thenStageTarget = valueTargets[0];
+  const elseStageTarget = valueTargets[1];
+
+  if (!routeIfTarget || !afterJoinInputTarget || !thenStageTarget || !elseStageTarget) {
+    throw new Error(
+      `Expected branch router package contract targets to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
     );
   }
 
@@ -1410,29 +1419,29 @@ function makeBranchRouterPackageGraph(
         id: "edge_package_condition",
         source: "src_text",
         sourcePort: "text",
-        target: routeIf.id,
-        targetPort: "condition",
+        target: routeIfTarget.nodeId,
+        targetPort: routeIfTarget.portId,
       },
       {
         id: "edge_package_then_value",
         source: "src_text",
         sourcePort: "text",
-        target: thenStage.id,
-        targetPort: "value",
+        target: thenStageTarget.nodeId,
+        targetPort: thenStageTarget.portId,
       },
       {
         id: "edge_package_else_value",
         source: "src_text",
         sourcePort: "text",
-        target: elseStage.id,
-        targetPort: "value",
+        target: elseStageTarget.nodeId,
+        targetPort: elseStageTarget.portId,
       },
       {
         id: "edge_package_after_join_value",
         source: "src_text",
         sourcePort: "text",
-        target: afterJoin.id,
-        targetPort: "value",
+        target: afterJoinInputTarget.nodeId,
+        targetPort: afterJoinInputTarget.portId,
       },
     ],
   };
@@ -9927,6 +9936,9 @@ async function runValidationSpec(): Promise<void> {
   const controlBranchPackage = compositeModules.find(
     (module) => module.moduleId === "pkg_control_branch_router",
   );
+  const controlBranchContract = getCompositeTemplateContract(
+    "pkg_control_branch_router",
+  );
   const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
     moduleId: "pkg_full_workflow",
     origin: { x: 400, y: 120 },
@@ -9952,9 +9964,42 @@ async function runValidationSpec(): Promise<void> {
       controlBranchPackage.configSchema?.some(
         (field) => field.key === "join_mode",
       ) &&
+      controlBranchContract?.entries.some(
+        (entry) =>
+          entry.key === "condition" &&
+          entry.targets.length === 1 &&
+          entry.targets[0]?.nodeLabel === "路由判断" &&
+          entry.targets[0]?.portId === "condition",
+      ) &&
+      controlBranchContract.entries.some(
+        (entry) =>
+          entry.key === "value" &&
+          entry.targets.length === 3 &&
+          entry.targets.some((target) => target.nodeLabel === "Then 占位") &&
+          entry.targets.some((target) => target.nodeLabel === "Else 占位") &&
+          entry.targets.some((target) => target.nodeLabel === "汇合后"),
+      ) &&
+      controlBranchContract.exits.some(
+        (entry) =>
+          entry.key === "value_out" &&
+          entry.source.nodeLabel === "汇合后" &&
+          entry.source.portId === "value_out",
+      ) &&
       instantiatedControlBranchPackage?.nodes.some(
         (node) =>
           node.moduleId === "ctl_if" && node.config.negate === true,
+      ) &&
+      instantiatedControlBranchPackage.contract.entries.some(
+        (entry) =>
+          entry.key === "condition" &&
+          entry.targets[0]?.nodeId !== "route_if" &&
+          entry.targets[0]?.nodeId.includes("route_if_"),
+      ) &&
+      instantiatedControlBranchPackage.contract.exits.some(
+        (entry) =>
+          entry.key === "value_out" &&
+          entry.source.nodeId !== "after_join" &&
+          entry.source.nodeId.includes("after_join_"),
       ) &&
       instantiatedControlBranchPackage.nodes.some(
         (node) =>
@@ -9986,7 +10031,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings. Actual control=${JSON.stringify(controlBranchPackage)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===

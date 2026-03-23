@@ -8,7 +8,9 @@ import {
   RESERVED_ACTIVATION_RESULT_PORT_LABEL,
 } from "./module-types";
 import type {
+  CompositeTemplatePortBindingRef,
   HostWriteSummary,
+  InstantiatedCompositeTemplateFragment,
   ModuleBlueprint,
   ModuleExplainContract,
   ModuleMetadataConfigSummary,
@@ -20,6 +22,8 @@ import type {
   ModuleMetadataUiSummary,
   ModuleMetadataValidationSummary,
   ModulePortDef,
+  ResolvedCompositeTemplateContractSummary,
+  ResolvedCompositeTemplateContractTarget,
 } from "./module-types";
 export type { ModuleBlueprint, ModulePortDef };
 
@@ -1561,6 +1565,33 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
           targetConfigKey: "mode",
         },
       ],
+      entryBindings: [
+        {
+          key: "condition",
+          label: "条件",
+          targets: [{ nodeId: "route_if", portId: "condition" }],
+          description: "驱动内部条件分支节点的真假判断。",
+        },
+        {
+          key: "value",
+          label: "分支值",
+          targets: [
+            { nodeId: "branch_then", portId: "value" },
+            { nodeId: "branch_else", portId: "value" },
+            { nodeId: "after_join", portId: "value" },
+          ],
+          description:
+            "默认同时注入 then/else 占位和汇合后占位，方便你插入后替换内部链路。",
+        },
+      ],
+      exitBindings: [
+        {
+          key: "value_out",
+          label: "汇合后值",
+          source: { nodeId: "after_join", portId: "value_out" },
+          description: "默认从汇合后占位导出组合后的值。",
+        },
+      ],
     },
     isComposite: true,
   },
@@ -2326,11 +2357,97 @@ export function resolveModuleConfigWithDefaults(
   };
 }
 
+function resolveCompositeTemplateNodeLabel(node: { moduleId: string; config: Record<string, any> }): string {
+  if (typeof node.config?._label === "string" && node.config._label.trim()) {
+    return node.config._label;
+  }
+  const blueprint = MODULE_REGISTRY.get(node.moduleId);
+  return blueprint?.label ?? node.moduleId;
+}
+
+function resolveCompositeTemplateContractTarget(params: {
+  templateNodes: NonNullable<ModuleBlueprint["compositeTemplate"]>["nodes"];
+  bindingRef: CompositeTemplatePortBindingRef;
+  nodeIdMap?: ReadonlyMap<string, string>;
+}): ResolvedCompositeTemplateContractTarget | null {
+  const node = params.templateNodes.find(
+    (templateNode) => templateNode.id === params.bindingRef.nodeId,
+  );
+  if (!node) {
+    return null;
+  }
+  const blueprint = MODULE_REGISTRY.get(node.moduleId);
+  const port = blueprint?.ports.find((candidate) => candidate.id === params.bindingRef.portId);
+  if (!blueprint || !port) {
+    return null;
+  }
+  return {
+    nodeId: params.nodeIdMap?.get(node.id) ?? node.id,
+    nodeLabel: resolveCompositeTemplateNodeLabel(node),
+    portId: port.id,
+    portLabel: port.label,
+    dataType: port.dataType,
+    kind: port.dataType === "activation" ? "activation" : "data",
+  };
+}
+
+function resolveCompositeTemplateContract(params: {
+  template: NonNullable<ModuleBlueprint["compositeTemplate"]>;
+  nodeIdMap?: ReadonlyMap<string, string>;
+}): ResolvedCompositeTemplateContractSummary {
+  const entries = (params.template.entryBindings ?? []).flatMap((binding) => {
+    const targets = binding.targets
+      .map((target) =>
+        resolveCompositeTemplateContractTarget({
+          templateNodes: params.template.nodes,
+          bindingRef: target,
+          nodeIdMap: params.nodeIdMap,
+        }),
+      )
+      .filter(
+        (target): target is ResolvedCompositeTemplateContractTarget =>
+          target !== null,
+      );
+    if (targets.length === 0) {
+      return [];
+    }
+    return [
+      {
+        key: binding.key,
+        label: binding.label,
+        targets,
+        description: binding.description,
+      },
+    ];
+  });
+
+  const exits = (params.template.exitBindings ?? []).flatMap((binding) => {
+    const source = resolveCompositeTemplateContractTarget({
+      templateNodes: params.template.nodes,
+      bindingRef: binding.source,
+      nodeIdMap: params.nodeIdMap,
+    });
+    if (!source) {
+      return [];
+    }
+    return [
+      {
+        key: binding.key,
+        label: binding.label,
+        source,
+        description: binding.description,
+      },
+    ];
+  });
+
+  return { entries, exits };
+}
+
 export function instantiateCompositeTemplate(params: {
   moduleId: string;
   origin?: { x: number; y: number };
   exposedConfig?: Record<string, any>;
-}): { nodes: ModuleBlueprint["compositeTemplate"]["nodes"]; edges: ModuleBlueprint["compositeTemplate"]["edges"] } | null {
+}): InstantiatedCompositeTemplateFragment | null {
   const blueprint = MODULE_REGISTRY.get(params.moduleId);
   const template = blueprint?.compositeTemplate;
   if (!blueprint || !template || template.nodes.length === 0) {
@@ -2390,7 +2507,22 @@ export function instantiateCompositeTemplate(params: {
     runtimeMeta: edge.runtimeMeta ? { ...edge.runtimeMeta } : undefined,
   }));
 
-  return { nodes, edges };
+  return {
+    nodes,
+    edges,
+    contract: resolveCompositeTemplateContract({ template, nodeIdMap }),
+  };
+}
+
+export function getCompositeTemplateContract(
+  moduleId: string,
+): ResolvedCompositeTemplateContractSummary | null {
+  const blueprint = MODULE_REGISTRY.get(moduleId);
+  const template = blueprint?.compositeTemplate;
+  if (!blueprint || !template) {
+    return null;
+  }
+  return resolveCompositeTemplateContract({ template });
 }
 
 export function getModuleMetadataSurface(

@@ -249,6 +249,59 @@ export interface CompositeTemplateConfigBinding {
   targetConfigKey: string;
 }
 
+export interface CompositeTemplatePortBindingRef {
+  nodeId: string;
+  portId: string;
+}
+
+export interface CompositeTemplateEntryBinding {
+  key: string;
+  label: string;
+  targets: CompositeTemplatePortBindingRef[];
+  description?: string;
+}
+
+export interface CompositeTemplateExitBinding {
+  key: string;
+  label: string;
+  source: CompositeTemplatePortBindingRef;
+  description?: string;
+}
+
+export interface ResolvedCompositeTemplateContractTarget {
+  nodeId: string;
+  nodeLabel: string;
+  portId: string;
+  portLabel: string;
+  dataType: PortDataType;
+  kind: "data" | "activation";
+}
+
+export interface ResolvedCompositeTemplateEntryContract {
+  key: string;
+  label: string;
+  targets: ResolvedCompositeTemplateContractTarget[];
+  description?: string;
+}
+
+export interface ResolvedCompositeTemplateExitContract {
+  key: string;
+  label: string;
+  source: ResolvedCompositeTemplateContractTarget;
+  description?: string;
+}
+
+export interface ResolvedCompositeTemplateContractSummary {
+  entries: ResolvedCompositeTemplateEntryContract[];
+  exits: ResolvedCompositeTemplateExitContract[];
+}
+
+export interface InstantiatedCompositeTemplateFragment {
+  nodes: WorkbenchNode[];
+  edges: WorkbenchEdge[];
+  contract: ResolvedCompositeTemplateContractSummary;
+}
+
 /** Blueprint definition for a module type (registered in the registry) */
 export interface ModuleBlueprint {
   /** Unique module type ID, e.g. 'src_char_fields' */
@@ -280,6 +333,8 @@ export interface ModuleBlueprint {
     nodes: WorkbenchNode[];
     edges: WorkbenchEdge[];
     configBindings?: CompositeTemplateConfigBinding[];
+    entryBindings?: CompositeTemplateEntryBinding[];
+    exitBindings?: CompositeTemplateExitBinding[];
   };
   /** Read-only registry metadata surface used by UI / diagnostics summaries */
   metadata?: ModuleMetadataSurface;
