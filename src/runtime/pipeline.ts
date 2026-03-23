@@ -16,6 +16,7 @@ import type {
   GraphRunSnapshotEnvelope,
   GraphSchedulingExplainArtifactEnvelope,
   GraphTerminalOutcomeExplainArtifactEnvelope,
+  WorkbenchGenerationOwnership,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
 import { getEffectiveFlows } from "./char-flows";
@@ -71,6 +72,10 @@ export type WorkflowBridgeDiagnostics = {
   enabled_graph_count: number;
   graph_context?: {
     selected_graph_ids: string[];
+    graph_intent: WorkflowBridgeGraphIntent;
+    assistive_graph_ids: string[];
+    optional_main_takeover_graph_ids: string[];
+    takeover_candidate_count: number;
   };
   graph_compile_artifact?: ReturnType<
     typeof createGraphCompileArtifactEnvelope
@@ -662,13 +667,27 @@ function extractStructuredWriteback(
 }
 
 export type WorkflowBridgeRoute = "graph" | "legacy";
+export type WorkflowBridgeGraphIntent =
+  | "assistive"
+  | "optional_main_takeover";
 
 export type WorkflowBridgeRouteSelection = {
   route: WorkflowBridgeRoute;
   enabledGraphs: WorkbenchGraph[];
+  assistiveGraphs: WorkbenchGraph[];
+  optionalMainTakeoverGraphs: WorkbenchGraph[];
+  graphIntent: WorkflowBridgeGraphIntent;
   hasExplicitLegacyFlowSelection: boolean;
   reason: "graph_first" | "legacy_flow_selection" | "no_enabled_graph";
 };
+
+function getGraphGenerationOwnership(
+  graph: WorkbenchGraph,
+): WorkbenchGenerationOwnership {
+  return graph.runtimeMeta?.generationOwnership === "optional_main_takeover"
+    ? "optional_main_takeover"
+    : "assistive";
+}
 
 export function selectWorkflowBridgeRoute(params: {
   input: Pick<RunWorkflowInput, "flow_ids">;
@@ -682,6 +701,16 @@ export function selectWorkflowBridgeRoute(params: {
       )
     : [];
   const enabledGraphs = workbenchGraphs.filter((graph) => graph.enabled);
+  const assistiveGraphs = enabledGraphs.filter(
+    (graph) => getGraphGenerationOwnership(graph) === "assistive",
+  );
+  const optionalMainTakeoverGraphs = enabledGraphs.filter(
+    (graph) => getGraphGenerationOwnership(graph) === "optional_main_takeover",
+  );
+  const graphIntent: WorkflowBridgeGraphIntent =
+    optionalMainTakeoverGraphs.length > 0
+      ? "optional_main_takeover"
+      : "assistive";
   const hasExplicitLegacyFlowSelection = (params.input.flow_ids ?? []).some(
     (flowId) => typeof flowId === "string" && flowId.trim().length > 0,
   );
@@ -690,6 +719,9 @@ export function selectWorkflowBridgeRoute(params: {
     return {
       route: "graph",
       enabledGraphs,
+      assistiveGraphs,
+      optionalMainTakeoverGraphs,
+      graphIntent,
       hasExplicitLegacyFlowSelection,
       reason: "graph_first",
     };
@@ -698,6 +730,9 @@ export function selectWorkflowBridgeRoute(params: {
   return {
     route: "legacy",
     enabledGraphs,
+    assistiveGraphs,
+    optionalMainTakeoverGraphs,
+    graphIntent,
     hasExplicitLegacyFlowSelection,
     reason:
       enabledGraphs.length > 0 ? "legacy_flow_selection" : "no_enabled_graph",
@@ -913,6 +948,14 @@ export function buildWorkflowBridgeDiagnostics(params: {
             selected_graph_ids: selection.enabledGraphs.map(
               (graph) => graph.id,
             ),
+            graph_intent: selection.graphIntent,
+            assistive_graph_ids: selection.assistiveGraphs.map(
+              (graph) => graph.id,
+            ),
+            optional_main_takeover_graph_ids:
+              selection.optionalMainTakeoverGraphs.map((graph) => graph.id),
+            takeover_candidate_count:
+              selection.optionalMainTakeoverGraphs.length,
           },
         }
       : {}),
@@ -1110,7 +1153,7 @@ async function runGraphWorkflow(
     input.onProgress?.({
       phase: "preparing",
       request_id: requestId,
-      message: `正在准备图工作流（${bridgeRoute.enabledGraphs.length} 个图）…`,
+      message: `正在准备图工作流（${bridgeRoute.enabledGraphs.length} 个图，意图：${bridgeRoute.graphIntent === "optional_main_takeover" ? "渐进主生成接管" : "辅助工作流"}）…`,
     });
 
     // Sort by priority (lower = earlier)

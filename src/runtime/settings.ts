@@ -534,6 +534,10 @@ type WorkflowBridgeFacts = {
   has_explicit_legacy_flow_selection?: boolean;
   enabled_graph_count?: number;
   selected_graph_ids?: string[];
+  graph_intent?: "assistive" | "optional_main_takeover";
+  assistive_graph_ids?: string[];
+  optional_main_takeover_graph_ids?: string[];
+  takeover_candidate_count?: number;
   failure_origin?: string;
   graph_blocking_explain_artifact?: ReturnType<
     typeof readGraphBlockingExplainArtifactEnvelope
@@ -616,6 +620,52 @@ function normalizeWorkflowBridgeDiagnostics(
     selectedGraphIds.every((entry: unknown) => typeof entry === "string")
   ) {
     normalized.selected_graph_ids = [...selectedGraphIds];
+  }
+
+  const graphIntent =
+    bridgeRecord.graph_intent ?? graphContext?.graph_intent ?? undefined;
+  if (
+    graphIntent === "assistive" ||
+    graphIntent === "optional_main_takeover"
+  ) {
+    normalized.graph_intent = graphIntent;
+  }
+
+  const assistiveGraphIds = Array.isArray(bridgeRecord.assistive_graph_ids)
+    ? bridgeRecord.assistive_graph_ids
+    : graphContext?.assistive_graph_ids;
+  if (
+    Array.isArray(assistiveGraphIds) &&
+    assistiveGraphIds.every((entry: unknown) => typeof entry === "string")
+  ) {
+    normalized.assistive_graph_ids = [...assistiveGraphIds];
+  }
+
+  const optionalMainTakeoverGraphIds = Array.isArray(
+    bridgeRecord.optional_main_takeover_graph_ids,
+  )
+    ? bridgeRecord.optional_main_takeover_graph_ids
+    : graphContext?.optional_main_takeover_graph_ids;
+  if (
+    Array.isArray(optionalMainTakeoverGraphIds) &&
+    optionalMainTakeoverGraphIds.every(
+      (entry: unknown) => typeof entry === "string",
+    )
+  ) {
+    normalized.optional_main_takeover_graph_ids = [
+      ...optionalMainTakeoverGraphIds,
+    ];
+  }
+
+  const takeoverCandidateCount =
+    bridgeRecord.takeover_candidate_count ??
+    graphContext?.takeover_candidate_count;
+  if (
+    typeof takeoverCandidateCount === "number" &&
+    Number.isInteger(takeoverCandidateCount) &&
+    takeoverCandidateCount >= 0
+  ) {
+    normalized.takeover_candidate_count = takeoverCandidateCount;
   }
 
   const failureOrigin = bridgeRecord.failure_origin;

@@ -1013,6 +1013,22 @@ function makeSideEffectHandlerFailureGraph(): WorkbenchGraph {
   };
 }
 
+function makeOptionalMainTakeoverGraph(
+  graph: WorkbenchGraph = makeBaseGraph(),
+): WorkbenchGraph {
+  return {
+    ...graph,
+    id: `${graph.id}_takeover`,
+    name: `${graph.name} Takeover`,
+    runtimeMeta: {
+      ...(graph.runtimeMeta ?? {}),
+      schemaVersion: graph.runtimeMeta?.schemaVersion ?? 1,
+      runtimeKind: graph.runtimeMeta?.runtimeKind ?? "dataflow",
+      generationOwnership: "optional_main_takeover",
+    },
+  };
+}
+
 function makeDownstreamNotReachedFailureGraph(): WorkbenchGraph {
   const graph = makeHandlerFailureGraph();
   return {
@@ -1328,6 +1344,9 @@ function assertBridgeRoute(
     route: WorkflowBridgeRouteSelection["route"];
     reason: WorkflowBridgeRouteSelection["reason"];
     enabledGraphIds: string[];
+    graphIntent?: "assistive" | "optional_main_takeover";
+    assistiveGraphIds?: string[];
+    optionalMainTakeoverGraphIds?: string[];
     hasExplicitLegacyFlowSelection: boolean;
   },
 ): void {
@@ -1349,6 +1368,26 @@ function assertBridgeRoute(
       expected.enabledGraphIds.join(","),
     `Expected enabled graph ids to be ${expected.enabledGraphIds.join(",")}. Actual: ${actual.enabledGraphs.map((graph) => graph.id).join(",")}`,
   );
+  if (expected.graphIntent) {
+    assert(
+      actual.graphIntent === expected.graphIntent,
+      `Expected graphIntent to be ${expected.graphIntent}. Actual: ${actual.graphIntent}`,
+    );
+  }
+  if (expected.assistiveGraphIds) {
+    assert(
+      actual.assistiveGraphs.map((graph) => graph.id).join(",") ===
+        expected.assistiveGraphIds.join(","),
+      `Expected assistive graph ids to be ${expected.assistiveGraphIds.join(",")}. Actual: ${actual.assistiveGraphs.map((graph) => graph.id).join(",")}`,
+    );
+  }
+  if (expected.optionalMainTakeoverGraphIds) {
+    assert(
+      actual.optionalMainTakeoverGraphs.map((graph) => graph.id).join(",") ===
+        expected.optionalMainTakeoverGraphIds.join(","),
+      `Expected optional main takeover graph ids to be ${expected.optionalMainTakeoverGraphIds.join(",")}. Actual: ${actual.optionalMainTakeoverGraphs.map((graph) => graph.id).join(",")}`,
+    );
+  }
 }
 
 function assertBridgeDiagnostics(
@@ -1359,6 +1398,9 @@ function assertBridgeDiagnostics(
     hasExplicitLegacyFlowSelection: boolean;
     enabledGraphCount: number;
     selectedGraphIds?: string[];
+    graphIntent?: "assistive" | "optional_main_takeover";
+    assistiveGraphIds?: string[];
+    optionalMainTakeoverGraphIds?: string[];
     failureOrigin?:
       | "graph_dispatch"
       | "legacy_dispatch"
@@ -1407,6 +1449,44 @@ function assertBridgeDiagnostics(
         (expected.selectedGraphIds ?? []).join(","),
       `Expected graph selected_graph_ids to be ${(expected.selectedGraphIds ?? []).join(",")}. Actual: ${actualSelectedGraphIds.join(",")}`,
     );
+    if (expected.graphIntent) {
+      const actualGraphIntent =
+        bridge.graph_intent ?? bridge.graph_context?.graph_intent;
+      assert(
+        actualGraphIntent === expected.graphIntent,
+        `Expected graph bridge intent to be ${expected.graphIntent}. Actual: ${actualGraphIntent}`,
+      );
+    }
+    if (expected.assistiveGraphIds) {
+      const actualAssistiveGraphIds = Array.isArray(bridge.assistive_graph_ids)
+        ? bridge.assistive_graph_ids
+        : bridge.graph_context?.assistive_graph_ids;
+      assert(
+        Array.isArray(actualAssistiveGraphIds),
+        `Expected graph route bridge diagnostics to expose assistive_graph_ids. Actual: ${JSON.stringify(bridge)}`,
+      );
+      assert(
+        actualAssistiveGraphIds.join(",") ===
+          expected.assistiveGraphIds.join(","),
+        `Expected assistive_graph_ids to be ${expected.assistiveGraphIds.join(",")}. Actual: ${actualAssistiveGraphIds.join(",")}`,
+      );
+    }
+    if (expected.optionalMainTakeoverGraphIds) {
+      const actualTakeoverGraphIds = Array.isArray(
+        bridge.optional_main_takeover_graph_ids,
+      )
+        ? bridge.optional_main_takeover_graph_ids
+        : bridge.graph_context?.optional_main_takeover_graph_ids;
+      assert(
+        Array.isArray(actualTakeoverGraphIds),
+        `Expected graph route bridge diagnostics to expose optional_main_takeover_graph_ids. Actual: ${JSON.stringify(bridge)}`,
+      );
+      assert(
+        actualTakeoverGraphIds.join(",") ===
+          expected.optionalMainTakeoverGraphIds.join(","),
+        `Expected optional_main_takeover_graph_ids to be ${expected.optionalMainTakeoverGraphIds.join(",")}. Actual: ${actualTakeoverGraphIds.join(",")}`,
+      );
+    }
   } else {
     assert(
       bridge.graph_context === undefined,
@@ -1470,6 +1550,9 @@ function assertRunSummaryBridgeContract(
     hasExplicitLegacyFlowSelection: boolean;
     enabledGraphCount: number;
     selectedGraphIds?: string[];
+    graphIntent?: "assistive" | "optional_main_takeover";
+    assistiveGraphIds?: string[];
+    optionalMainTakeoverGraphIds?: string[];
     failureOrigin?:
       | "graph_dispatch"
       | "legacy_dispatch"
@@ -1503,6 +1586,9 @@ function assertRunSummaryBridgeContract(
     hasExplicitLegacyFlowSelection: expected.hasExplicitLegacyFlowSelection,
     enabledGraphCount: expected.enabledGraphCount,
     selectedGraphIds: expected.selectedGraphIds,
+    graphIntent: expected.graphIntent,
+    assistiveGraphIds: expected.assistiveGraphIds,
+    optionalMainTakeoverGraphIds: expected.optionalMainTakeoverGraphIds,
     failureOrigin: expected.failureOrigin,
   });
   assert(
@@ -6371,6 +6457,28 @@ async function runValidationSpec(): Promise<void> {
     route: "graph",
     reason: "graph_first",
     enabledGraphIds: ["graph_test"],
+    graphIntent: "assistive",
+    assistiveGraphIds: ["graph_test"],
+    optionalMainTakeoverGraphIds: [],
+    hasExplicitLegacyFlowSelection: false,
+  });
+
+  const graphTakeoverCandidate = makeOptionalMainTakeoverGraph();
+  const takeoverRoute = selectWorkflowBridgeRoute({
+    input: {
+      flow_ids: undefined,
+    },
+    settings: {
+      workbench_graphs: [makeBaseGraph(), graphTakeoverCandidate],
+    },
+  });
+  assertBridgeRoute(takeoverRoute, {
+    route: "graph",
+    reason: "graph_first",
+    enabledGraphIds: ["graph_test", "graph_test_takeover"],
+    graphIntent: "optional_main_takeover",
+    assistiveGraphIds: ["graph_test"],
+    optionalMainTakeoverGraphIds: ["graph_test_takeover"],
     hasExplicitLegacyFlowSelection: false,
   });
 
@@ -6432,6 +6540,22 @@ async function runValidationSpec(): Promise<void> {
       hasExplicitLegacyFlowSelection: false,
       enabledGraphCount: 1,
       selectedGraphIds: ["graph_test"],
+      graphIntent: "assistive",
+      assistiveGraphIds: ["graph_test"],
+      optionalMainTakeoverGraphIds: [],
+    },
+  );
+  assertBridgeDiagnostics(
+    buildWorkflowBridgeDiagnostics({ selection: takeoverRoute }),
+    {
+      route: "graph",
+      reason: "graph_first",
+      hasExplicitLegacyFlowSelection: false,
+      enabledGraphCount: 2,
+      selectedGraphIds: ["graph_test", "graph_test_takeover"],
+      graphIntent: "optional_main_takeover",
+      assistiveGraphIds: ["graph_test"],
+      optionalMainTakeoverGraphIds: ["graph_test_takeover"],
     },
   );
   const bridgeDiagnosticsWithCompileArtifact = buildWorkflowBridgeDiagnostics({
@@ -6446,6 +6570,9 @@ async function runValidationSpec(): Promise<void> {
     hasExplicitLegacyFlowSelection: false,
     enabledGraphCount: 1,
     selectedGraphIds: ["graph_test"],
+    graphIntent: "assistive",
+    assistiveGraphIds: ["graph_test"],
+    optionalMainTakeoverGraphIds: [],
     failureOrigin: "graph_dispatch",
   });
   const bridgeCompileArtifact = readGraphCompileArtifactEnvelope(
@@ -7858,6 +7985,9 @@ async function runValidationSpec(): Promise<void> {
     hasExplicitLegacyFlowSelection: false,
     enabledGraphCount: 1,
     selectedGraphIds: ["graph_test"],
+    graphIntent: "assistive",
+    assistiveGraphIds: ["graph_test"],
+    optionalMainTakeoverGraphIds: [],
     hasFailure: false,
   });
   assertRunSummaryBridgeContract(loadLastRunForChat("chat_graph_success"), {
@@ -7870,6 +8000,35 @@ async function runValidationSpec(): Promise<void> {
     hasExplicitLegacyFlowSelection: false,
     enabledGraphCount: 1,
     selectedGraphIds: ["graph_test"],
+    graphIntent: "assistive",
+    assistiveGraphIds: ["graph_test"],
+    optionalMainTakeoverGraphIds: [],
+    hasFailure: false,
+  });
+
+  const graphTakeoverSummary = createRunSummaryFixture({
+    chatId: "chat_graph_takeover",
+    requestId: "req_graph_takeover",
+    ok: true,
+    reason: "",
+    bridgeDiagnostics: buildWorkflowBridgeDiagnostics({
+      selection: takeoverRoute,
+    }),
+  });
+  setLastRun(graphTakeoverSummary);
+  assertRunSummaryBridgeContract(loadLastRunForChat("chat_graph_takeover"), {
+    chatId: "chat_graph_takeover",
+    requestId: "req_graph_takeover",
+    ok: true,
+    reason: "",
+    route: "graph",
+    bridgeReason: "graph_first",
+    hasExplicitLegacyFlowSelection: false,
+    enabledGraphCount: 2,
+    selectedGraphIds: ["graph_test", "graph_test_takeover"],
+    graphIntent: "optional_main_takeover",
+    assistiveGraphIds: ["graph_test"],
+    optionalMainTakeoverGraphIds: ["graph_test_takeover"],
     hasFailure: false,
   });
 
