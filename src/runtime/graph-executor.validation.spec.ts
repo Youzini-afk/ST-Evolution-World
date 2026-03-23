@@ -14,7 +14,10 @@ import type {
   GraphNodeDiagnosticsView,
   WorkbenchGraph,
 } from "../ui/components/graph/module-types";
-import { RESERVED_ACTIVATION_PORT_ID } from "../ui/components/graph/module-types";
+import {
+  RESERVED_ACTIVATION_PORT_ID,
+  RESERVED_ACTIVATION_RESULT_PORT_ID,
+} from "../ui/components/graph/module-types";
 import { useEwStore } from "../ui/store";
 import { hasWorkflowsForTiming } from "./events";
 import { autoMigrateIfNeeded, migrateFlowToGraph } from "./flow-migrator";
@@ -1093,6 +1096,248 @@ function makeIfControlGraph(): WorkbenchGraph {
         source: "src_text",
         sourcePort: "text",
         target: "else_filter",
+        targetPort: "text_in",
+      },
+    ],
+  };
+}
+
+function makeParallelJoinGraph(): WorkbenchGraph {
+  return {
+    id: "graph_parallel_join",
+    name: "Parallel Join Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "ctl_if",
+        moduleId: "ctl_if",
+        position: { x: 220, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "branch_a",
+        moduleId: "flt_mvu_strip",
+        position: { x: 460, y: -120 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "branch_b",
+        moduleId: "flt_mvu_strip",
+        position: { x: 460, y: 120 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "ctl_join",
+        moduleId: "ctl_join",
+        position: { x: 700, y: 0 },
+        config: { mode: "all" },
+        collapsed: false,
+      },
+      {
+        id: "final_filter",
+        moduleId: "flt_mvu_strip",
+        position: { x: 940, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_condition",
+        source: "src_text",
+        sourcePort: "text",
+        target: "ctl_if",
+        targetPort: "condition",
+      },
+      {
+        id: "edge_then_a",
+        source: "ctl_if",
+        sourcePort: "then",
+        target: "branch_a",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_then_b",
+        source: "ctl_if",
+        sourcePort: "then",
+        target: "branch_b",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_text_a",
+        source: "src_text",
+        sourcePort: "text",
+        target: "branch_a",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_text_b",
+        source: "src_text",
+        sourcePort: "text",
+        target: "branch_b",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_done_a",
+        source: "branch_a",
+        sourcePort: RESERVED_ACTIVATION_RESULT_PORT_ID,
+        target: "ctl_join",
+        targetPort: "branches",
+      },
+      {
+        id: "edge_done_b",
+        source: "branch_b",
+        sourcePort: RESERVED_ACTIVATION_RESULT_PORT_ID,
+        target: "ctl_join",
+        targetPort: "branches",
+      },
+      {
+        id: "edge_join_to_final",
+        source: "ctl_join",
+        sourcePort: "joined",
+        target: "final_filter",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_text_final",
+        source: "src_text",
+        sourcePort: "text",
+        target: "final_filter",
+        targetPort: "text_in",
+      },
+    ],
+  };
+}
+
+function makeExclusiveJoinGraph(mode: "all" | "any"): WorkbenchGraph {
+  return {
+    id: `graph_exclusive_join_${mode}`,
+    name: `Exclusive Join ${mode.toUpperCase()}`,
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "ctl_if",
+        moduleId: "ctl_if",
+        position: { x: 220, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "branch_a",
+        moduleId: "flt_mvu_strip",
+        position: { x: 460, y: -120 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "branch_b",
+        moduleId: "flt_mvu_strip",
+        position: { x: 460, y: 120 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "ctl_join",
+        moduleId: "ctl_join",
+        position: { x: 700, y: 0 },
+        config: { mode },
+        collapsed: false,
+      },
+      {
+        id: "final_filter",
+        moduleId: "flt_mvu_strip",
+        position: { x: 940, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_condition",
+        source: "src_text",
+        sourcePort: "text",
+        target: "ctl_if",
+        targetPort: "condition",
+      },
+      {
+        id: "edge_then_a",
+        source: "ctl_if",
+        sourcePort: "then",
+        target: "branch_a",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_else_b",
+        source: "ctl_if",
+        sourcePort: "else",
+        target: "branch_b",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_text_a",
+        source: "src_text",
+        sourcePort: "text",
+        target: "branch_a",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_text_b",
+        source: "src_text",
+        sourcePort: "text",
+        target: "branch_b",
+        targetPort: "text_in",
+      },
+      {
+        id: "edge_done_a",
+        source: "branch_a",
+        sourcePort: RESERVED_ACTIVATION_RESULT_PORT_ID,
+        target: "ctl_join",
+        targetPort: "branches",
+      },
+      {
+        id: "edge_done_b",
+        source: "branch_b",
+        sourcePort: RESERVED_ACTIVATION_RESULT_PORT_ID,
+        target: "ctl_join",
+        targetPort: "branches",
+      },
+      {
+        id: "edge_join_to_final",
+        source: "ctl_join",
+        sourcePort: "joined",
+        target: "final_filter",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_text_final",
+        source: "src_text",
+        sourcePort: "text",
+        target: "final_filter",
         targetPort: "text_in",
       },
     ],
@@ -2489,6 +2734,94 @@ async function runValidationSpec(): Promise<void> {
     ifFalseResult.finalOutputs.else_filter?.text_out === "" &&
       ifFalseResult.finalOutputs.then_filter === undefined,
     `Expected only else_filter to contribute final outputs in falsy ctl_if execution. Actual: ${JSON.stringify(ifFalseResult.finalOutputs)}`,
+  );
+
+  const parallelJoinGraph = makeParallelJoinGraph();
+  assert(
+    validateGraph(parallelJoinGraph).errors.length === 0,
+    `Expected parallel join graph fixture to validate. Actual: ${JSON.stringify(validateGraph(parallelJoinGraph).errors)}`,
+  );
+  const parallelJoinResult = await executeGraph(
+    parallelJoinGraph,
+    makeExecutionContext({
+      userInput: "parallel-join",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(parallelJoinResult.ok, "Expected parallel join execution to succeed");
+  assert(
+    parallelJoinResult.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`,
+      )
+      .join(",") ===
+      "src_text:ok:ineligible_source,ctl_if:ok:missing_baseline,branch_a:ok:missing_baseline,branch_b:ok:missing_baseline,ctl_join:ok:missing_baseline,final_filter:ok:ineligible_terminal",
+    `Expected parallel join graph to fan out then activation into both branches and rejoin before final execution. Actual: ${parallelJoinResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")}`,
+  );
+  const parallelJoinCtlResult = parallelJoinResult.moduleResults.find(
+    (result) => result.nodeId === "ctl_join",
+  );
+  assert(
+    parallelJoinCtlResult?.outputs.joined === true &&
+      parallelJoinCtlResult.outputs.joined_count === 2 &&
+      parallelJoinCtlResult.outputs.pending_count === 0 &&
+      parallelJoinCtlResult.outputs.mode === "all" &&
+      parallelJoinResult.finalOutputs.final_filter?.text_out === "parallel-join",
+    `Expected ctl_join(all) to observe both branch completion activations and unlock final_filter. Actual ctl_join=${JSON.stringify(parallelJoinCtlResult)} final=${JSON.stringify(parallelJoinResult.finalOutputs)}`,
+  );
+
+  const exclusiveJoinAnyResult = await executeGraph(
+    makeExclusiveJoinGraph("any"),
+    makeExecutionContext({
+      userInput: "exclusive-join",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(exclusiveJoinAnyResult.ok, "Expected exclusive join(any) execution to succeed");
+  const exclusiveJoinAnyCtlResult = exclusiveJoinAnyResult.moduleResults.find(
+    (result) => result.nodeId === "ctl_join",
+  );
+  assert(
+    exclusiveJoinAnyResult.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`,
+      )
+      .join(",") ===
+      "src_text:ok:ineligible_source,ctl_if:ok:missing_baseline,branch_a:ok:missing_baseline,branch_b:skipped:inactive_control_flow,ctl_join:ok:missing_baseline,final_filter:ok:ineligible_terminal" &&
+      exclusiveJoinAnyCtlResult?.outputs.joined === true &&
+      exclusiveJoinAnyCtlResult.outputs.joined_count === 1 &&
+      exclusiveJoinAnyCtlResult.outputs.pending_count === 1 &&
+      exclusiveJoinAnyResult.finalOutputs.final_filter?.text_out ===
+        "exclusive-join",
+    `Expected ctl_join(any) to unlock final execution after one branch completes. Actual: results=${exclusiveJoinAnyResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")} ctl_join=${JSON.stringify(exclusiveJoinAnyCtlResult)} final=${JSON.stringify(exclusiveJoinAnyResult.finalOutputs)}`,
+  );
+
+  const exclusiveJoinAllResult = await executeGraph(
+    makeExclusiveJoinGraph("all"),
+    makeExecutionContext({
+      userInput: "exclusive-join",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(exclusiveJoinAllResult.ok, "Expected exclusive join(all) execution to succeed");
+  const exclusiveJoinAllCtlResult = exclusiveJoinAllResult.moduleResults.find(
+    (result) => result.nodeId === "ctl_join",
+  );
+  assert(
+    exclusiveJoinAllResult.moduleResults
+      .map(
+        (result) =>
+          `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`,
+      )
+      .join(",") ===
+      "src_text:ok:ineligible_source,ctl_if:ok:missing_baseline,branch_a:ok:missing_baseline,branch_b:skipped:inactive_control_flow,ctl_join:ok:missing_baseline,final_filter:skipped:inactive_control_flow" &&
+      exclusiveJoinAllCtlResult?.outputs.joined === false &&
+      exclusiveJoinAllCtlResult.outputs.joined_count === 1 &&
+      exclusiveJoinAllCtlResult.outputs.pending_count === 1 &&
+      exclusiveJoinAllResult.finalOutputs.final_filter === undefined,
+    `Expected ctl_join(all) to keep final execution blocked when only one branch completes. Actual: results=${exclusiveJoinAllResult.moduleResults.map((result) => `${result.nodeId}:${result.status}:${result.executionDecision?.reason ?? "unknown"}`).join(",")} ctl_join=${JSON.stringify(exclusiveJoinAllCtlResult)} final=${JSON.stringify(exclusiveJoinAllResult.finalOutputs)}`,
   );
 
   const dualHostGraphFixture = makeIntegratedSmokeGraph();

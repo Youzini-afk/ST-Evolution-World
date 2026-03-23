@@ -19,7 +19,10 @@ import {
   getModuleMetadataSurface,
   resolveModuleConfigWithDefaults,
 } from "../ui/components/graph/module-registry";
-import { RESERVED_ACTIVATION_PORT_ID } from "../ui/components/graph/module-types";
+import {
+  RESERVED_ACTIVATION_PORT_ID,
+  RESERVED_ACTIVATION_RESULT_PORT_ID,
+} from "../ui/components/graph/module-types";
 import type {
   ExecutionContext,
   GraphCompilePlan,
@@ -215,6 +218,18 @@ function collectNodeInputSources(
     const rightKey = `${right.targetPort}:${right.sourceNodeId}:${right.sourcePort}`;
     return leftKey.localeCompare(rightKey);
   });
+}
+
+function collectConfiguredInputEdgeCounts(
+  node: WorkbenchNode,
+  edges: WorkbenchEdge[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const edge of edges) {
+    if (edge.target !== node.id) continue;
+    counts[edge.targetPort] = (counts[edge.targetPort] ?? 0) + 1;
+  }
+  return counts;
 }
 
 // ── Module Execution Dispatch (P2.1: registry-based) ──
@@ -1992,6 +2007,19 @@ function cloneModuleOutput(outputs: ModuleOutput): ModuleOutput {
   return { ...outputs };
 }
 
+function createInternalNodeOutputs(outputs: ModuleOutput): ModuleOutput {
+  return {
+    ...outputs,
+    [RESERVED_ACTIVATION_RESULT_PORT_ID]: true,
+  };
+}
+
+function stripInternalNodeOutputs(outputs: ModuleOutput): ModuleOutput {
+  const nextOutputs = { ...outputs };
+  delete nextOutputs[RESERVED_ACTIVATION_RESULT_PORT_ID];
+  return nextOutputs;
+}
+
 function createNodeRunArtifact(params: {
   runId: string;
   graphId: string;
@@ -2355,6 +2383,10 @@ export async function executeCompiledGraph(
       graph.edges,
       nodeOutputs,
     );
+    const configuredInputEdgeCounts = collectConfiguredInputEdgeCounts(
+      node,
+      graph.edges,
+    );
     const stableContextInputs = collectStableContextInputFacts(node, context);
     const inputFingerprint = createInputFingerprint(
       node,
@@ -2486,7 +2518,7 @@ export async function executeCompiledGraph(
           ? cloneModuleOutput(reusableOutputs)
           : {};
       if (executionDecision.reason === "skip_reuse_outputs" && reusableOutputs) {
-        nodeOutputs.set(node.id, skippedOutputs);
+        nodeOutputs.set(node.id, createInternalNodeOutputs(skippedOutputs));
       }
       moduleResults.push({
         nodeId: node.id,
@@ -2556,14 +2588,17 @@ export async function executeCompiledGraph(
 
     try {
       const dispatchResult = await dispatchNodeExecution({
+        graph,
         planNode,
         node: effectiveNode,
         inputs,
+        inputSources,
+        configuredInputEdgeCounts,
         context,
         modules: runtimeModules,
       });
       const outputs = dispatchResult.outputs;
-      nodeOutputs.set(node.id, outputs);
+      nodeOutputs.set(node.id, createInternalNodeOutputs(outputs));
 
       const partialOutputKeys = Object.keys(outputs).filter((key) => {
         const value = outputs[key];
@@ -2772,7 +2807,7 @@ export async function executeCompiledGraph(
 
     const outputs = nodeOutputs.get(terminalNodeId);
     if (outputs) {
-      terminalOutputs[terminalNodeId] = outputs;
+      terminalOutputs[terminalNodeId] = stripInternalNodeOutputs(outputs);
     }
   }
 

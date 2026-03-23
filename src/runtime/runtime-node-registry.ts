@@ -19,11 +19,13 @@ import {
 import type {
   ExecutionContext,
   GraphCompilePlanNode,
+  GraphNodeInputSource,
   HostCommitContract,
   HostWriteDescriptor,
   ModuleMetadataSemanticSummary,
   ModuleOutput,
   WorkbenchCapability,
+  WorkbenchGraph,
   WorkbenchNode,
   WorkbenchSideEffectLevel,
 } from "../ui/components/graph/module-types";
@@ -55,9 +57,12 @@ export interface RuntimeImplModules {
  * Unchanged from the previous inline definition in graph-executor.
  */
 export interface NodeHandlerRequest {
+  graph: WorkbenchGraph;
   planNode: GraphCompilePlanNode;
   node: WorkbenchNode;
   inputs: Record<string, any>;
+  inputSources: GraphNodeInputSource[];
+  configuredInputEdgeCounts: Record<string, number>;
   context: ExecutionContext;
   modules: RuntimeImplModules;
 }
@@ -910,6 +915,69 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
           selected_branch: activeThen ? "then" : "else",
         },
         handlerId: "ctl_if",
+      };
+    },
+  });
+
+  registerNodeHandler({
+    moduleId: "ctl_join",
+    handlerId: "ctl_join",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ node, inputs, inputSources, configuredInputEdgeCounts }) => {
+      const normalizeTruthy = (value: unknown): boolean => {
+        if (Array.isArray(value)) {
+          return value.some((entry) => normalizeTruthy(entry));
+        }
+        if (typeof value === "boolean") {
+          return value;
+        }
+        if (typeof value === "number") {
+          return Number.isFinite(value) && value !== 0;
+        }
+        if (typeof value === "string") {
+          const normalized = value.trim().toLowerCase();
+          if (!normalized || normalized === "false" || normalized === "0") {
+            return false;
+          }
+          return true;
+        }
+        return value !== null && value !== undefined;
+      };
+
+      const branchSignals = Array.isArray(inputs.branches)
+        ? inputs.branches
+        : inputs.branches === undefined
+          ? []
+          : [inputs.branches];
+      const observedBranchCount = inputSources.filter(
+        (source) => source.targetPort === "branches",
+      ).length;
+      const configuredBranchCount = Math.max(
+        0,
+        Math.trunc(Number(configuredInputEdgeCounts.branches ?? 0) || 0),
+      );
+      const truthyBranches = branchSignals.filter((value) =>
+        normalizeTruthy(value),
+      ).length;
+      const mode = node.config.mode === "any" ? "any" : "all";
+      const joined =
+        mode === "any"
+          ? truthyBranches > 0
+          : configuredBranchCount > 0 &&
+            observedBranchCount === configuredBranchCount &&
+            truthyBranches === configuredBranchCount;
+      return {
+        outputs: {
+          joined,
+          joined_count: truthyBranches,
+          pending_count: Math.max(
+            0,
+            configuredBranchCount - observedBranchCount,
+          ),
+          mode,
+        },
+        handlerId: "ctl_join",
       };
     },
   });

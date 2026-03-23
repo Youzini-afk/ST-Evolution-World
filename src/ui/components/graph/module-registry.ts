@@ -4,6 +4,8 @@
 import {
   RESERVED_ACTIVATION_PORT_ID,
   RESERVED_ACTIVATION_PORT_LABEL,
+  RESERVED_ACTIVATION_RESULT_PORT_ID,
+  RESERVED_ACTIVATION_RESULT_PORT_LABEL,
 } from "./module-types";
 import type {
   HostWriteSummary,
@@ -314,13 +316,25 @@ const activationOut = (id: string, label: string): ModulePortDef => ({
   dataType: "activation",
 });
 
-function withReservedActivationInput(module: ModuleBlueprint): ModuleBlueprint {
-  if (module.ports.some((port) => port.id === RESERVED_ACTIVATION_PORT_ID)) {
-    return module;
+function withReservedActivationPorts(module: ModuleBlueprint): ModuleBlueprint {
+  const nextPorts = [...module.ports];
+  if (!nextPorts.some((port) => port.id === RESERVED_ACTIVATION_PORT_ID)) {
+    nextPorts.unshift(activationIn());
+  }
+  if (
+    !nextPorts.some((port) => port.id === RESERVED_ACTIVATION_RESULT_PORT_ID)
+  ) {
+    nextPorts.push(
+      activationOut(
+        RESERVED_ACTIVATION_RESULT_PORT_ID,
+        RESERVED_ACTIVATION_RESULT_PORT_LABEL,
+      ),
+    );
+    nextPorts[nextPorts.length - 1].uiHidden = true;
   }
   return {
     ...module,
-    ports: [activationIn(), ...module.ports],
+    ports: nextPorts,
   };
 }
 
@@ -1898,6 +1912,56 @@ const CONTROL_MODULES: ModuleBlueprint[] = [
       },
     ],
   },
+  {
+    moduleId: "ctl_join",
+    label: "分支汇合",
+    category: "control",
+    color: "#f97316",
+    icon: "🔀",
+    description: "聚合多个 activation 输入，并按 any/all 策略输出 joined 激活信号。",
+    ports: [
+      {
+        id: "branches",
+        label: "分支完成",
+        direction: "in",
+        dataType: "activation",
+        multiple: true,
+        optional: true,
+      },
+      activationOut("joined", "Joined"),
+      {
+        id: "joined_count",
+        label: "命中分支数",
+        direction: "out",
+        dataType: "number",
+      },
+      {
+        id: "pending_count",
+        label: "待满足分支数",
+        direction: "out",
+        dataType: "number",
+      },
+      {
+        id: "mode",
+        label: "聚合模式",
+        direction: "out",
+        dataType: "text",
+      },
+    ],
+    defaultConfig: {
+      mode: "all",
+    },
+    configSchema: [
+      {
+        key: "mode",
+        label: "聚合策略",
+        type: "select",
+        options: ["all", "any"],
+        exposeInSimpleMode: false,
+        description: "all 需要所有已配置分支都完成；any 命中任一分支即可。",
+      },
+    ],
+  },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -2043,7 +2107,7 @@ const MODULE_METADATA_PILOT_BY_ID: Readonly<
 };
 
 const ALL_MODULES: ModuleBlueprint[] = ALL_MODULES_BASE.map((baseModule) => {
-  const module = withReservedActivationInput(baseModule);
+  const module = withReservedActivationPorts(baseModule);
   const pilotMetadata = MODULE_METADATA_PILOT_BY_ID[module.moduleId];
   if (!pilotMetadata) {
     const hasConfigFactSurface =

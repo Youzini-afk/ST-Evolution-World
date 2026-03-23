@@ -35,6 +35,8 @@ export type PortDataType =
 
 export const RESERVED_ACTIVATION_PORT_ID = "__activation";
 export const RESERVED_ACTIVATION_PORT_LABEL = "激活";
+export const RESERVED_ACTIVATION_RESULT_PORT_ID = "__activation_result";
+export const RESERVED_ACTIVATION_RESULT_PORT_LABEL = "完成";
 
 /** Definition of a port on a module blueprint */
 export interface ModulePortDef {
