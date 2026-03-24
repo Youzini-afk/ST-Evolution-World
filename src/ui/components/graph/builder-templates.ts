@@ -19,6 +19,7 @@ export interface BuilderWorkflowTemplateDefinition {
   description: string;
   tags: readonly string[];
   learningHighlights: readonly string[];
+  contractPreview: readonly string[];
   templateKind: BuilderTemplateKind;
   featureFamily: BuilderTemplateFeatureFamily;
   featured?: boolean;
@@ -448,6 +449,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "保留 Builder 元数据骨架",
         "适合直接开画",
       ],
+      contractPreview: [
+        "入口 · 无预设链路",
+        "输出 · 无预设输出",
+        "元数据 · 保留 builderMode / ownership",
+      ],
       templateKind: "starter",
       featureFamily: "general",
       ownership: "assistive",
@@ -466,6 +472,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "Simple 起步图",
         "辅助工作流入口",
         "用户输入到回复注入",
+      ],
+      contractPreview: [
+        "入口 · user_input.text",
+        "处理 · flt_mvu_strip",
+        "输出 · reply.instruction",
       ],
       templateKind: "starter",
       featureFamily: "reply_inject",
@@ -487,6 +498,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "保留 legacy fallback",
         "Advanced 起步骨架",
       ],
+      contractPreview: [
+        "入口 · chat_history.messages",
+        "所有权 · optional_main_takeover",
+        "输出 · reply.instruction",
+      ],
       templateKind: "starter",
       featureFamily: "main_takeover",
       featured: true,
@@ -507,6 +523,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "回复后链路",
         "适合后处理与可视化",
       ],
+      contractPreview: [
+        "入口 · flow_context.context",
+        "处理 · cmp_json_body_build",
+        "输出 · floor.result",
+      ],
       templateKind: "starter",
       featureFamily: "floor_binding",
       ownership: "assistive",
@@ -526,6 +547,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "JSON Body 试验台",
         "适合拆解请求模板",
       ],
+      contractPreview: [
+        "入口 · flow_context.context",
+        "处理 · cmp_request_template.body",
+        "输出 · floor.result",
+      ],
       templateKind: "composition_lab",
       featureFamily: "request_template",
       ownership: "assistive",
@@ -544,6 +570,12 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "包含 retry-safe boundary",
         "自动消费 retry_exhausted",
         "Simple 起步图",
+      ],
+      contractPreview: [
+        "入口 · user_input.text",
+        "边界 · frag_retry_fallback_text_cleanup",
+        "surface · retry_exhausted",
+        "输出 · reply.instruction",
       ],
       templateKind: "starter",
       featureFamily: "retry_fallback",
@@ -565,6 +597,12 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "显式展示 retry_exhausted 消费",
         "拆开成功链路与回退链路",
         "Advanced 拆解范本",
+      ],
+      contractPreview: [
+        "入口 · user_input.text",
+        "边界 · frag_text_cleanup_stage",
+        "读取 · frag_retry_value_fallback.retry_exhausted",
+        "输出 · reply.instruction",
       ],
       templateKind: "composition_lab",
       featureFamily: "retry_fallback",

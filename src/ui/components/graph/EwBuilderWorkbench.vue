@@ -153,6 +153,21 @@
                   </span>
                 </div>
               </div>
+              <div
+                v-if="template.contractPreview.length > 0"
+                class="ew-builder-workbench__stack"
+              >
+                <div class="ew-builder-workbench__summary-label">Contract 预览</div>
+                <div class="ew-builder-workbench__template-tags">
+                  <span
+                    v-for="preview in template.contractPreview"
+                    :key="`${template.id}-contract-${preview}`"
+                    class="ew-builder-workbench__template-tag"
+                  >
+                    {{ preview }}
+                  </span>
+                </div>
+              </div>
               <div class="ew-builder-workbench__template-tags">
                 <span
                   v-for="tag in template.tags"
@@ -561,6 +576,18 @@
                   class="ew-builder-workbench__template-tag"
                 >
                   {{ highlight }}
+                </span>
+              </div>
+            </template>
+            <template v-if="activeTemplateContractPreview.length > 0">
+              <div class="ew-builder-workbench__summary-label">模板 Contract 预览</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="preview in activeTemplateContractPreview"
+                  :key="`active-template-contract-${preview}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ preview }}
                 </span>
               </div>
             </template>
@@ -1198,6 +1225,10 @@ const activeTemplateDescription = computed(() => {
 
 const activeTemplateLearningHighlights = computed(() => {
   return activeTemplate.value?.learningHighlights ?? [];
+});
+
+const activeTemplateContractPreview = computed(() => {
+  return activeTemplate.value?.contractPreview ?? [];
 });
 
 const isActiveGraphEffectivelyEmpty = computed(() => {

@@ -12194,6 +12194,12 @@ async function runValidationSpec(): Promise<void> {
       retryFallbackTemplate.learningHighlights.includes(
         "自动消费 retry_exhausted",
       ) &&
+      retryFallbackTemplate.contractPreview.includes(
+        "边界 · frag_retry_fallback_text_cleanup",
+      ) &&
+      retryFallbackTemplate.contractPreview.includes(
+        "surface · retry_exhausted",
+      ) &&
       retryFallbackTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_cleanup" &&
       retryFallbackTemplateGraph?.runtimeMeta?.builderMode === "simple" &&
@@ -12223,6 +12229,12 @@ async function runValidationSpec(): Promise<void> {
       ) &&
       retryFallbackCompositionTemplate.learningHighlights.includes(
         "拆开成功链路与回退链路",
+      ) &&
+      retryFallbackCompositionTemplate.contractPreview.includes(
+        "边界 · frag_text_cleanup_stage",
+      ) &&
+      retryFallbackCompositionTemplate.contractPreview.includes(
+        "读取 · frag_retry_value_fallback.retry_exhausted",
       ) &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_composition_lab" &&
