@@ -1,85 +1,94 @@
 <template>
   <div class="ew-studio-editor">
-    <div class="ew-studio-editor__topbar">
-      <div class="ew-studio-editor__tabs">
-        <button
-          v-for="(graph, index) in localGraphs"
-          :key="graph.id"
-          class="ew-studio-editor__tab"
-          :class="{ active: localActiveGraphId === graph.id }"
-          @click="localActiveGraphId = graph.id"
-        >
-          {{ graph.name || `图 ${index + 1}` }}
-        </button>
-        <button
-          class="ew-studio-editor__tab ew-studio-editor__tab--add"
-          @click="addGraph"
-        >
-          +
-        </button>
-      </div>
-      <div class="ew-studio-editor__controls">
-        <button class="ew-studio-editor__ctrl" @click="renameGraph">重命名</button>
-        <button class="ew-studio-editor__ctrl" @click="toggleEnabled">
-          {{ activeGraph?.enabled ? "禁用" : "启用" }}
-        </button>
-        <button class="ew-studio-editor__ctrl" @click="$emit('open-observe')">
-          打开观测
-        </button>
-      </div>
-    </div>
-
-    <section v-if="activeGraph" class="ew-studio-editor__summary">
-      <div class="ew-studio-editor__summary-main">
-        <div class="ew-studio-editor__summary-item">
-          <span>名称</span>
-          <input v-model="activeGraph.name" class="ew-studio-editor__input" @change="emitGraphs" />
-        </div>
-        <div class="ew-studio-editor__summary-item">
-          <span>Builder 模式</span>
-          <div class="ew-studio-editor__mode-switch">
+    <section v-if="activeGraph" class="ew-studio-editor__workspace">
+      <header class="ew-studio-editor__workspace-top">
+        <div class="ew-studio-editor__topbar">
+          <div class="ew-studio-editor__tabs">
             <button
-              class="ew-studio-editor__mode-btn"
-              :class="{ active: currentBuilderMode === 'simple' }"
-              @click="setBuilderMode('simple')"
+              v-for="(graph, index) in localGraphs"
+              :key="graph.id"
+              class="ew-studio-editor__tab"
+              :class="{ active: localActiveGraphId === graph.id }"
+              @click="localActiveGraphId = graph.id"
             >
-              Simple
+              {{ graph.name || `图 ${index + 1}` }}
             </button>
             <button
-              class="ew-studio-editor__mode-btn"
-              :class="{ active: currentBuilderMode === 'advanced' }"
-              @click="setBuilderMode('advanced')"
+              class="ew-studio-editor__tab ew-studio-editor__tab--add"
+              @click="addGraph"
             >
-              Advanced
+              +
+            </button>
+          </div>
+          <div class="ew-studio-editor__controls">
+            <button class="ew-studio-editor__ctrl" @click="renameGraph">重命名</button>
+            <button class="ew-studio-editor__ctrl" @click="toggleEnabled">
+              {{ activeGraph.enabled ? "禁用" : "启用" }}
+            </button>
+            <button class="ew-studio-editor__ctrl" @click="$emit('open-observe')">
+              打开观测
             </button>
           </div>
         </div>
-        <div class="ew-studio-editor__summary-item">
-          <span>生成定位</span>
-          <select v-model="currentGenerationOwnership" class="ew-studio-editor__select">
-            <option value="assistive">辅助工作流</option>
-            <option value="optional_main_takeover">渐进主生成接管</option>
-          </select>
-        </div>
-        <div class="ew-studio-editor__summary-item">
-          <span>触发时机</span>
-          <select v-model="currentTiming" class="ew-studio-editor__select">
-            <option value="default">默认</option>
-            <option value="before_reply">回复前</option>
-            <option value="after_reply">回复后</option>
-          </select>
-        </div>
-      </div>
-      <div class="ew-studio-editor__summary-stats">
-        <span class="ew-studio-editor__stat">节点 {{ activeGraph.nodes.length }}</span>
-        <span class="ew-studio-editor__stat">连线 {{ activeGraph.edges.length }}</span>
-        <span class="ew-studio-editor__stat">
-          模板 {{ activeTemplate?.label ?? "自定义图" }}
-        </span>
-      </div>
-    </section>
 
-    <div v-if="activeGraph" class="ew-studio-editor__body">
+        <section class="ew-studio-editor__summary">
+          <div class="ew-studio-editor__summary-main">
+            <div class="ew-studio-editor__summary-item">
+              <span>名称</span>
+              <input
+                v-model="activeGraph.name"
+                class="ew-studio-editor__input"
+                @change="emitGraphs"
+              />
+            </div>
+            <div class="ew-studio-editor__summary-item">
+              <span>Builder 模式</span>
+              <div class="ew-studio-editor__mode-switch">
+                <button
+                  class="ew-studio-editor__mode-btn"
+                  :class="{ active: currentBuilderMode === 'simple' }"
+                  @click="setBuilderMode('simple')"
+                >
+                  Simple
+                </button>
+                <button
+                  class="ew-studio-editor__mode-btn"
+                  :class="{ active: currentBuilderMode === 'advanced' }"
+                  @click="setBuilderMode('advanced')"
+                >
+                  Advanced
+                </button>
+              </div>
+            </div>
+            <div class="ew-studio-editor__summary-item">
+              <span>生成定位</span>
+              <select
+                v-model="currentGenerationOwnership"
+                class="ew-studio-editor__select"
+              >
+                <option value="assistive">辅助工作流</option>
+                <option value="optional_main_takeover">渐进主生成接管</option>
+              </select>
+            </div>
+            <div class="ew-studio-editor__summary-item">
+              <span>触发时机</span>
+              <select v-model="currentTiming" class="ew-studio-editor__select">
+                <option value="default">默认</option>
+                <option value="before_reply">回复前</option>
+                <option value="after_reply">回复后</option>
+              </select>
+            </div>
+          </div>
+          <div class="ew-studio-editor__summary-stats">
+            <span class="ew-studio-editor__stat">节点 {{ activeGraph.nodes.length }}</span>
+            <span class="ew-studio-editor__stat">连线 {{ activeGraph.edges.length }}</span>
+            <span class="ew-studio-editor__stat">
+              模板 {{ activeTemplate?.label ?? "自定义图" }}
+            </span>
+          </div>
+        </section>
+      </header>
+
       <aside class="ew-studio-editor__left">
         <div class="ew-studio-editor__left-tabs">
           <button
@@ -128,17 +137,19 @@
         </div>
       </aside>
 
-      <div class="ew-studio-editor__canvas">
-        <EwGraphEditor
-          :graph="activeGraph"
-          :saved-slots="savedSlots"
-          :show-module-palette="false"
-          :show-property-panel="false"
-          :selected-node-id="selectedNodeId"
-          @save-slots="$emit('save-slots', $event)"
-          @update:graph="onGraphUpdated"
-          @select-node="selectedNodeId = $event"
-        />
+      <div class="ew-studio-editor__canvas-shell">
+        <div class="ew-studio-editor__canvas">
+          <EwGraphEditor
+            :graph="activeGraph"
+            :saved-slots="savedSlots"
+            :show-module-palette="false"
+            :show-property-panel="false"
+            :selected-node-id="selectedNodeId"
+            @save-slots="$emit('save-slots', $event)"
+            @update:graph="onGraphUpdated"
+            @select-node="selectedNodeId = $event"
+          />
+        </div>
       </div>
 
       <aside class="ew-studio-editor__right">
@@ -202,32 +213,32 @@
           </section>
         </template>
       </aside>
-    </div>
 
-    <section v-if="activeGraph" class="ew-studio-editor__bottom" :data-open="bottomOpen ? '1' : '0'">
-      <div class="ew-studio-editor__bottom-header">
-        <div>
-          <div class="ew-studio-editor__card-label">运行观测</div>
-          <p class="ew-studio-editor__bottom-copy">
-            默认半开，围绕当前工作流展示运行摘要、关键节点诊断与事件时间线。
-          </p>
+      <section class="ew-studio-editor__bottom" :data-open="bottomOpen ? '1' : '0'">
+        <div class="ew-studio-editor__bottom-header">
+          <div>
+            <div class="ew-studio-editor__card-label">运行观测</div>
+            <p class="ew-studio-editor__bottom-copy">
+              默认半开，围绕当前工作流展示运行摘要、关键节点诊断与事件时间线。
+            </p>
+          </div>
+          <button class="ew-studio-editor__ctrl" @click="bottomOpen = !bottomOpen">
+            {{ bottomOpen ? "收起" : "展开" }}
+          </button>
         </div>
-        <button class="ew-studio-editor__ctrl" @click="bottomOpen = !bottomOpen">
-          {{ bottomOpen ? "收起" : "展开" }}
-        </button>
-      </div>
-      <div v-if="bottomOpen" class="ew-studio-editor__bottom-body">
-        <EwStudioObserveSurface
-          embedded
-          :graph="activeGraph"
-          :selected-node-id="selectedNodeId"
-          :diagnostics-summary="visibleDiagnosticsSummary"
-          :active-run-summary="visibleActiveRunSummary"
-          :run-artifact="visibleRunArtifact"
-          :run-events="visibleRunEvents"
-          :selected-node-diagnostics="selectedNodeDiagnostics"
-        />
-      </div>
+        <div v-if="bottomOpen" class="ew-studio-editor__bottom-body">
+          <EwStudioObserveSurface
+            embedded
+            :graph="activeGraph"
+            :selected-node-id="selectedNodeId"
+            :diagnostics-summary="visibleDiagnosticsSummary"
+            :active-run-summary="visibleActiveRunSummary"
+            :run-artifact="visibleRunArtifact"
+            :run-events="visibleRunEvents"
+            :selected-node-diagnostics="selectedNodeDiagnostics"
+          />
+        </div>
+      </section>
     </section>
 
     <section v-else class="ew-studio-editor__empty">
@@ -552,16 +563,32 @@ function getNodeLabel(node: WorkbenchNode): string {
 .ew-studio-editor {
   display: flex;
   flex-direction: column;
-  gap: 12px;
   min-height: 0;
 }
 
-.ew-studio-editor__topbar,
-.ew-studio-editor__summary {
+.ew-studio-editor__workspace {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 12, 24, 0.72);
-  border-radius: 18px;
-  padding: 12px 14px;
+  background: linear-gradient(180deg, rgba(10, 16, 32, 0.92), rgba(7, 11, 22, 0.9));
+  border-radius: 22px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr) 320px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top top top"
+    "left canvas right"
+    "bottom bottom bottom";
+  gap: 12px;
+  min-height: min(82vh, 1080px);
+  overflow: hidden;
+}
+
+.ew-studio-editor__workspace-top {
+  grid-area: top;
+  display: grid;
+  gap: 10px;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .ew-studio-editor__topbar {
@@ -605,6 +632,10 @@ function getNodeLabel(node: WorkbenchNode): string {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 18px;
+  padding: 12px 14px;
 }
 
 .ew-studio-editor__summary-main {
@@ -647,19 +678,11 @@ function getNodeLabel(node: WorkbenchNode): string {
   font-size: 11px;
 }
 
-.ew-studio-editor__body {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 320px;
-  gap: 12px;
-  min-height: 0;
-  flex: 1;
-}
-
 .ew-studio-editor__left,
 .ew-studio-editor__right,
 .ew-studio-editor__bottom {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 12, 24, 0.72);
+  background: rgba(8, 12, 24, 0.68);
   border-radius: 18px;
 }
 
@@ -672,6 +695,14 @@ function getNodeLabel(node: WorkbenchNode): string {
   min-height: 0;
 }
 
+.ew-studio-editor__left {
+  grid-area: left;
+}
+
+.ew-studio-editor__right {
+  grid-area: right;
+}
+
 .ew-studio-editor__left-panel {
   display: flex;
   flex-direction: column;
@@ -680,13 +711,24 @@ function getNodeLabel(node: WorkbenchNode): string {
   min-height: 0;
 }
 
+.ew-studio-editor__canvas-shell {
+  grid-area: canvas;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(4, 8, 18, 0.52);
+  border-radius: 22px;
+  padding: 10px;
+}
+
 .ew-studio-editor__canvas {
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .ew-studio-editor__canvas :deep(.ew-graph-root) {
-  height: min(64vh, 760px);
+  height: 100%;
 }
 
 .ew-studio-editor__hint,
@@ -728,6 +770,7 @@ function getNodeLabel(node: WorkbenchNode): string {
 }
 
 .ew-studio-editor__bottom {
+  grid-area: bottom;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -757,9 +800,20 @@ function getNodeLabel(node: WorkbenchNode): string {
 }
 
 @media (max-width: 1280px) {
-  .ew-studio-editor__summary-main,
-  .ew-studio-editor__body {
+  .ew-studio-editor__workspace {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto minmax(460px, 1fr) auto auto;
+    grid-template-areas:
+      "top"
+      "left"
+      "canvas"
+      "right"
+      "bottom";
+    min-height: auto;
+  }
+
+  .ew-studio-editor__summary-main {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .ew-studio-editor__summary,
@@ -767,6 +821,12 @@ function getNodeLabel(node: WorkbenchNode): string {
   .ew-studio-editor__bottom-header {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+@media (max-width: 760px) {
+  .ew-studio-editor__summary-main {
+    grid-template-columns: 1fr;
   }
 }
 </style>
