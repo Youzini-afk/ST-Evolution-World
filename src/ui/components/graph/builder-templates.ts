@@ -1,4 +1,5 @@
 import {
+  getModuleBlueprint,
   instantiateCompositeTemplate,
   resolveModuleConfigWithDefaults,
 } from "./module-registry";
@@ -33,6 +34,22 @@ export interface BuilderWorkflowTemplateDefinition {
 export interface BuilderWorkflowTemplateStructureItem {
   moduleId: string;
   role: string;
+}
+
+export type BuilderWorkflowTemplateCapability =
+  | "control_flow"
+  | "retry_boundary"
+  | "main_takeover"
+  | "request_template"
+  | "reply_output"
+  | "floor_output";
+
+export interface BuilderWorkflowTemplatePreviewFacts {
+  nodeCount: number;
+  edgeCount: number;
+  controlNodeCount: number;
+  retryBoundaryCount: number;
+  capabilities: readonly BuilderWorkflowTemplateCapability[];
 }
 
 function createGraphId(seed: string): string {
@@ -655,6 +672,78 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
     },
   ];
 
+function inspectBuilderWorkflowTemplatePreviewFacts(
+  template: BuilderWorkflowTemplateDefinition,
+): BuilderWorkflowTemplatePreviewFacts {
+  const graph = template.createGraph();
+  let controlNodeCount = 0;
+  let hasRequestTemplate = false;
+  let hasReplyOutput = false;
+  let hasFloorOutput = false;
+  const retryBoundaryModuleIds = new Set<string>();
+
+  for (const node of graph.nodes) {
+    if (node.moduleId === "cmp_request_template") {
+      hasRequestTemplate = true;
+    }
+    if (node.moduleId === "out_reply_inject") {
+      hasReplyOutput = true;
+    }
+    if (node.moduleId === "out_floor_bind") {
+      hasFloorOutput = true;
+    }
+    const retryBoundaryModuleId =
+      typeof node.runtimeMeta?.retryBoundaryModuleId === "string"
+        ? node.runtimeMeta.retryBoundaryModuleId.trim()
+        : "";
+    if (retryBoundaryModuleId) {
+      retryBoundaryModuleIds.add(retryBoundaryModuleId);
+    }
+    try {
+      if (getModuleBlueprint(node.moduleId).category === "control") {
+        controlNodeCount += 1;
+      }
+    } catch {
+      // Ignore forward-compatible unknown modules in preview inspection.
+    }
+  }
+
+  const capabilities: BuilderWorkflowTemplateCapability[] = [];
+  if (controlNodeCount > 0) {
+    capabilities.push("control_flow");
+  }
+  if (retryBoundaryModuleIds.size > 0) {
+    capabilities.push("retry_boundary");
+  }
+  if (graph.runtimeMeta?.generationOwnership === "optional_main_takeover") {
+    capabilities.push("main_takeover");
+  }
+  if (hasRequestTemplate) {
+    capabilities.push("request_template");
+  }
+  if (hasReplyOutput) {
+    capabilities.push("reply_output");
+  }
+  if (hasFloorOutput) {
+    capabilities.push("floor_output");
+  }
+
+  return {
+    nodeCount: graph.nodes.length,
+    edgeCount: graph.edges.length,
+    controlNodeCount,
+    retryBoundaryCount: retryBoundaryModuleIds.size,
+    capabilities,
+  };
+}
+
+const BUILDER_WORKFLOW_TEMPLATE_PREVIEW_FACTS = new Map(
+  BUILDER_WORKFLOW_TEMPLATES.map((template) => [
+    template.id,
+    inspectBuilderWorkflowTemplatePreviewFacts(template),
+  ]),
+);
+
 export function findBuilderWorkflowTemplate(
   templateId: string | null | undefined,
 ): BuilderWorkflowTemplateDefinition | null {
@@ -665,4 +754,13 @@ export function findBuilderWorkflowTemplate(
     BUILDER_WORKFLOW_TEMPLATES.find((template) => template.id === templateId) ??
     null
   );
+}
+
+export function getBuilderWorkflowTemplatePreviewFacts(
+  templateId: string | null | undefined,
+): BuilderWorkflowTemplatePreviewFacts | null {
+  if (!templateId) {
+    return null;
+  }
+  return BUILDER_WORKFLOW_TEMPLATE_PREVIEW_FACTS.get(templateId) ?? null;
 }

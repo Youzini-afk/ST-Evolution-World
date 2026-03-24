@@ -9,7 +9,10 @@ import {
   getModuleMetadataSurface,
   instantiateCompositeTemplate,
 } from "../ui/components/graph/module-registry";
-import { findBuilderWorkflowTemplate } from "../ui/components/graph/builder-templates";
+import {
+  findBuilderWorkflowTemplate,
+  getBuilderWorkflowTemplatePreviewFacts,
+} from "../ui/components/graph/builder-templates";
 import type {
   ExecutionContext,
   GraphCompilePlan,
@@ -12179,11 +12182,25 @@ async function runValidationSpec(): Promise<void> {
     `G.2c: Expected builder-facing graph metadata to roundtrip through graph document codec. Actual: ${JSON.stringify(builderMetadataRoundtrip[0]?.runtimeMeta)}`,
   );
 
+  const mainTakeoverTemplatePreviewFacts = getBuilderWorkflowTemplatePreviewFacts(
+    "starter_main_takeover",
+  );
+  const requestTemplatePreviewFacts = getBuilderWorkflowTemplatePreviewFacts(
+    "starter_request_template",
+  );
   const retryFallbackTemplate = findBuilderWorkflowTemplate(
     "starter_retry_fallback_cleanup",
   );
+  const retryFallbackTemplatePreviewFacts =
+    getBuilderWorkflowTemplatePreviewFacts("starter_retry_fallback_cleanup");
   const retryFallbackTemplateGraph = retryFallbackTemplate?.createGraph();
   assert(
+    mainTakeoverTemplatePreviewFacts?.capabilities.includes("main_takeover") &&
+      mainTakeoverTemplatePreviewFacts.capabilities.includes("reply_output") &&
+      mainTakeoverTemplatePreviewFacts.nodeCount >= 6 &&
+      requestTemplatePreviewFacts?.capabilities.includes("request_template") &&
+      requestTemplatePreviewFacts.capabilities.includes("floor_output") &&
+      requestTemplatePreviewFacts.nodeCount >= 4 &&
     retryFallbackTemplate?.id === "starter_retry_fallback_cleanup" &&
       retryFallbackTemplate.templateKind === "starter" &&
       retryFallbackTemplate.featureFamily === "retry_fallback" &&
@@ -12205,6 +12222,11 @@ async function runValidationSpec(): Promise<void> {
           entry.moduleId === "frag_retry_fallback_text_cleanup" &&
           entry.role === "边界",
       ) &&
+      retryFallbackTemplatePreviewFacts?.capabilities.includes(
+        "retry_boundary",
+      ) &&
+      retryFallbackTemplatePreviewFacts.capabilities.includes("reply_output") &&
+      retryFallbackTemplatePreviewFacts.retryBoundaryCount === 1 &&
       retryFallbackTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_cleanup" &&
       retryFallbackTemplateGraph?.runtimeMeta?.builderMode === "simple" &&
@@ -12221,6 +12243,10 @@ async function runValidationSpec(): Promise<void> {
   const retryFallbackCompositionTemplate = findBuilderWorkflowTemplate(
     "starter_retry_fallback_composition_lab",
   );
+  const retryFallbackCompositionTemplatePreviewFacts =
+    getBuilderWorkflowTemplatePreviewFacts(
+      "starter_retry_fallback_composition_lab",
+    );
   const retryFallbackCompositionTemplateGraph =
     retryFallbackCompositionTemplate?.createGraph();
   assert(
@@ -12251,6 +12277,17 @@ async function runValidationSpec(): Promise<void> {
           entry.moduleId === "frag_retry_value_fallback" &&
           entry.role === "回退路由",
       ) &&
+      retryFallbackCompositionTemplatePreviewFacts?.capabilities.includes(
+        "control_flow",
+      ) &&
+      retryFallbackCompositionTemplatePreviewFacts.capabilities.includes(
+        "retry_boundary",
+      ) &&
+      retryFallbackCompositionTemplatePreviewFacts.capabilities.includes(
+        "reply_output",
+      ) &&
+      retryFallbackCompositionTemplatePreviewFacts.controlNodeCount >= 1 &&
+      retryFallbackCompositionTemplatePreviewFacts.retryBoundaryCount === 1 &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_composition_lab" &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.builderMode ===

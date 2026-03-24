@@ -72,6 +72,82 @@
       </div>
     </div>
 
+    <section class="ew-builder-workbench__library-toolbar">
+      <div class="ew-builder-workbench__section-header">
+        <div>
+          <div class="ew-builder-workbench__eyebrow">Library</div>
+          <h3 class="ew-builder-workbench__title">模板与积木筛选</h3>
+        </div>
+        <p class="ew-builder-workbench__starter-copy">
+          先按关键词、推荐模式和精选状态缩小范围，再进入模板和 kits 详情。
+        </p>
+      </div>
+      <div class="ew-builder-workbench__library-controls">
+        <label class="ew-builder-workbench__field">
+          <span class="ew-builder-workbench__field-label">搜索</span>
+          <input
+            v-model="libraryQuery"
+            type="text"
+            class="ew-builder-workbench__input"
+            placeholder="搜索模板、积木、能力、contract..."
+          />
+        </label>
+        <div class="ew-builder-workbench__field">
+          <span class="ew-builder-workbench__field-label">推荐模式</span>
+          <div class="ew-builder-workbench__mode-switch">
+            <button
+              class="ew-builder-workbench__mode-btn"
+              :class="{ active: libraryModeFilter === 'all' }"
+              @click="libraryModeFilter = 'all'"
+            >
+              All
+            </button>
+            <button
+              class="ew-builder-workbench__mode-btn"
+              :class="{ active: libraryModeFilter === 'simple' }"
+              @click="libraryModeFilter = 'simple'"
+            >
+              Simple
+            </button>
+            <button
+              class="ew-builder-workbench__mode-btn"
+              :class="{ active: libraryModeFilter === 'advanced' }"
+              @click="libraryModeFilter = 'advanced'"
+            >
+              Advanced
+            </button>
+          </div>
+        </div>
+        <div class="ew-builder-workbench__field">
+          <span class="ew-builder-workbench__field-label">精选</span>
+          <button
+            class="ew-builder-workbench__template-action"
+            :class="{ active: libraryFeaturedOnly }"
+            @click="libraryFeaturedOnly = !libraryFeaturedOnly"
+          >
+            {{ libraryFeaturedOnly ? "只看精选中" : "显示全部" }}
+          </button>
+        </div>
+      </div>
+      <div class="ew-builder-workbench__chips">
+        <span class="ew-builder-workbench__chip">
+          模板 {{ visibleTemplateCount }}
+        </span>
+        <span class="ew-builder-workbench__chip">
+          积木 {{ visibleCompositeModuleCount }}
+        </span>
+      </div>
+    </section>
+
+    <section
+      v-if="visibleTemplateCount === 0 && visibleCompositeModuleCount === 0"
+      class="ew-builder-workbench__section"
+    >
+      <div class="ew-builder-workbench__empty">
+        当前筛选条件下没有可显示的模板或积木，试试清空关键词或放宽模式限制。
+      </div>
+    </section>
+
     <section
       v-if="showTemplateLibrary"
       class="ew-builder-workbench__starter"
@@ -183,6 +259,46 @@
                   </span>
                 </div>
               </div>
+              <template v-if="getTemplatePreviewFacts(template.id)">
+                <div class="ew-builder-workbench__stack">
+                  <div class="ew-builder-workbench__summary-label">图规模</div>
+                  <div class="ew-builder-workbench__template-tags">
+                    <span class="ew-builder-workbench__template-tag">
+                      节点 {{ getTemplatePreviewFacts(template.id)?.nodeCount }}
+                    </span>
+                    <span class="ew-builder-workbench__template-tag">
+                      连线 {{ getTemplatePreviewFacts(template.id)?.edgeCount }}
+                    </span>
+                    <span
+                      v-if="(getTemplatePreviewFacts(template.id)?.controlNodeCount ?? 0) > 0"
+                      class="ew-builder-workbench__template-tag"
+                    >
+                      控制节点 {{ getTemplatePreviewFacts(template.id)?.controlNodeCount }}
+                    </span>
+                    <span
+                      v-if="(getTemplatePreviewFacts(template.id)?.retryBoundaryCount ?? 0) > 0"
+                      class="ew-builder-workbench__template-tag"
+                    >
+                      重试边界 {{ getTemplatePreviewFacts(template.id)?.retryBoundaryCount }}
+                    </span>
+                  </div>
+                </div>
+                <div
+                  v-if="(getTemplatePreviewFacts(template.id)?.capabilities.length ?? 0) > 0"
+                  class="ew-builder-workbench__stack"
+                >
+                  <div class="ew-builder-workbench__summary-label">能力轮廓</div>
+                  <div class="ew-builder-workbench__template-tags">
+                    <span
+                      v-for="capability in getTemplatePreviewFacts(template.id)?.capabilities ?? []"
+                      :key="`${template.id}-capability-${capability}`"
+                      class="ew-builder-workbench__template-tag"
+                    >
+                      {{ formatTemplatePreviewCapability(capability) }}
+                    </span>
+                  </div>
+                </div>
+              </template>
               <div class="ew-builder-workbench__template-tags">
                 <span
                   v-for="tag in template.tags"
@@ -618,6 +734,43 @@
                 </span>
               </div>
             </template>
+            <template v-if="activeTemplatePreviewFacts">
+              <div class="ew-builder-workbench__summary-label">模板图规模</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span class="ew-builder-workbench__template-tag">
+                  节点 {{ activeTemplatePreviewFacts.nodeCount }}
+                </span>
+                <span class="ew-builder-workbench__template-tag">
+                  连线 {{ activeTemplatePreviewFacts.edgeCount }}
+                </span>
+                <span
+                  v-if="activeTemplatePreviewFacts.controlNodeCount > 0"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  控制节点 {{ activeTemplatePreviewFacts.controlNodeCount }}
+                </span>
+                <span
+                  v-if="activeTemplatePreviewFacts.retryBoundaryCount > 0"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  重试边界 {{ activeTemplatePreviewFacts.retryBoundaryCount }}
+                </span>
+              </div>
+            </template>
+            <template
+              v-if="(activeTemplatePreviewFacts?.capabilities.length ?? 0) > 0"
+            >
+              <div class="ew-builder-workbench__summary-label">模板能力轮廓</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="capability in activeTemplatePreviewFacts?.capabilities ?? []"
+                  :key="`active-template-capability-${capability}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ formatTemplatePreviewCapability(capability) }}
+                </span>
+              </div>
+            </template>
             <p class="ew-builder-workbench__text">
               {{ generationOwnershipHint }}
             </p>
@@ -991,6 +1144,8 @@
 import { klona } from "klona/full";
 import {
   BUILDER_WORKFLOW_TEMPLATES,
+  getBuilderWorkflowTemplatePreviewFacts,
+  type BuilderWorkflowTemplateCapability,
   type BuilderWorkflowTemplateDefinition,
   type BuilderWorkflowTemplateStructureItem,
   createBlankBuilderGraph,
@@ -1039,6 +1194,10 @@ const templateLibraryOpen = ref(true);
 const selectedNodeId = ref<string | null>(null);
 const expandedPackageIds = reactive(new Set<string>());
 const packageDrafts = reactive<Record<string, Record<string, any>>>({});
+type BuilderLibraryModeFilter = "all" | WorkbenchBuilderMode;
+const libraryQuery = ref("");
+const libraryModeFilter = ref<BuilderLibraryModeFilter>("all");
+const libraryFeaturedOnly = ref(false);
 
 const BUILDER_MODE_LABELS: Record<WorkbenchBuilderMode, string> = {
   simple: "Simple",
@@ -1078,6 +1237,18 @@ const KIT_FAMILY_LABELS: Record<BuilderKitFamily, string> = {
   control_flow: "Control Flow",
   workflow_package: "Workflow Package",
   utility: "Utility",
+};
+
+const TEMPLATE_PREVIEW_CAPABILITY_LABELS: Record<
+  BuilderWorkflowTemplateCapability,
+  string
+> = {
+  control_flow: "含控制流",
+  retry_boundary: "含重试边界",
+  main_takeover: "主生成接管预备",
+  request_template: "含请求模板",
+  reply_output: "回复输出",
+  floor_output: "楼层输出",
 };
 
 function compareBuilderModes(
@@ -1130,6 +1301,81 @@ function sortModulesForBuilder(
   return left.label.localeCompare(right.label, "zh-CN");
 }
 
+function normalizeBuilderLibraryQuery(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function matchesBuilderLibraryMode(
+  recommendedMode: WorkbenchBuilderMode | undefined,
+): boolean {
+  return (
+    libraryModeFilter.value === "all" ||
+    recommendedMode === libraryModeFilter.value
+  );
+}
+
+function templateMatchesLibraryFilters(
+  template: BuilderWorkflowTemplateDefinition,
+): boolean {
+  if (
+    libraryFeaturedOnly.value === true &&
+    template.featured !== true
+  ) {
+    return false;
+  }
+  if (!matchesBuilderLibraryMode(template.recommendedBuilderMode)) {
+    return false;
+  }
+  const query = normalizeBuilderLibraryQuery(libraryQuery.value);
+  if (!query) {
+    return true;
+  }
+  const facts = getBuilderWorkflowTemplatePreviewFacts(template.id);
+  const searchableText = [
+    template.id,
+    template.label,
+    template.summary,
+    template.description,
+    ...template.tags,
+    ...template.learningHighlights,
+    ...template.contractPreview,
+    ...template.structurePreview.map((item) => formatTemplateStructureItem(item)),
+    ...(facts?.capabilities ?? []).map((capability) =>
+      formatTemplatePreviewCapability(capability),
+    ),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return searchableText.includes(query);
+}
+
+function moduleMatchesLibraryFilters(module: ModuleBlueprint): boolean {
+  if (
+    libraryFeaturedOnly.value === true &&
+    module.featured !== true
+  ) {
+    return false;
+  }
+  if (!matchesBuilderLibraryMode(module.recommendedBuilderMode)) {
+    return false;
+  }
+  const query = normalizeBuilderLibraryQuery(libraryQuery.value);
+  if (!query) {
+    return true;
+  }
+  const searchableText = [
+    module.moduleId,
+    module.label,
+    module.description,
+    module.category,
+    module.kitFamily ? formatBuilderKitFamily(module.kitFamily) : "",
+    ...getCompositeLearningLabels(module.moduleId),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return searchableText.includes(query);
+}
+
 const activeGraph = computed(() =>
   localGraphs.value.find((graph) => graph.id === activeGraphId.value) ?? null,
 );
@@ -1150,13 +1396,19 @@ const fragmentModules = computed<ModuleBlueprint[]>(() =>
 );
 
 const compositeGroups = computed(() => {
-  const retryFallbackModules = fragmentModules.value.filter(
+  const filteredPackageModules = packageModules.value.filter(
+    moduleMatchesLibraryFilters,
+  );
+  const filteredFragmentModules = fragmentModules.value.filter(
+    moduleMatchesLibraryFilters,
+  );
+  const retryFallbackModules = filteredFragmentModules.filter(
     (module) => module.kitFamily === "retry_fallback",
   );
-  const controlFlowModules = fragmentModules.value.filter(
+  const controlFlowModules = filteredFragmentModules.filter(
     (module) => module.kitFamily === "control_flow",
   );
-  const utilityModules = fragmentModules.value.filter(
+  const utilityModules = filteredFragmentModules.filter(
     (module) =>
       !module.kitFamily ||
       (module.kitFamily !== "retry_fallback" &&
@@ -1169,7 +1421,7 @@ const compositeGroups = computed(() => {
       title: "大颗粒积木",
       copy:
         "package 适合大颗粒起步，直接把一段较完整的工作流骨架插进当前图里，再继续深入编辑。",
-      modules: packageModules.value,
+      modules: filteredPackageModules,
     },
     {
       id: "retry_fallback",
@@ -1200,7 +1452,9 @@ const compositeGroups = computed(() => {
 });
 
 const builderTemplates = computed(() =>
-  [...BUILDER_WORKFLOW_TEMPLATES].sort(sortTemplates),
+  [...BUILDER_WORKFLOW_TEMPLATES]
+    .filter(templateMatchesLibraryFilters)
+    .sort(sortTemplates),
 );
 
 const templateSections = computed(() => {
@@ -1229,6 +1483,20 @@ const templateSections = computed(() => {
     },
   ];
   return sections.filter((section) => section.templates.length > 0);
+});
+
+const visibleTemplateCount = computed(() => {
+  return templateSections.value.reduce(
+    (count, section) => count + section.templates.length,
+    0,
+  );
+});
+
+const visibleCompositeModuleCount = computed(() => {
+  return compositeGroups.value.reduce(
+    (count, group) => count + group.modules.length,
+    0,
+  );
 });
 
 const activeTemplate = computed(() =>
@@ -1261,6 +1529,10 @@ const activeTemplateContractPreview = computed(() => {
 
 const activeTemplateStructurePreview = computed(() => {
   return activeTemplate.value?.structurePreview ?? [];
+});
+
+const activeTemplatePreviewFacts = computed(() => {
+  return getBuilderWorkflowTemplatePreviewFacts(activeTemplate.value?.id);
 });
 
 const isActiveGraphEffectivelyEmpty = computed(() => {
@@ -1423,6 +1695,16 @@ function formatTemplateStructureItem(
   } catch {
     return `${item.role} · ${item.moduleId}`;
   }
+}
+
+function formatTemplatePreviewCapability(
+  capability: BuilderWorkflowTemplateCapability,
+): string {
+  return TEMPLATE_PREVIEW_CAPABILITY_LABELS[capability];
+}
+
+function getTemplatePreviewFacts(templateId: string) {
+  return getBuilderWorkflowTemplatePreviewFacts(templateId);
 }
 
 function formatCompositeKind(module: ModuleBlueprint): string {
@@ -1838,6 +2120,16 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   gap: 14px;
 }
 
+.ew-builder-workbench__library-toolbar {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 12, 24, 0.68);
+  border-radius: 20px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .ew-builder-workbench__packages {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 12, 24, 0.72);
@@ -1853,6 +2145,12 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.ew-builder-workbench__library-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 0.8fr));
+  gap: 10px;
 }
 
 .ew-builder-workbench__starter-copy {
@@ -1975,6 +2273,11 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   background: rgba(99, 102, 241, 0.18);
   border-color: rgba(99, 102, 241, 0.36);
   transform: translateY(-1px);
+}
+
+.ew-builder-workbench__template-action.active {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.36);
 }
 
 .ew-builder-workbench__package-fields {
@@ -2211,6 +2514,10 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   .ew-builder-workbench__starter-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .ew-builder-workbench__library-controls {
+    grid-template-columns: 1fr;
   }
 
   .ew-builder-workbench__body {
