@@ -99,6 +99,7 @@ import type {
   GraphRunControlPreconditionsContract,
   GraphRunDiagnosticsOverview,
   GraphRunDiagnosticsSummaryViewModel,
+  GraphRunEventRecordV1,
   GraphRunHeartbeatSummary,
   GraphRunNonContinuableReasonKind,
   GraphRunPartialOutputSummary,
@@ -122,7 +123,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   const settings = ref<EwSettings>(getSettings());
   const lastRun = ref<RunSummary | null>(getLastRun());
   const lastIo = ref<LastIoSummary | null>(getLastIo());
-  const activeTab = ref<TabKey>("overview");
+  const activeTab = ref<TabKey>("editor");
+  const settingsSection = ref<"connection" | "workflow" | "interface" | "help">(
+    "connection",
+  );
   const globalAdvancedOpen = ref(false);
   const expandedApiPresetId = ref<string | null>(null);
   const expandedFlowId = ref<string | null>(null);
@@ -205,7 +209,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   function isCharacterFlowPanelActive() {
     return (
       settings.value.ui_open &&
-      activeTab.value === "flows" &&
+      activeTab.value === "settings" &&
+      settingsSection.value === "workflow" &&
       flowScope.value === "character"
     );
   }
@@ -336,10 +341,17 @@ export const useEwStore = defineStore("evolution-world-store", () => {
   );
 
   watch(
-    () => [settings.value.ui_open, activeTab.value, flowScope.value] as const,
+    () =>
+      [
+        settings.value.ui_open,
+        activeTab.value,
+        settingsSection.value,
+        flowScope.value,
+      ] as const,
     (nextState, previous) => {
-      const [uiOpen, tab, scope] = nextState;
-      const [prevUiOpen, prevTab, prevScope] = previous ?? [
+      const [uiOpen, tab, section, scope] = nextState;
+      const [prevUiOpen, prevTab, prevSection, prevScope] = previous ?? [
+        undefined,
         undefined,
         undefined,
         undefined,
@@ -348,17 +360,27 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
       if (
         uiOpen &&
-        (tab === "debug" || tab === "builder") &&
+        (tab === "editor" || tab === "observe") &&
         (!prevUiOpen || prevTab !== tab)
       ) {
         refreshDebugRecords({ silent: true });
       }
 
-      if (!uiOpen || tab !== "flows" || scope !== "character") {
+      if (
+        !uiOpen ||
+        tab !== "settings" ||
+        section !== "workflow" ||
+        scope !== "character"
+      ) {
         return;
       }
 
-      if (!prevUiOpen || prevTab !== "flows" || prevScope !== "character") {
+      if (
+        !prevUiOpen ||
+        prevTab !== "settings" ||
+        prevSection !== "workflow" ||
+        prevScope !== "character"
+      ) {
         void loadCharFlows();
       }
     },
@@ -1768,6 +1790,16 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     };
   }
 
+  function toActiveGraphRunEvents(
+    diagnostics: unknown,
+  ): GraphRunEventRecordV1[] | null {
+    const snapshot = readGraphRunSnapshotEnvelope(diagnostics);
+    if (!snapshot || !Array.isArray(snapshot.snapshot.events)) {
+      return null;
+    }
+    return snapshot.snapshot.events;
+  }
+
   function toCheckpointCandidateViewModel(
     candidate: GraphRunArtifact["checkpointCandidate"],
   ): GraphCheckpointCandidateViewModel | null {
@@ -2301,6 +2333,10 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     toActiveGraphRunArtifact(lastRun.value?.diagnostics),
   );
 
+  const activeGraphRunEvents = computed(() =>
+    toActiveGraphRunEvents(lastRun.value?.diagnostics),
+  );
+
   const activeGraphNodeInputResolutionArtifact = computed(() =>
     toActiveGraphNodeInputResolutionArtifact(lastRun.value?.diagnostics),
   );
@@ -2516,7 +2552,24 @@ export const useEwStore = defineStore("evolution-world-store", () => {
 
   function setActiveTab(tab: TabKey) {
     activeTab.value = tab;
-    if (tab === "flows" && flowScope.value === "character") {
+    if (
+      tab === "settings" &&
+      settingsSection.value === "workflow" &&
+      flowScope.value === "character"
+    ) {
+      void loadCharFlows();
+    }
+  }
+
+  function setSettingsSection(
+    section: "connection" | "workflow" | "interface" | "help",
+  ) {
+    settingsSection.value = section;
+    if (
+      section === "workflow" &&
+      activeTab.value === "settings" &&
+      flowScope.value === "character"
+    ) {
       void loadCharFlows();
     }
   }
@@ -3318,9 +3371,11 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     activeGraphDependencyReadinessExplainArtifact,
     activeGraphExecutionFrontierExplainArtifact,
     activeGraphRunArtifact,
+    activeGraphRunEvents,
     activeGraphRunSummary,
     getModuleExplainContractView,
     activeTab,
+    settingsSection,
     globalAdvancedOpen,
     expandedApiPresetId,
     expandedFlowId,
@@ -3344,6 +3399,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
     duplicateFlow,
     removeFlow,
     setActiveTab,
+    setSettingsSection,
     setGlobalAdvancedOpen,
     toggleGlobalAdvancedOpen,
     toggleApiPresetExpanded,

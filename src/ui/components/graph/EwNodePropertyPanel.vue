@@ -1,6 +1,6 @@
 <template>
   <transition name="ew-prop-slide">
-    <div v-if="node" class="ew-prop-panel">
+    <div v-if="node" class="ew-prop-panel" :class="{ 'is-embedded': embedded }">
       <div class="ew-prop-panel__header">
         <span class="ew-prop-panel__icon">{{ blueprint?.icon }}</span>
         <span class="ew-prop-panel__title">{{ blueprint?.label ?? '属性' }}</span>
@@ -235,8 +235,10 @@ import {
 const props = withDefaults(defineProps<{
   node: WorkbenchNode | null;
   builderMode?: WorkbenchBuilderMode;
+  embedded?: boolean;
 }>(), {
   builderMode: "advanced",
+  embedded: false,
 });
 
 const emit = defineEmits<{
@@ -395,6 +397,18 @@ function toJsonFieldValue(key: string): string {
   z-index: 50;
   font-family: system-ui, -apple-system, sans-serif;
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+}
+
+.ew-prop-panel.is-embedded {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 100%;
+  height: 100%;
+  border-left: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow: none;
 }
 
 /* Slide animation */

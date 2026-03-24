@@ -3,6 +3,7 @@
     <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
       <!-- Left palette -->
       <EwModulePalette
+        v-if="showModulePalette"
         :builder-mode="props.graph?.runtimeMeta?.builderMode ?? 'advanced'"
       />
 
@@ -250,6 +251,7 @@
         </div>
 
         <EwNodePropertyPanel
+          v-if="showPropertyPanel"
           :node="editingNode"
           :builder-mode="props.graph?.runtimeMeta?.builderMode ?? 'advanced'"
           @close="clearSelection"
@@ -276,6 +278,9 @@ import { wouldCreateCycle } from "./module-types";
 const props = defineProps<{
   graph: WorkbenchGraph | null;
   savedSlots?: Array<any>;
+  showModulePalette?: boolean;
+  showPropertyPanel?: boolean;
+  selectedNodeId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -283,6 +288,9 @@ const emit = defineEmits<{
   (e: "save-slots", slots: any[]): void;
   (e: "select-node", nodeId: string | null): void;
 }>();
+
+const showModulePalette = computed(() => props.showModulePalette !== false);
+const showPropertyPanel = computed(() => props.showPropertyPanel !== false);
 
 // ── Inline reactive graph state (replaces createGraphState) ──
 const graphState = reactive({
@@ -443,6 +451,17 @@ watch(
   (ids) => {
     emit("select-node", ids.length === 1 ? ids[0] : null);
   },
+);
+
+watch(
+  () => props.selectedNodeId,
+  (nodeId) => {
+    selectedNodes.clear();
+    if (nodeId) {
+      selectedNodes.add(nodeId);
+    }
+  },
+  { immediate: true },
 );
 
 // ── Z-index (bring to front on click) ──

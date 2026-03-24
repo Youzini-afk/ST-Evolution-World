@@ -1,11 +1,8 @@
 export type TabKey =
-  | "overview"
-  | "api"
-  | "global"
-  | "flows"
-  | "builder"
-  | "debug"
-  | "history";
+  | "settings"
+  | "assets"
+  | "editor"
+  | "observe";
 
 export type TabMeta = {
   key: TabKey;
@@ -22,13 +19,10 @@ export type FieldHelpMeta = {
 };
 
 export const PANEL_TABS: TabMeta[] = [
-  { key: "overview", label: "总览" },
-  { key: "api", label: "API配置" },
-  { key: "global", label: "全局配置" },
-  { key: "flows", label: "工作流配置" },
-  { key: "builder", label: "Builder" },
-  { key: "history", label: "历史" },
-  { key: "debug", label: "调试" },
+  { key: "settings", label: "设置" },
+  { key: "assets", label: "资产" },
+  { key: "editor", label: "编辑" },
+  { key: "observe", label: "观测" },
 ];
 
 const FIELD_HELP_LIST: FieldHelpMeta[] = [
