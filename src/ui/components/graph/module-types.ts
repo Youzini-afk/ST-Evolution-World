@@ -249,6 +249,8 @@ export interface CompositeTemplateConfigBinding {
   targetConfigKey: string;
 }
 
+export type CompositeModuleKind = "package" | "fragment";
+
 export interface CompositeTemplatePortBindingRef {
   nodeId: string;
   portId: string;
@@ -328,6 +330,8 @@ export interface ModuleBlueprint {
   };
   /** If true, this is a composite module (contains sub-graph) */
   isComposite?: boolean;
+  /** For composite modules: builder-facing presentation kind */
+  compositeKind?: CompositeModuleKind;
   /** For composite modules: the pre-wired sub-graph template */
   compositeTemplate?: {
     nodes: WorkbenchNode[];

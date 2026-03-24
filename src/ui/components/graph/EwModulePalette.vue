@@ -52,7 +52,7 @@
             <span class="ew-module-palette__item-icon">{{ mod.icon }}</span>
             <span class="ew-module-palette__item-label">{{ mod.label }}</span>
             <span v-if="mod.isComposite" class="ew-module-palette__item-badge">
-              包
+              {{ getCompositeBadgeLabel(mod) }}
             </span>
           </div>
         </div>
@@ -67,7 +67,12 @@ import {
   type ModuleCategory,
   type WorkbenchBuilderMode,
 } from './module-types';
-import { MODULE_REGISTRY, getModulesByCategory, type ModuleBlueprint } from './module-registry';
+import {
+  getCompositeModuleKind,
+  MODULE_REGISTRY,
+  getModulesByCategory,
+  type ModuleBlueprint,
+} from './module-registry';
 
 const props = withDefaults(
   defineProps<{
@@ -116,6 +121,10 @@ function onDragStart(e: DragEvent, moduleId: string) {
   if (!e.dataTransfer) return;
   e.dataTransfer.setData('application/ew-module', moduleId);
   e.dataTransfer.effectAllowed = 'copy';
+}
+
+function getCompositeBadgeLabel(module: ModuleBlueprint): string {
+  return getCompositeModuleKind(module) === 'fragment' ? '片段' : '包';
 }
 </script>
 

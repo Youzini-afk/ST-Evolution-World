@@ -137,11 +137,11 @@
     >
       <div class="ew-builder-workbench__starter-header">
         <div>
-          <div class="ew-builder-workbench__eyebrow">Packages</div>
-          <h3 class="ew-builder-workbench__title">大颗粒积木</h3>
+          <div class="ew-builder-workbench__eyebrow">Packages / Fragments</div>
+          <h3 class="ew-builder-workbench__title">大颗粒积木与可复用子图</h3>
         </div>
         <p class="ew-builder-workbench__starter-copy">
-          包会在插入时直接展开为真实子图，方便继续深入编辑；如果只想快速起步，优先用上面的模板。
+          package 适合大颗粒起步，fragment 更适合插入到现有链路里做内联复用；两者都会直接展开成真实子图。
         </p>
       </div>
       <div class="ew-builder-workbench__package-grid">
@@ -151,7 +151,9 @@
           class="ew-builder-workbench__package-card"
         >
           <div class="ew-builder-workbench__chips">
-            <span class="ew-builder-workbench__chip">Package</span>
+            <span class="ew-builder-workbench__chip">
+              {{ formatCompositeKind(pkg) }}
+            </span>
             <span class="ew-builder-workbench__chip">{{ pkg.category }}</span>
           </div>
           <h4 class="ew-builder-workbench__template-title">
@@ -311,7 +313,11 @@
               </div>
             </template>
             <p class="ew-builder-workbench__template-description">
-              插入后会直接展开为真实子图，你可以继续连线、改参数、删节点，而不是被锁在黑盒包里。
+              {{
+                formatCompositeKind(pkg) === "片段"
+                  ? "片段适合插到已有链路里做内联复用。插入后会直接展开为真实子图，你可以继续改内部节点与连线。"
+                  : "插入后会直接展开为真实子图，你可以继续连线、改参数、删节点，而不是被锁在黑盒包里。"
+              }}
             </p>
           </div>
         </article>
@@ -791,6 +797,7 @@ import {
 } from "./builder-templates";
 import EwGraphEditor from "./EwGraphEditor.vue";
 import {
+  getCompositeModuleKind,
   getCompositeModules,
   getCompositeTemplateContract,
   getModuleBlueprint,
@@ -1011,6 +1018,10 @@ function formatOwnership(ownership: WorkbenchGenerationOwnership): string {
 
 function formatTiming(timing: WorkbenchGraph["timing"]): string {
   return TIMING_LABELS[timing];
+}
+
+function formatCompositeKind(module: ModuleBlueprint): string {
+  return getCompositeModuleKind(module) === "fragment" ? "片段" : "包";
 }
 
 function updateActiveGraphRuntimeMeta(

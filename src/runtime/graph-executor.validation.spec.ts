@@ -1586,6 +1586,64 @@ function makeValueRouterPackageFixture(
   };
 }
 
+function makeTextCleanupFragmentGraph(): {
+  graph: WorkbenchGraph;
+  exitNodeId: string;
+} {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "frag_text_cleanup_stage",
+    origin: { x: 220, y: 0 },
+  });
+  if (!fragment) {
+    throw new Error("Expected frag_text_cleanup_stage to instantiate.");
+  }
+
+  const textEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "text_in",
+  );
+  const textExit = fragment.contract.exits.find(
+    (entry) => entry.key === "text_out",
+  );
+  if (!textEntry || !textExit || textEntry.targets.length !== 1) {
+    throw new Error(
+      `Expected text cleanup fragment contract to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
+    );
+  }
+
+  return {
+    graph: {
+      id: "graph_text_cleanup_fragment",
+      name: "Text Cleanup Fragment Graph",
+      enabled: true,
+      timing: "after_reply",
+      priority: 0,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+      nodes: [
+        {
+          id: "src_text",
+          moduleId: "src_user_input",
+          position: { x: 0, y: 0 },
+          config: {},
+          collapsed: false,
+        },
+        ...fragment.nodes,
+      ],
+      edges: [
+        ...fragment.edges,
+        {
+          id: "edge_fragment_text_in",
+          source: "src_text",
+          sourcePort: "text",
+          target: textEntry.targets[0].nodeId,
+          targetPort: textEntry.targets[0].portId,
+        },
+      ],
+    },
+    exitNodeId: textExit.source.nodeId,
+  };
+}
+
 function makeOptionalMainTakeoverGraph(
   graph: WorkbenchGraph = makeBaseGraph(),
 ): WorkbenchGraph {
@@ -3220,6 +3278,31 @@ async function runValidationSpec(): Promise<void> {
       valueRouterDefaultResult.finalOutputs[valueRouterFixture.branchNodeIds.output]
         ?.value_out === "payload",
     `Expected value router package to fall back to Default when no configured route matches. Actual: ${JSON.stringify(valueRouterDefaultResult.moduleResults)}`,
+  );
+
+  const textCleanupFragmentFixture = makeTextCleanupFragmentGraph();
+  const textCleanupValidation = validateGraph(textCleanupFragmentFixture.graph);
+  assert(
+    textCleanupValidation.errors.length === 0,
+    `Expected frag_text_cleanup_stage graph fixture to validate. Actual: ${JSON.stringify(textCleanupValidation.errors)}`,
+  );
+  const textCleanupResult = await executeGraph(
+    textCleanupFragmentFixture.graph,
+    makeExecutionContext({
+      userInput: "fragment clean text",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    textCleanupResult.ok &&
+      textCleanupResult.moduleResults.filter(
+        (result) =>
+          result.moduleId === "flt_mvu_strip" ||
+          result.moduleId === "flt_regex_process",
+      ).every((result) => result.status === "ok") &&
+      textCleanupResult.finalOutputs[textCleanupFragmentFixture.exitNodeId]
+        ?.text_out === "fragment clean text",
+    `Expected text cleanup fragment to inline into the graph and expose its contracted exit output. Actual: ${JSON.stringify(textCleanupResult)}`,
   );
 
   const controlCompileRunLinkEnvelope =
@@ -10153,11 +10236,17 @@ async function runValidationSpec(): Promise<void> {
   const controlValueRouterPackage = compositeModules.find(
     (module) => module.moduleId === "pkg_control_value_router",
   );
+  const textCleanupFragment = compositeModules.find(
+    (module) => module.moduleId === "frag_text_cleanup_stage",
+  );
   const controlBranchContract = getCompositeTemplateContract(
     "pkg_control_branch_router",
   );
   const controlValueRouterContract = getCompositeTemplateContract(
     "pkg_control_value_router",
+  );
+  const textCleanupFragmentContract = getCompositeTemplateContract(
+    "frag_text_cleanup_stage",
   );
   const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
     moduleId: "pkg_full_workflow",
@@ -10188,12 +10277,18 @@ async function runValidationSpec(): Promise<void> {
       trim_whitespace: false,
     },
   });
+  const instantiatedTextCleanupFragment = instantiateCompositeTemplate({
+    moduleId: "frag_text_cleanup_stage",
+    origin: { x: 240, y: 740 },
+  });
   assert(
+    controlBranchPackage?.compositeKind === "fragment" &&
     controlBranchPackage?.compositeTemplate?.nodes.length === 5 &&
       controlBranchPackage.compositeTemplate.edges.length === 5 &&
       controlBranchPackage.configSchema?.some(
         (field) => field.key === "join_mode",
       ) &&
+      controlValueRouterPackage?.compositeKind === "fragment" &&
       controlBranchContract?.entries.some(
         (entry) =>
           entry.key === "condition" &&
@@ -10288,6 +10383,32 @@ async function runValidationSpec(): Promise<void> {
           entry.key === "value_out" &&
           entry.source.nodeId.includes("after_join_"),
       ) &&
+      textCleanupFragment?.compositeKind === "fragment" &&
+      textCleanupFragment.compositeTemplate?.nodes.length === 2 &&
+      textCleanupFragment.compositeTemplate.edges.length === 1 &&
+      textCleanupFragmentContract?.entries.some(
+        (entry) =>
+          entry.key === "text_in" &&
+          entry.targets.length === 1 &&
+          entry.targets[0]?.nodeLabel === "MVU 剥离" &&
+          entry.targets[0]?.portId === "text_in",
+      ) &&
+      textCleanupFragmentContract.exits.some(
+        (entry) =>
+          entry.key === "text_out" &&
+          entry.source.nodeLabel === "正则处理" &&
+          entry.source.portId === "text_out",
+      ) &&
+      instantiatedTextCleanupFragment?.contract.entries.some(
+        (entry) =>
+          entry.key === "text_in" &&
+          entry.targets[0]?.nodeId.includes("strip_mvu_"),
+      ) &&
+      instantiatedTextCleanupFragment.contract.exits.some(
+        (entry) =>
+          entry.key === "text_out" &&
+          entry.source.nodeId.includes("regex_process_"),
+      ) &&
       fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
       fullWorkflowPackage.compositeTemplate.edges.length === 5 &&
       fullWorkflowPackage.configSchema?.some(
@@ -10311,7 +10432,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===

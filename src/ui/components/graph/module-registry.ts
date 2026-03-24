@@ -8,6 +8,7 @@ import {
   RESERVED_ACTIVATION_RESULT_PORT_LABEL,
 } from "./module-types";
 import type {
+  CompositeModuleKind,
   CompositeTemplatePortBindingRef,
   HostWriteSummary,
   InstantiatedCompositeTemplateFragment,
@@ -1542,6 +1543,7 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       negate: false,
       join_mode: "any",
     },
+    compositeKind: "fragment",
     configSchema: [
       {
         key: "negate",
@@ -1690,6 +1692,7 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       case_sensitive: false,
       trim_whitespace: true,
     },
+    compositeKind: "fragment",
     configSchema: [
       {
         key: "case_a",
@@ -1867,6 +1870,57 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
           label: "路由输出",
           source: { nodeId: "after_join", portId: "value_out" },
           description: "从汇合后占位导出当前命中路由的最终值。",
+        },
+      ],
+    },
+    isComposite: true,
+  },
+  {
+    moduleId: "frag_text_cleanup_stage",
+    label: "🧼 文本清洗片段",
+    category: "filter",
+    color: "#3b82f6",
+    icon: "🧼",
+    description:
+      "命名 fragment：MVU 剥离后接酒馆正则处理，适合内联到更大的 prompt / 输出处理链路里复用。",
+    ports: [
+      textIn("text_in", "输入文本"),
+      textOut("text_out", "清洗结果"),
+    ],
+    defaultConfig: {},
+    compositeKind: "fragment",
+    compositeTemplate: {
+      nodes: [
+        compositeNode("strip_mvu", "flt_mvu_strip", 0, 0, {
+          _label: "MVU 剥离",
+        }),
+        compositeNode("regex_process", "flt_regex_process", 280, 0, {
+          _label: "正则处理",
+        }),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_strip_to_regex",
+          "strip_mvu",
+          "text_out",
+          "regex_process",
+          "text_in",
+        ),
+      ],
+      entryBindings: [
+        {
+          key: "text_in",
+          label: "输入文本",
+          targets: [{ nodeId: "strip_mvu", portId: "text_in" }],
+          description: "把上游文本送入片段清洗链路的起点。",
+        },
+      ],
+      exitBindings: [
+        {
+          key: "text_out",
+          label: "清洗结果",
+          source: { nodeId: "regex_process", portId: "text_out" },
+          description: "导出经过剥离和正则处理后的最终文本。",
         },
       ],
     },
@@ -2855,9 +2909,28 @@ export function getModulesByCategory(category: string): ModuleBlueprint[] {
   return ALL_MODULES.filter((m) => m.category === category);
 }
 
+export function getCompositeModuleKind(
+  module: Pick<ModuleBlueprint, "isComposite" | "compositeKind">,
+): CompositeModuleKind | null {
+  if (!module.isComposite) {
+    return null;
+  }
+  return module.compositeKind === "fragment" ? "fragment" : "package";
+}
+
 /** Get all composite (package) modules */
-export function getCompositeModules(): ModuleBlueprint[] {
-  return ALL_MODULES.filter((m) => m.isComposite);
+export function getCompositeModules(
+  kind?: CompositeModuleKind,
+): ModuleBlueprint[] {
+  return ALL_MODULES.filter((module) => {
+    if (!module.isComposite) {
+      return false;
+    }
+    if (!kind) {
+      return true;
+    }
+    return getCompositeModuleKind(module) === kind;
+  });
 }
 
 /** Get all non-composite (atomic) modules */
