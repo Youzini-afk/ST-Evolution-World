@@ -316,6 +316,118 @@ function createRetryFallbackCleanupStarterGraph(): WorkbenchGraph {
   });
 }
 
+function createRetryFallbackCompositionLabGraph(): WorkbenchGraph {
+  const cleanupFragment = instantiateCompositeTemplate({
+    moduleId: "frag_text_cleanup_stage",
+    origin: { x: 280, y: 40 },
+    exposedConfig: {
+      retry_attempts: 2,
+    },
+  });
+  const fallbackFragment = instantiateCompositeTemplate({
+    moduleId: "frag_retry_value_fallback",
+    origin: { x: 980, y: 120 },
+  });
+  if (!cleanupFragment || !fallbackFragment) {
+    return createRetryFallbackCleanupStarterGraph();
+  }
+
+  const cleanupTextEntry = cleanupFragment.contract.entries.find(
+    (entry) => entry.key === "text_in",
+  );
+  const cleanupTextExit = cleanupFragment.contract.exits.find(
+    (entry) => entry.key === "text_out",
+  );
+  const cleanupRetryExit = cleanupFragment.contract.exits.find(
+    (entry) => entry.key === "retry_exhausted",
+  );
+  const fallbackRetryEntry = fallbackFragment.contract.entries.find(
+    (entry) => entry.key === "retry_exhausted",
+  );
+  const fallbackPrimaryEntry = fallbackFragment.contract.entries.find(
+    (entry) => entry.key === "primary_value",
+  );
+  const fallbackValueEntry = fallbackFragment.contract.entries.find(
+    (entry) => entry.key === "fallback_value",
+  );
+  const fallbackValueExit = fallbackFragment.contract.exits.find(
+    (entry) => entry.key === "value_out",
+  );
+  if (
+    !cleanupTextEntry ||
+    cleanupTextEntry.targets.length === 0 ||
+    !cleanupTextExit ||
+    !cleanupRetryExit ||
+    !fallbackRetryEntry ||
+    fallbackRetryEntry.targets.length === 0 ||
+    !fallbackPrimaryEntry ||
+    fallbackPrimaryEntry.targets.length === 0 ||
+    !fallbackValueEntry ||
+    fallbackValueEntry.targets.length === 0 ||
+    !fallbackValueExit
+  ) {
+    return createRetryFallbackCleanupStarterGraph();
+  }
+
+  const nodes = [
+    createNode("src_text", "src_user_input", 40, 260),
+    ...cleanupFragment.nodes,
+    ...fallbackFragment.nodes,
+    createNode("out_reply", "out_reply_inject", 1700, 260),
+  ];
+  const edges = [
+    ...cleanupFragment.edges,
+    ...fallbackFragment.edges,
+    ...cleanupTextEntry.targets.map((target, index) =>
+      createEdge(
+        `edge_retry_lab_input_${index}`,
+        "src_text",
+        "text",
+        target.nodeId,
+        target.portId,
+      ),
+    ),
+    createEdge(
+      "edge_retry_lab_retry_flag",
+      cleanupRetryExit.source.nodeId,
+      cleanupRetryExit.source.portId,
+      fallbackRetryEntry.targets[0].nodeId,
+      fallbackRetryEntry.targets[0].portId,
+    ),
+    createEdge(
+      "edge_retry_lab_primary",
+      cleanupTextExit.source.nodeId,
+      cleanupTextExit.source.portId,
+      fallbackPrimaryEntry.targets[0].nodeId,
+      fallbackPrimaryEntry.targets[0].portId,
+    ),
+    createEdge(
+      "edge_retry_lab_fallback",
+      "src_text",
+      "text",
+      fallbackValueEntry.targets[0].nodeId,
+      fallbackValueEntry.targets[0].portId,
+    ),
+    createEdge(
+      "edge_retry_lab_to_reply",
+      fallbackValueExit.source.nodeId,
+      fallbackValueExit.source.portId,
+      "out_reply",
+      "instruction",
+    ),
+  ];
+
+  return createBaseGraph({
+    templateId: "starter_retry_fallback_composition_lab",
+    name: "重试回退组合实验台",
+    timing: "before_reply",
+    ownership: "assistive",
+    builderMode: "advanced",
+    nodes,
+    edges,
+  });
+}
+
 export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinition[] =
   [
     {
@@ -389,6 +501,19 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       recommendedBuilderMode: "simple",
       timing: "before_reply",
       createGraph: createRetryFallbackCleanupStarterGraph,
+    },
+    {
+      id: "starter_retry_fallback_composition_lab",
+      label: "重试回退组合实验台",
+      summary:
+        "把 retry-safe 文本清洗片段和通用 retry fallback 值路由片段拆开摆出来，适合作为高级创作者的组合范本。",
+      description:
+        "这张图不会把 retry fallback 封进黑盒，而是明确展示 retry_exhausted、primary_value、fallback_value 和最终输出的组合关系，方便你继续替换成功链路或回退链路。",
+      tags: ["retry fallback", "组合范本", "advanced"],
+      ownership: "assistive",
+      recommendedBuilderMode: "advanced",
+      timing: "before_reply",
+      createGraph: createRetryFallbackCompositionLabGraph,
     },
   ];
 

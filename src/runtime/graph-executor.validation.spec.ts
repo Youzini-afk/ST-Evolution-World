@@ -12184,6 +12184,51 @@ async function runValidationSpec(): Promise<void> {
       ),
     `G.2d: Expected builder template library to expose retry fallback cleanup starter graph with instantiated retry boundary fragment. Actual template=${JSON.stringify(retryFallbackTemplate)} graph=${JSON.stringify(retryFallbackTemplateGraph)}`,
   );
+  const retryFallbackCompositionTemplate = findBuilderWorkflowTemplate(
+    "starter_retry_fallback_composition_lab",
+  );
+  const retryFallbackCompositionTemplateGraph =
+    retryFallbackCompositionTemplate?.createGraph();
+  assert(
+    retryFallbackCompositionTemplate?.id ===
+      "starter_retry_fallback_composition_lab" &&
+      retryFallbackCompositionTemplateGraph?.runtimeMeta?.templateId ===
+        "starter_retry_fallback_composition_lab" &&
+      retryFallbackCompositionTemplateGraph?.runtimeMeta?.builderMode ===
+        "advanced" &&
+      retryFallbackCompositionTemplateGraph?.nodes.some(
+        (node) =>
+          node.runtimeMeta?.retryBoundaryModuleId === "frag_text_cleanup_stage",
+      ) &&
+      retryFallbackCompositionTemplateGraph?.nodes.some(
+        (node) => node.moduleId === "cmp_first_defined",
+      ) &&
+      retryFallbackCompositionTemplateGraph?.nodes.some(
+        (node) => node.moduleId === "out_reply_inject",
+      ),
+    `G.2e: Expected builder template library to expose decomposed retry fallback composition lab graph. Actual template=${JSON.stringify(retryFallbackCompositionTemplate)} graph=${JSON.stringify(retryFallbackCompositionTemplateGraph)}`,
+  );
+  const retryFallbackCompositionTemplateExecution = await executeGraph(
+    retryFallbackCompositionTemplateGraph!,
+    makeExecutionContext({
+      requestId: "req_builder_retry_fallback_composition_lab",
+      userInput: "builder retry lab",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    retryFallbackCompositionTemplateExecution.ok &&
+      retryFallbackCompositionTemplateExecution.moduleResults.find(
+        (result) => result.moduleId === "ctl_if",
+      )?.outputs.selected_branch === "else" &&
+      retryFallbackCompositionTemplateExecution.moduleResults.find(
+        (result) => result.moduleId === "cmp_first_defined",
+      )?.outputs.value_out === "builder retry lab" &&
+      retryFallbackCompositionTemplateExecution.moduleResults.find(
+        (result) => result.moduleId === "out_reply_inject",
+      )?.status === "ok",
+    `G.2f: Expected decomposed retry fallback composition lab template to execute successfully and route through the primary path by default. Actual: ${JSON.stringify(retryFallbackCompositionTemplateExecution)}`,
+  );
 
   // G.3: Legacy flow absorption via readGraphDocumentEnvelope
   const legacyFlowPayload = {
