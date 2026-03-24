@@ -22,6 +22,8 @@ import {
 import {
   RESERVED_ACTIVATION_PORT_ID,
   RESERVED_ACTIVATION_RESULT_PORT_ID,
+  RESERVED_RETRY_EXHAUSTED_PORT_ID,
+  RESERVED_RETRY_RESULT_PORT_ID,
 } from "../ui/components/graph/module-types";
 import type {
   ExecutionContext,
@@ -2105,9 +2107,36 @@ function cloneModuleOutput(outputs: ModuleOutput): ModuleOutput {
   return { ...outputs };
 }
 
-function createInternalNodeOutputs(outputs: ModuleOutput): ModuleOutput {
+function createRetrySurfaceOutput(params: {
+  exhausted: boolean;
+  retryAttempt: number;
+  retryAttemptLimit: number;
+  boundaryId?: string;
+  boundaryModuleId?: string;
+  status: "ok" | "skipped" | "exhausted";
+  error?: string;
+}): ModuleOutput {
+  return {
+    [RESERVED_RETRY_EXHAUSTED_PORT_ID]: params.exhausted,
+    [RESERVED_RETRY_RESULT_PORT_ID]: {
+      status: params.status,
+      exhausted: params.exhausted,
+      retryAttempt: params.retryAttempt,
+      retryAttemptLimit: params.retryAttemptLimit,
+      boundaryId: params.boundaryId,
+      boundaryModuleId: params.boundaryModuleId,
+      error: params.error,
+    },
+  };
+}
+
+function createInternalNodeOutputs(
+  outputs: ModuleOutput,
+  retrySurface?: ModuleOutput,
+): ModuleOutput {
   return {
     ...outputs,
+    ...(retrySurface ?? {}),
     [RESERVED_ACTIVATION_RESULT_PORT_ID]: true,
   };
 }
@@ -2115,6 +2144,8 @@ function createInternalNodeOutputs(outputs: ModuleOutput): ModuleOutput {
 function stripInternalNodeOutputs(outputs: ModuleOutput): ModuleOutput {
   const nextOutputs = { ...outputs };
   delete nextOutputs[RESERVED_ACTIVATION_RESULT_PORT_ID];
+  delete nextOutputs[RESERVED_RETRY_EXHAUSTED_PORT_ID];
+  delete nextOutputs[RESERVED_RETRY_RESULT_PORT_ID];
   return nextOutputs;
 }
 
@@ -2734,7 +2765,20 @@ export async function executeCompiledGraph(
           ? cloneModuleOutput(reusableOutputs)
           : {};
       if (executionDecision.reason === "skip_reuse_outputs" && reusableOutputs) {
-        nodeOutputs.set(node.id, createInternalNodeOutputs(skippedOutputs));
+        nodeOutputs.set(
+          node.id,
+          createInternalNodeOutputs(
+            skippedOutputs,
+            createRetrySurfaceOutput({
+              exhausted: false,
+              retryAttempt: retryAttemptUsed,
+              retryAttemptLimit,
+              boundaryId: retryBoundaryRegion?.boundaryId,
+              boundaryModuleId: retryBoundaryRegion?.boundaryModuleId,
+              status: "skipped",
+            }),
+          ),
+        );
       }
       moduleResults.push({
         nodeId: node.id,
@@ -2837,7 +2881,20 @@ export async function executeCompiledGraph(
 
     if (dispatchResult) {
       const outputs = dispatchResult.outputs;
-      nodeOutputs.set(node.id, createInternalNodeOutputs(outputs));
+      nodeOutputs.set(
+        node.id,
+        createInternalNodeOutputs(
+          outputs,
+          createRetrySurfaceOutput({
+            exhausted: false,
+            retryAttempt: retryAttemptUsed,
+            retryAttemptLimit,
+            boundaryId: retryBoundaryRegion?.boundaryId,
+            boundaryModuleId: retryBoundaryRegion?.boundaryModuleId,
+            status: "ok",
+          }),
+        ),
+      );
 
       const partialOutputKeys = Object.keys(outputs).filter((key) => {
         const value = outputs[key];
@@ -3111,6 +3168,23 @@ export async function executeCompiledGraph(
         nodeIndex: planNode.order,
         error: errorMsg,
       });
+
+      if (retryBoundaryRegion && retryAttemptLimit > 1) {
+        const retryFailureSurface = createRetrySurfaceOutput({
+          exhausted: true,
+          retryAttempt: retryAttemptUsed,
+          retryAttemptLimit,
+          boundaryId: retryBoundaryRegion.boundaryId,
+          boundaryModuleId: retryBoundaryRegion.boundaryModuleId,
+          status: "exhausted",
+          error: errorMsg,
+        });
+        for (const boundaryNodeId of retryBoundaryRegion.nodeIds) {
+          nodeOutputs.set(boundaryNodeId, cloneModuleOutput(retryFailureSurface));
+        }
+        nodeOrderIndex = retryBoundaryRegion.lastIndex;
+        continue;
+      }
 
       // Append 'skipped' traces for remaining nodes in plan order (fail-fast)
       const failedIndex = plan.nodeOrder.indexOf(node.id);

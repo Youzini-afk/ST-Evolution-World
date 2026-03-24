@@ -37,6 +37,10 @@ export const RESERVED_ACTIVATION_PORT_ID = "__activation";
 export const RESERVED_ACTIVATION_PORT_LABEL = "激活";
 export const RESERVED_ACTIVATION_RESULT_PORT_ID = "__activation_result";
 export const RESERVED_ACTIVATION_RESULT_PORT_LABEL = "完成";
+export const RESERVED_RETRY_EXHAUSTED_PORT_ID = "__retry_exhausted";
+export const RESERVED_RETRY_EXHAUSTED_PORT_LABEL = "重试耗尽";
+export const RESERVED_RETRY_RESULT_PORT_ID = "__retry_result";
+export const RESERVED_RETRY_RESULT_PORT_LABEL = "重试结果";
 
 /** Definition of a port on a module blueprint */
 export interface ModulePortDef {

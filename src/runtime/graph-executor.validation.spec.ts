@@ -19,6 +19,8 @@ import type {
 import {
   RESERVED_ACTIVATION_PORT_ID,
   RESERVED_ACTIVATION_RESULT_PORT_ID,
+  RESERVED_RETRY_EXHAUSTED_PORT_ID,
+  RESERVED_RETRY_RESULT_PORT_ID,
 } from "../ui/components/graph/module-types";
 import { useEwStore } from "../ui/store";
 import { hasWorkflowsForTiming } from "./events";
@@ -1897,6 +1899,184 @@ function makeFragmentRetryBoundaryGraph(): WorkbenchGraph {
         sourcePort: "value_out",
         target: "probe_stage_b",
         targetPort: "value",
+      },
+    ],
+  };
+}
+
+function makeRetryFallbackConsumptionGraph(): WorkbenchGraph {
+  return {
+    id: "graph_retry_fallback_consumption",
+    name: "Retry Fallback Consumption Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "probe_stage_a",
+        moduleId: "cmp_transient_probe",
+        position: { x: 240, y: -80 },
+        config: {
+          fail_attempts_before_success: 0,
+          failure_key: "retry_fallback_stage_a",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "retry_fallback_boundary",
+          retryBoundaryModuleId: "frag_retry_fallback",
+          retryAttemptLimit: 2,
+        },
+      },
+      {
+        id: "probe_stage_b",
+        moduleId: "cmp_transient_probe",
+        position: { x: 520, y: -80 },
+        config: {
+          fail_attempts_before_success: 3,
+          failure_key: "retry_fallback_stage_b",
+          failure_message: "retry fallback should exhaust",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "retry_fallback_boundary",
+          retryBoundaryModuleId: "frag_retry_fallback",
+          retryAttemptLimit: 2,
+        },
+      },
+      {
+        id: "retry_if",
+        moduleId: "ctl_if",
+        position: { x: 520, y: 180 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "success_lane",
+        moduleId: "cmp_passthrough",
+        position: { x: 800, y: 60 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "fallback_lane",
+        moduleId: "cmp_passthrough",
+        position: { x: 800, y: 300 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "retry_join",
+        moduleId: "ctl_join",
+        position: { x: 1080, y: 180 },
+        config: {
+          mode: "any",
+        },
+        collapsed: false,
+      },
+      {
+        id: "retry_merge",
+        moduleId: "cmp_text_concat",
+        position: { x: 1360, y: 180 },
+        config: {
+          separator: "",
+          skip_empty: true,
+        },
+        collapsed: false,
+      },
+    ],
+    edges: [
+      {
+        id: "edge_retry_fallback_src",
+        source: "src_text",
+        sourcePort: "text",
+        target: "probe_stage_a",
+        targetPort: "value",
+      },
+      {
+        id: "edge_retry_fallback_stage",
+        source: "probe_stage_a",
+        sourcePort: "value_out",
+        target: "probe_stage_b",
+        targetPort: "value",
+      },
+      {
+        id: "edge_retry_fallback_condition",
+        source: "probe_stage_a",
+        sourcePort: RESERVED_RETRY_EXHAUSTED_PORT_ID,
+        target: "retry_if",
+        targetPort: "condition",
+      },
+      {
+        id: "edge_retry_fallback_then",
+        source: "retry_if",
+        sourcePort: "then",
+        target: "fallback_lane",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_retry_fallback_else",
+        source: "retry_if",
+        sourcePort: "else",
+        target: "success_lane",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_retry_fallback_success_value",
+        source: "probe_stage_b",
+        sourcePort: "value_out",
+        target: "success_lane",
+        targetPort: "value",
+      },
+      {
+        id: "edge_retry_fallback_fallback_value",
+        source: "src_text",
+        sourcePort: "text",
+        target: "fallback_lane",
+        targetPort: "value",
+      },
+      {
+        id: "edge_retry_fallback_success_done",
+        source: "success_lane",
+        sourcePort: RESERVED_ACTIVATION_RESULT_PORT_ID,
+        target: "retry_join",
+        targetPort: "branches",
+      },
+      {
+        id: "edge_retry_fallback_fallback_done",
+        source: "fallback_lane",
+        sourcePort: RESERVED_ACTIVATION_RESULT_PORT_ID,
+        target: "retry_join",
+        targetPort: "branches",
+      },
+      {
+        id: "edge_retry_fallback_join_activation",
+        source: "retry_join",
+        sourcePort: "joined",
+        target: "retry_merge",
+        targetPort: RESERVED_ACTIVATION_PORT_ID,
+      },
+      {
+        id: "edge_retry_fallback_success_text",
+        source: "success_lane",
+        sourcePort: "value_out",
+        target: "retry_merge",
+        targetPort: "a",
+      },
+      {
+        id: "edge_retry_fallback_fallback_text",
+        source: "fallback_lane",
+        sourcePort: "value_out",
+        target: "retry_merge",
+        targetPort: "b",
       },
     ],
   };
@@ -3871,6 +4051,59 @@ async function runValidationSpec(): Promise<void> {
       fragmentRetryBoundaryResult.runArtifact?.latestRetry?.outcome ===
         "succeeded",
     `Expected retry boundary to rerun the whole fragment instead of retrying only the failed node. Actual: ${JSON.stringify(fragmentRetryBoundaryResult)}`,
+  );
+
+  const retryFallbackConsumptionGraph = makeRetryFallbackConsumptionGraph();
+  const retryFallbackConsumptionValidation = validateGraph(
+    retryFallbackConsumptionGraph,
+  );
+  assert(
+    retryFallbackConsumptionValidation.errors.length === 0,
+    `Expected retry fallback consumption graph fixture to validate. Actual: ${JSON.stringify(retryFallbackConsumptionValidation.errors)}`,
+  );
+  const retryFallbackConsumptionResult = await executeGraph(
+    retryFallbackConsumptionGraph,
+    makeExecutionContext({
+      requestId: "req_retry_fallback_consumption",
+      userInput: "retry fallback payload",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const retryFallbackFailedProbe =
+    retryFallbackConsumptionResult.moduleResults.find(
+      (result) => result.nodeId === "probe_stage_b",
+    );
+  const retryFallbackIfResult = retryFallbackConsumptionResult.moduleResults.find(
+    (result) => result.nodeId === "retry_if",
+  );
+  const retryFallbackSuccessLane =
+    retryFallbackConsumptionResult.moduleResults.find(
+      (result) => result.nodeId === "success_lane",
+    );
+  const retryFallbackFallbackLane =
+    retryFallbackConsumptionResult.moduleResults.find(
+      (result) => result.nodeId === "fallback_lane",
+    );
+  assert(
+    retryFallbackConsumptionResult.ok &&
+      retryFallbackFailedProbe?.status === "error" &&
+      retryFallbackFailedProbe.retryAttempt === 2 &&
+      retryFallbackFailedProbe.retryAttemptLimit === 2 &&
+      retryFallbackIfResult?.status === "ok" &&
+      retryFallbackIfResult.outputs.selected_branch === "then" &&
+      retryFallbackSuccessLane?.status === "skipped" &&
+      retryFallbackFallbackLane?.status === "ok" &&
+      retryFallbackConsumptionResult.finalOutputs.retry_merge?.text_out ===
+        "retry fallback payload" &&
+      retryFallbackConsumptionResult.runEvents.some(
+        (event) =>
+          event.type === "retry_exhausted" &&
+          event.retry?.retryAttempt === 2 &&
+          event.retry?.retryAttemptLimit === 2,
+      ) &&
+      retryFallbackConsumptionResult.runArtifact?.latestRetry?.outcome ===
+        "exhausted",
+    `Expected retry exhaustion to surface structured retry outputs that later control flow can consume for fallback routing. Actual: ${JSON.stringify(retryFallbackConsumptionResult)}`,
   );
 
   const controlCompileRunLinkEnvelope =
@@ -11030,6 +11263,18 @@ async function runValidationSpec(): Promise<void> {
           entry.source.nodeLabel === "正则处理" &&
           entry.source.portId === "text_out",
       ) &&
+      textCleanupFragmentContract.exits.some(
+        (entry) =>
+          entry.key === "retry_exhausted" &&
+          entry.source.nodeLabel === "MVU 剥离" &&
+          entry.source.portId === RESERVED_RETRY_EXHAUSTED_PORT_ID,
+      ) &&
+      textCleanupFragmentContract.exits.some(
+        (entry) =>
+          entry.key === "retry_result" &&
+          entry.source.nodeLabel === "MVU 剥离" &&
+          entry.source.portId === RESERVED_RETRY_RESULT_PORT_ID,
+      ) &&
       instantiatedTextCleanupFragment?.contract.entries.some(
         (entry) =>
           entry.key === "text_in" &&
@@ -11039,6 +11284,11 @@ async function runValidationSpec(): Promise<void> {
         (entry) =>
           entry.key === "text_out" &&
           entry.source.nodeId.includes("regex_process_"),
+      ) &&
+      instantiatedTextCleanupFragment.contract.exits.some(
+        (entry) =>
+          entry.key === "retry_exhausted" &&
+          entry.source.nodeId.includes("strip_mvu_"),
       ) &&
       instantiatedTextCleanupFragment.nodes.every(
         (node) =>

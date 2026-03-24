@@ -6,6 +6,10 @@ import {
   RESERVED_ACTIVATION_PORT_LABEL,
   RESERVED_ACTIVATION_RESULT_PORT_ID,
   RESERVED_ACTIVATION_RESULT_PORT_LABEL,
+  RESERVED_RETRY_EXHAUSTED_PORT_ID,
+  RESERVED_RETRY_EXHAUSTED_PORT_LABEL,
+  RESERVED_RETRY_RESULT_PORT_ID,
+  RESERVED_RETRY_RESULT_PORT_LABEL,
 } from "./module-types";
 import type {
   CompositeModuleKind,
@@ -322,6 +326,17 @@ const activationOut = (id: string, label: string): ModulePortDef => ({
   direction: "out",
   dataType: "activation",
 });
+const retrySurfaceOut = (
+  id: string,
+  label: string,
+  dataType: ModulePortDef["dataType"],
+): ModulePortDef => ({
+  id,
+  label,
+  direction: "out",
+  dataType,
+  uiHidden: true,
+});
 
 function withReservedActivationPorts(module: ModuleBlueprint): ModuleBlueprint {
   const nextPorts = [...module.ports];
@@ -338,6 +353,24 @@ function withReservedActivationPorts(module: ModuleBlueprint): ModuleBlueprint {
       ),
     );
     nextPorts[nextPorts.length - 1].uiHidden = true;
+  }
+  if (!nextPorts.some((port) => port.id === RESERVED_RETRY_EXHAUSTED_PORT_ID)) {
+    nextPorts.push(
+      retrySurfaceOut(
+        RESERVED_RETRY_EXHAUSTED_PORT_ID,
+        RESERVED_RETRY_EXHAUSTED_PORT_LABEL,
+        "boolean",
+      ),
+    );
+  }
+  if (!nextPorts.some((port) => port.id === RESERVED_RETRY_RESULT_PORT_ID)) {
+    nextPorts.push(
+      retrySurfaceOut(
+        RESERVED_RETRY_RESULT_PORT_ID,
+        RESERVED_RETRY_RESULT_PORT_LABEL,
+        "json",
+      ),
+    );
   }
   return {
     ...module,
@@ -3022,6 +3055,7 @@ function resolveCompositeTemplateContractTarget(params: {
 function resolveCompositeTemplateContract(params: {
   template: NonNullable<ModuleBlueprint["compositeTemplate"]>;
   nodeIdMap?: ReadonlyMap<string, string>;
+  retryContract?: ModuleBlueprint["retryContract"];
 }): ResolvedCompositeTemplateContractSummary {
   const entries = (params.template.entryBindings ?? []).flatMap((binding) => {
     const targets = binding.targets
@@ -3067,6 +3101,50 @@ function resolveCompositeTemplateContract(params: {
       },
     ];
   });
+
+  if (
+    params.retryContract?.immediateRetryCandidate === true &&
+    params.template.nodes.length > 0
+  ) {
+    const retryAnchorNodeId = params.template.nodes[0].id;
+    for (const binding of [
+      {
+        key: "retry_exhausted",
+        label: RESERVED_RETRY_EXHAUSTED_PORT_LABEL,
+        source: {
+          nodeId: retryAnchorNodeId,
+          portId: RESERVED_RETRY_EXHAUSTED_PORT_ID,
+        },
+        description:
+          "当片段边界耗尽立即重试时输出 true，可直接接到 ctl_if 等控制节点做失败分支。",
+      },
+      {
+        key: "retry_result",
+        label: RESERVED_RETRY_RESULT_PORT_LABEL,
+        source: {
+          nodeId: retryAnchorNodeId,
+          portId: RESERVED_RETRY_RESULT_PORT_ID,
+        },
+        description:
+          "结构化的立即重试结果，包含状态、尝试次数、错误消息与边界标识。",
+      },
+    ] satisfies CompositeTemplateExitBinding[]) {
+      const source = resolveCompositeTemplateContractTarget({
+        templateNodes: params.template.nodes,
+        bindingRef: binding.source,
+        nodeIdMap: params.nodeIdMap,
+      });
+      if (!source) {
+        continue;
+      }
+      exits.push({
+        key: binding.key,
+        label: binding.label,
+        source,
+        description: binding.description,
+      });
+    }
+  }
 
   return { entries, exits };
 }
@@ -3214,7 +3292,11 @@ export function instantiateCompositeTemplate(params: {
   return {
     nodes,
     edges,
-    contract: resolveCompositeTemplateContract({ template, nodeIdMap }),
+    contract: resolveCompositeTemplateContract({
+      template,
+      nodeIdMap,
+      retryContract: blueprint.retryContract,
+    }),
   };
 }
 
@@ -3226,7 +3308,10 @@ export function getCompositeTemplateContract(
   if (!blueprint || !template) {
     return null;
   }
-  return resolveCompositeTemplateContract({ template });
+  return resolveCompositeTemplateContract({
+    template,
+    retryContract: blueprint.retryContract,
+  });
 }
 
 export function getCompositeRetrySafety(
