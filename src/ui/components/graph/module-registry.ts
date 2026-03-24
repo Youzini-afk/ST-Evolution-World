@@ -931,6 +931,38 @@ const COMPOSE_MODULES: ModuleBlueprint[] = [
     defaultConfig: {},
   },
   {
+    moduleId: "cmp_first_defined",
+    label: "首个已定义值",
+    category: "compose",
+    color: "#10b981",
+    icon: "⟲",
+    description:
+      "优先输出 primary；若 primary 为 null/undefined，则回退到 fallback，适合作为 fallback 路由与分支汇合后的保守合流节点。",
+    ports: [
+      {
+        id: "primary",
+        label: "Primary",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "fallback",
+        label: "Fallback",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "value_out",
+        label: "输出值",
+        direction: "out",
+        dataType: "any",
+      },
+    ],
+    defaultConfig: {},
+  },
+  {
     moduleId: "cmp_value_equals",
     label: "值匹配",
     category: "compose",
@@ -2242,6 +2274,146 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
           label: "输出文本",
           source: { nodeId: "merge_text", portId: "text_out" },
           description: "清洗成功则输出清洗结果；重试耗尽则输出原文回退结果。",
+        },
+      ],
+    },
+    isComposite: true,
+  },
+  {
+    moduleId: "frag_retry_value_fallback",
+    label: "⇄ 重试回退值路由",
+    category: "control",
+    color: "#f97316",
+    icon: "⇄",
+    description:
+      "命名 fragment：读取 retry_exhausted 布尔事实，在 primary_value 与 fallback_value 之间自动选择一个稳定输出，适合作为通用 retry fallback 积木。",
+    ports: [
+      {
+        id: "retry_exhausted",
+        label: "重试耗尽",
+        direction: "in",
+        dataType: "boolean",
+      },
+      {
+        id: "primary_value",
+        label: "Primary",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "fallback_value",
+        label: "Fallback",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "value_out",
+        label: "输出值",
+        direction: "out",
+        dataType: "any",
+      },
+    ],
+    defaultConfig: {},
+    compositeKind: "fragment",
+    compositeTemplate: {
+      nodes: [
+        compositeNode("retry_if", "ctl_if", 0, 120, {
+          _label: "重试回退判断",
+        }),
+        compositeNode("success_lane", "cmp_passthrough", 280, 0, {
+          _label: "Primary 路径",
+        }),
+        compositeNode("fallback_lane", "cmp_passthrough", 280, 260, {
+          _label: "Fallback 路径",
+        }),
+        compositeNode("retry_join", "ctl_join", 560, 120, {
+          _label: "回退汇合",
+          mode: "any",
+        }),
+        compositeNode("select_value", "cmp_first_defined", 840, 120, {
+          _label: "回退选择",
+        }),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_retry_if_else_success",
+          "retry_if",
+          "else",
+          "success_lane",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_retry_if_then_fallback",
+          "retry_if",
+          "then",
+          "fallback_lane",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_success_done",
+          "success_lane",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "retry_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_fallback_done",
+          "fallback_lane",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "retry_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_join_to_select",
+          "retry_join",
+          "joined",
+          "select_value",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_success_to_select",
+          "success_lane",
+          "value_out",
+          "select_value",
+          "primary",
+        ),
+        compositeEdge(
+          "edge_fallback_to_select",
+          "fallback_lane",
+          "value_out",
+          "select_value",
+          "fallback",
+        ),
+      ],
+      entryBindings: [
+        {
+          key: "retry_exhausted",
+          label: "重试耗尽",
+          targets: [{ nodeId: "retry_if", portId: "condition" }],
+          description:
+            "来自 retry-safe 片段的 retry_exhausted 布尔事实；true 走 fallback，false 走 primary。",
+        },
+        {
+          key: "primary_value",
+          label: "Primary",
+          targets: [{ nodeId: "success_lane", portId: "value" }],
+          description: "当 retry 未耗尽时优先输出的主值。",
+        },
+        {
+          key: "fallback_value",
+          label: "Fallback",
+          targets: [{ nodeId: "fallback_lane", portId: "value" }],
+          description: "当 retry 已耗尽时回退输出的值。",
+        },
+      ],
+      exitBindings: [
+        {
+          key: "value_out",
+          label: "输出值",
+          source: { nodeId: "select_value", portId: "value_out" },
+          description: "自动选择主值或回退值后的稳定输出。",
         },
       ],
     },

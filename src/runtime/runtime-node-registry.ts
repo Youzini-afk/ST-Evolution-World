@@ -894,6 +894,24 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
   });
 
   registerNodeHandler({
+    moduleId: "cmp_first_defined",
+    handlerId: "cmp_first_defined",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ inputs }) => ({
+      outputs: {
+        value_out:
+          inputs.primary !== undefined && inputs.primary !== null
+            ? inputs.primary
+            : inputs.fallback !== undefined && inputs.fallback !== null
+              ? inputs.fallback
+              : null,
+      },
+      handlerId: "cmp_first_defined",
+    }),
+  });
+
+  registerNodeHandler({
     moduleId: "cmp_value_equals",
     handlerId: "cmp_value_equals",
     kind: "builtin",

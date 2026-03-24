@@ -1711,6 +1711,138 @@ function makeRetryFallbackTextCleanupFragmentGraph(): {
   };
 }
 
+function makeRetryValueFallbackFragmentGraph(
+  options: {
+    failAttemptsBeforeSuccess?: number;
+  } = {},
+): {
+  graph: WorkbenchGraph;
+  nodeIds: {
+    retryIf: string;
+    successLane: string;
+    fallbackLane: string;
+    output: string;
+  };
+} {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "frag_retry_value_fallback",
+    origin: { x: 320, y: 40 },
+  });
+  if (!fragment) {
+    throw new Error("Expected frag_retry_value_fallback to instantiate.");
+  }
+
+  const retryEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "retry_exhausted",
+  );
+  const primaryEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "primary_value",
+  );
+  const fallbackEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "fallback_value",
+  );
+  const valueExit = fragment.contract.exits.find(
+    (entry) => entry.key === "value_out",
+  );
+  const retryIfId =
+    fragment.nodes.find((node) => node.config?._label === "重试回退判断")?.id ?? "";
+  const successLaneId =
+    fragment.nodes.find((node) => node.config?._label === "Primary 路径")?.id ?? "";
+  const fallbackLaneId =
+    fragment.nodes.find((node) => node.config?._label === "Fallback 路径")?.id ?? "";
+  if (
+    !retryEntry ||
+    !primaryEntry ||
+    !fallbackEntry ||
+    !valueExit ||
+    retryEntry.targets.length !== 1 ||
+    primaryEntry.targets.length !== 1 ||
+    fallbackEntry.targets.length !== 1 ||
+    !retryIfId ||
+    !successLaneId ||
+    !fallbackLaneId
+  ) {
+    throw new Error(
+      `Expected retry value fallback fragment contract to resolve. Actual: ${JSON.stringify(fragment.contract)} nodes=${JSON.stringify(fragment.nodes)}`,
+    );
+  }
+
+  return {
+    graph: {
+      id: `graph_retry_value_fallback_${options.failAttemptsBeforeSuccess ?? 0}`,
+      name: "Retry Value Fallback Fragment Graph",
+      enabled: true,
+      timing: "after_reply",
+      priority: 0,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+      nodes: [
+        {
+          id: "src_text",
+          moduleId: "src_user_input",
+          position: { x: 0, y: 160 },
+          config: {},
+          collapsed: false,
+        },
+        {
+          id: "probe_retry",
+          moduleId: "cmp_transient_probe",
+          position: { x: 0, y: 0 },
+          config: {
+            fail_attempts_before_success: options.failAttemptsBeforeSuccess ?? 0,
+            failure_key: `retry_value_fallback_${options.failAttemptsBeforeSuccess ?? 0}`,
+            failure_message: "retry value fallback expected failure",
+          },
+          collapsed: false,
+          runtimeMeta: {
+            retryBoundaryId: "retry_value_fallback_boundary",
+            retryBoundaryModuleId: "retry_value_fallback_boundary",
+            retryAttemptLimit: 2,
+          },
+        },
+        ...fragment.nodes,
+      ],
+      edges: [
+        ...fragment.edges,
+        {
+          id: "edge_retry_value_input",
+          source: "src_text",
+          sourcePort: "text",
+          target: "probe_retry",
+          targetPort: "value",
+        },
+        {
+          id: "edge_retry_value_condition",
+          source: "probe_retry",
+          sourcePort: RESERVED_RETRY_EXHAUSTED_PORT_ID,
+          target: retryEntry.targets[0].nodeId,
+          targetPort: retryEntry.targets[0].portId,
+        },
+        {
+          id: "edge_retry_value_primary",
+          source: "probe_retry",
+          sourcePort: "value_out",
+          target: primaryEntry.targets[0].nodeId,
+          targetPort: primaryEntry.targets[0].portId,
+        },
+        {
+          id: "edge_retry_value_fallback",
+          source: "src_text",
+          sourcePort: "text",
+          target: fallbackEntry.targets[0].nodeId,
+          targetPort: fallbackEntry.targets[0].portId,
+        },
+      ],
+    },
+    nodeIds: {
+      retryIf: retryIfId,
+      successLane: successLaneId,
+      fallbackLane: fallbackLaneId,
+      output: valueExit.source.nodeId,
+    },
+  };
+}
+
 function makeParallelTextFanInFragmentGraph(
   options: {
     separator?: string;
@@ -3968,9 +4100,80 @@ async function runValidationSpec(): Promise<void> {
         (result) => result.moduleId === "flt_regex_process",
       )?.status === "ok" &&
       retryFallbackTextCleanupResult.finalOutputs[
-        retryFallbackTextCleanupFragmentFixture.exitNodeId
+      retryFallbackTextCleanupFragmentFixture.exitNodeId
       ]?.text_out === "retry fallback clean text",
     `Expected retry fallback text cleanup fragment to take the success branch by default and expose the cleaned text output. Actual: ${JSON.stringify(retryFallbackTextCleanupResult)}`,
+  );
+
+  const retryValueFallbackSuccessFixture = makeRetryValueFallbackFragmentGraph({
+    failAttemptsBeforeSuccess: 1,
+  });
+  const retryValueFallbackSuccessValidation = validateGraph(
+    retryValueFallbackSuccessFixture.graph,
+  );
+  assert(
+    retryValueFallbackSuccessValidation.errors.length === 0,
+    `Expected frag_retry_value_fallback success graph fixture to validate. Actual: ${JSON.stringify(retryValueFallbackSuccessValidation.errors)}`,
+  );
+  const retryValueFallbackSuccessResult = await executeGraph(
+    retryValueFallbackSuccessFixture.graph,
+    makeExecutionContext({
+      requestId: "req_retry_value_fallback_success",
+      userInput: "retry value success",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    retryValueFallbackSuccessResult.ok &&
+      retryValueFallbackSuccessResult.moduleResults.find(
+        (result) => result.nodeId === retryValueFallbackSuccessFixture.nodeIds.retryIf,
+      )?.outputs.selected_branch === "else" &&
+      retryValueFallbackSuccessResult.moduleResults.find(
+        (result) => result.nodeId === retryValueFallbackSuccessFixture.nodeIds.successLane,
+      )?.status === "ok" &&
+      retryValueFallbackSuccessResult.moduleResults.find(
+        (result) => result.nodeId === retryValueFallbackSuccessFixture.nodeIds.fallbackLane,
+      )?.status === "skipped" &&
+      retryValueFallbackSuccessResult.finalOutputs[
+        retryValueFallbackSuccessFixture.nodeIds.output
+      ]?.value_out === "retry value success",
+    `Expected frag_retry_value_fallback to prefer primary_value when retry does not exhaust. Actual: ${JSON.stringify(retryValueFallbackSuccessResult)}`,
+  );
+
+  const retryValueFallbackExhaustedFixture =
+    makeRetryValueFallbackFragmentGraph({
+      failAttemptsBeforeSuccess: 3,
+    });
+  const retryValueFallbackExhaustedValidation = validateGraph(
+    retryValueFallbackExhaustedFixture.graph,
+  );
+  assert(
+    retryValueFallbackExhaustedValidation.errors.length === 0,
+    `Expected frag_retry_value_fallback exhausted graph fixture to validate. Actual: ${JSON.stringify(retryValueFallbackExhaustedValidation.errors)}`,
+  );
+  const retryValueFallbackExhaustedResult = await executeGraph(
+    retryValueFallbackExhaustedFixture.graph,
+    makeExecutionContext({
+      requestId: "req_retry_value_fallback_exhausted",
+      userInput: "retry value fallback",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    retryValueFallbackExhaustedResult.ok &&
+      retryValueFallbackExhaustedResult.moduleResults.find(
+        (result) => result.nodeId === retryValueFallbackExhaustedFixture.nodeIds.retryIf,
+      )?.outputs.selected_branch === "then" &&
+      retryValueFallbackExhaustedResult.moduleResults.find(
+        (result) => result.nodeId === retryValueFallbackExhaustedFixture.nodeIds.successLane,
+      )?.status === "skipped" &&
+      retryValueFallbackExhaustedResult.moduleResults.find(
+        (result) => result.nodeId === retryValueFallbackExhaustedFixture.nodeIds.fallbackLane,
+      )?.status === "ok" &&
+      retryValueFallbackExhaustedResult.finalOutputs[
+        retryValueFallbackExhaustedFixture.nodeIds.output
+      ]?.value_out === "retry value fallback",
+    `Expected frag_retry_value_fallback to emit fallback_value when retry_exhausted is true. Actual: ${JSON.stringify(retryValueFallbackExhaustedResult)}`,
   );
 
   const parallelTextFanInFixture = makeParallelTextFanInFragmentGraph();
@@ -11216,6 +11419,9 @@ async function runValidationSpec(): Promise<void> {
   const retryFallbackTextCleanupFragment = compositeModules.find(
     (module) => module.moduleId === "frag_retry_fallback_text_cleanup",
   );
+  const retryValueFallbackFragment = compositeModules.find(
+    (module) => module.moduleId === "frag_retry_value_fallback",
+  );
   const parallelTextFanInFragment = compositeModules.find(
     (module) => module.moduleId === "frag_parallel_text_fan_in",
   );
@@ -11231,6 +11437,9 @@ async function runValidationSpec(): Promise<void> {
   const retryFallbackTextCleanupFragmentContract = getCompositeTemplateContract(
     "frag_retry_fallback_text_cleanup",
   );
+  const retryValueFallbackFragmentContract = getCompositeTemplateContract(
+    "frag_retry_value_fallback",
+  );
   const parallelTextFanInContract = getCompositeTemplateContract(
     "frag_parallel_text_fan_in",
   );
@@ -11245,6 +11454,9 @@ async function runValidationSpec(): Promise<void> {
   );
   const retryFallbackTextCleanupFragmentRetrySafety = getCompositeRetrySafety(
     "frag_retry_fallback_text_cleanup",
+  );
+  const retryValueFallbackFragmentRetrySafety = getCompositeRetrySafety(
+    "frag_retry_value_fallback",
   );
   const parallelTextFanInRetrySafety = getCompositeRetrySafety(
     "frag_parallel_text_fan_in",
@@ -11294,9 +11506,13 @@ async function runValidationSpec(): Promise<void> {
         retry_attempts: 2,
       },
     });
+  const instantiatedRetryValueFallbackFragment = instantiateCompositeTemplate({
+    moduleId: "frag_retry_value_fallback",
+    origin: { x: 240, y: 940 },
+  });
   const instantiatedParallelTextFanInFragment = instantiateCompositeTemplate({
     moduleId: "frag_parallel_text_fan_in",
-    origin: { x: 240, y: 1020 },
+    origin: { x: 240, y: 1120 },
     exposedConfig: {
       separator: " | ",
       skip_empty: true,
@@ -11321,6 +11537,9 @@ async function runValidationSpec(): Promise<void> {
       ) &&
       fragmentCompositeModules.some(
         (module) => module.moduleId === "frag_retry_fallback_text_cleanup",
+      ) &&
+      fragmentCompositeModules.some(
+        (module) => module.moduleId === "frag_retry_value_fallback",
       ) &&
       fragmentCompositeModules.some(
         (module) => module.moduleId === "frag_parallel_text_fan_in",
@@ -11537,6 +11756,50 @@ async function runValidationSpec(): Promise<void> {
           node.runtimeMeta.retryBoundaryModuleId ===
             "frag_retry_fallback_text_cleanup",
       ) &&
+      retryValueFallbackFragment?.compositeKind === "fragment" &&
+      retryValueFallbackFragment.retryContract?.immediateRetryCandidate !==
+        true &&
+      retryValueFallbackFragment.compositeTemplate?.nodes.length === 5 &&
+      retryValueFallbackFragment.compositeTemplate.edges.length === 7 &&
+      retryValueFallbackFragmentContract?.entries.some(
+        (entry) =>
+          entry.key === "retry_exhausted" &&
+          entry.targets.length === 1 &&
+          entry.targets[0]?.nodeLabel === "重试回退判断" &&
+          entry.targets[0]?.portId === "condition",
+      ) &&
+      retryValueFallbackFragmentContract.entries.some(
+        (entry) =>
+          entry.key === "primary_value" &&
+          entry.targets[0]?.nodeLabel === "Primary 路径",
+      ) &&
+      retryValueFallbackFragmentContract.entries.some(
+        (entry) =>
+          entry.key === "fallback_value" &&
+          entry.targets[0]?.nodeLabel === "Fallback 路径",
+      ) &&
+      retryValueFallbackFragmentContract.exits.some(
+        (entry) =>
+          entry.key === "value_out" &&
+          entry.source.nodeLabel === "回退选择" &&
+          entry.source.portId === "value_out",
+      ) &&
+      instantiatedRetryValueFallbackFragment?.contract.entries.some(
+        (entry) =>
+          entry.key === "retry_exhausted" &&
+          entry.targets[0]?.nodeId.includes("retry_if_"),
+      ) &&
+      instantiatedRetryValueFallbackFragment.contract.exits.some(
+        (entry) =>
+          entry.key === "value_out" &&
+          entry.source.nodeId.includes("select_value_"),
+      ) &&
+      retryValueFallbackFragmentRetrySafety?.status === "not_requested" &&
+      retryValueFallbackFragmentRetrySafety.eligible === false &&
+      retryValueFallbackFragmentRetrySafety.issues.length === 0 &&
+      instantiatedRetryValueFallbackFragment.nodes.every(
+        (node) => node.runtimeMeta?.retryBoundaryId === undefined,
+      ) &&
       parallelTextFanInFragment?.compositeKind === "fragment" &&
       parallelTextFanInFragment.retryContract?.immediateRetryCandidate === true &&
       parallelTextFanInFragment.compositeTemplate?.nodes.length === 4 &&
@@ -11597,6 +11860,8 @@ async function runValidationSpec(): Promise<void> {
       textCleanupFragmentRetrySafety.issues.length === 0 &&
       retryFallbackTextCleanupFragmentRetrySafety?.status === "eligible" &&
       retryFallbackTextCleanupFragmentRetrySafety.issues.length === 0 &&
+      retryValueFallbackFragmentRetrySafety?.status === "not_requested" &&
+      retryValueFallbackFragmentRetrySafety.issues.length === 0 &&
       parallelTextFanInRetrySafety?.status === "eligible" &&
       parallelTextFanInRetrySafety.issues.length === 0 &&
       fullWorkflowRetrySafety?.status === "not_requested" &&
@@ -11627,7 +11892,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings, entry/exit contracts, and retry-safety facts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlRetry=${JSON.stringify(controlBranchRetrySafety)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterRetry=${JSON.stringify(controlValueRouterRetrySafety)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupRetry=${JSON.stringify(textCleanupFragmentRetrySafety)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} retryFallback=${JSON.stringify(retryFallbackTextCleanupFragment)} retryFallbackContract=${JSON.stringify(retryFallbackTextCleanupFragmentContract)} retryFallbackRetry=${JSON.stringify(retryFallbackTextCleanupFragmentRetrySafety)} retryFallbackInstantiated=${JSON.stringify(instantiatedRetryFallbackTextCleanupFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextRetry=${JSON.stringify(parallelTextFanInRetrySafety)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} fullRetry=${JSON.stringify(fullWorkflowRetrySafety)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings, entry/exit contracts, and retry-safety facts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlRetry=${JSON.stringify(controlBranchRetrySafety)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterRetry=${JSON.stringify(controlValueRouterRetrySafety)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupRetry=${JSON.stringify(textCleanupFragmentRetrySafety)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} retryFallback=${JSON.stringify(retryFallbackTextCleanupFragment)} retryFallbackContract=${JSON.stringify(retryFallbackTextCleanupFragmentContract)} retryFallbackRetry=${JSON.stringify(retryFallbackTextCleanupFragmentRetrySafety)} retryFallbackInstantiated=${JSON.stringify(instantiatedRetryFallbackTextCleanupFragment)} retryValueFallback=${JSON.stringify(retryValueFallbackFragment)} retryValueFallbackContract=${JSON.stringify(retryValueFallbackFragmentContract)} retryValueFallbackRetry=${JSON.stringify(retryValueFallbackFragmentRetrySafety)} retryValueFallbackInstantiated=${JSON.stringify(instantiatedRetryValueFallbackFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextRetry=${JSON.stringify(parallelTextFanInRetrySafety)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} fullRetry=${JSON.stringify(fullWorkflowRetrySafety)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===
