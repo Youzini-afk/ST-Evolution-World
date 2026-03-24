@@ -1447,6 +1447,145 @@ function makeBranchRouterPackageGraph(
   };
 }
 
+function makeValueRouterPackageFixture(
+  options: {
+    caseA?: string;
+    caseB?: string;
+  } = {},
+): {
+  graph: WorkbenchGraph;
+  branchNodeIds: {
+    routeA: string;
+    routeB: string;
+    defaultRoute: string;
+    output: string;
+  };
+} {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "pkg_control_value_router",
+    origin: { x: 260, y: 0 },
+    exposedConfig: {
+      case_a: options.caseA ?? "alpha",
+      case_b: options.caseB ?? "beta",
+    },
+  });
+  if (!fragment) {
+    throw new Error("Expected pkg_control_value_router to instantiate.");
+  }
+
+  const routeKeyEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "route_key",
+  );
+  const valueEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "value",
+  );
+  const valueExit = fragment.contract.exits.find(
+    (entry) => entry.key === "value_out",
+  );
+  if (!routeKeyEntry || !valueEntry || !valueExit) {
+    throw new Error(
+      `Expected value router package contract to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
+    );
+  }
+
+  const routeATarget = valueEntry.targets.find(
+    (target) => target.nodeLabel === "Route A",
+  );
+  const routeBTarget = valueEntry.targets.find(
+    (target) => target.nodeLabel === "Route B",
+  );
+  const defaultTarget = valueEntry.targets.find(
+    (target) => target.nodeLabel === "Default",
+  );
+  const outputInputTarget = valueEntry.targets.find(
+    (target) => target.nodeId === valueExit.source.nodeId,
+  );
+  if (
+    !routeATarget ||
+    !routeBTarget ||
+    !defaultTarget ||
+    !outputInputTarget ||
+    routeKeyEntry.targets.length !== 2
+  ) {
+    throw new Error(
+      `Expected value router package targets to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
+    );
+  }
+
+  return {
+    graph: {
+      id: "graph_value_router_package",
+      name: "Value Router Package Graph",
+      enabled: true,
+      timing: "after_reply",
+      priority: 0,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+      nodes: [
+        {
+          id: "src_route_key",
+          moduleId: "src_user_input",
+          position: { x: 0, y: -120 },
+          config: {},
+          collapsed: false,
+        },
+        {
+          id: "src_value",
+          moduleId: "cfg_system_prompt",
+          position: { x: 0, y: 140 },
+          config: { content: "payload" },
+          collapsed: false,
+        },
+        ...fragment.nodes,
+      ],
+      edges: [
+        ...fragment.edges,
+        ...routeKeyEntry.targets.map((target, index) => ({
+          id: `edge_route_key_${index}`,
+          source: "src_route_key",
+          sourcePort: "text",
+          target: target.nodeId,
+          targetPort: target.portId,
+        })),
+        {
+          id: "edge_value_route_a",
+          source: "src_value",
+          sourcePort: "prompt",
+          target: routeATarget.nodeId,
+          targetPort: routeATarget.portId,
+        },
+        {
+          id: "edge_value_route_b",
+          source: "src_value",
+          sourcePort: "prompt",
+          target: routeBTarget.nodeId,
+          targetPort: routeBTarget.portId,
+        },
+        {
+          id: "edge_value_default",
+          source: "src_value",
+          sourcePort: "prompt",
+          target: defaultTarget.nodeId,
+          targetPort: defaultTarget.portId,
+        },
+        {
+          id: "edge_value_output",
+          source: "src_value",
+          sourcePort: "prompt",
+          target: outputInputTarget.nodeId,
+          targetPort: outputInputTarget.portId,
+        },
+      ],
+    },
+    branchNodeIds: {
+      routeA: routeATarget.nodeId,
+      routeB: routeBTarget.nodeId,
+      defaultRoute: defaultTarget.nodeId,
+      output: valueExit.source.nodeId,
+    },
+  };
+}
+
 function makeOptionalMainTakeoverGraph(
   graph: WorkbenchGraph = makeBaseGraph(),
 ): WorkbenchGraph {
@@ -3006,6 +3145,81 @@ async function runValidationSpec(): Promise<void> {
     negatedInactiveNode !== undefined &&
       negatedExecutedNodes.length >= 2,
     `Expected negated branch router package to flip the selected branch while preserving post-join execution. Actual: ${JSON.stringify(negatedBranchRouterResult.moduleResults)}`,
+  );
+
+  const valueRouterFixture = makeValueRouterPackageFixture();
+  const valueRouterValidation = validateGraph(valueRouterFixture.graph);
+  assert(
+    valueRouterValidation.errors.length === 0,
+    `Expected pkg_control_value_router graph fixture to validate. Actual: ${JSON.stringify(valueRouterValidation.errors)}`,
+  );
+  const valueRouterCaseAResult = await executeGraph(
+    valueRouterFixture.graph,
+    makeExecutionContext({
+      userInput: "alpha",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    valueRouterCaseAResult.ok &&
+      valueRouterCaseAResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.routeA,
+      )?.status === "ok" &&
+      valueRouterCaseAResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.routeB,
+      )?.status === "skipped" &&
+      valueRouterCaseAResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.defaultRoute,
+      )?.status === "skipped" &&
+      valueRouterCaseAResult.finalOutputs[valueRouterFixture.branchNodeIds.output]
+        ?.value_out === "payload",
+    `Expected value router package to activate Route A when route_key matches case_a. Actual: ${JSON.stringify(valueRouterCaseAResult.moduleResults)}`,
+  );
+
+  const valueRouterCaseBResult = await executeGraph(
+    valueRouterFixture.graph,
+    makeExecutionContext({
+      userInput: "beta",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    valueRouterCaseBResult.ok &&
+      valueRouterCaseBResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.routeA,
+      )?.status === "skipped" &&
+      valueRouterCaseBResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.routeB,
+      )?.status === "ok" &&
+      valueRouterCaseBResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.defaultRoute,
+      )?.status === "skipped" &&
+      valueRouterCaseBResult.finalOutputs[valueRouterFixture.branchNodeIds.output]
+        ?.value_out === "payload",
+    `Expected value router package to activate Route B when route_key matches case_b. Actual: ${JSON.stringify(valueRouterCaseBResult.moduleResults)}`,
+  );
+
+  const valueRouterDefaultResult = await executeGraph(
+    valueRouterFixture.graph,
+    makeExecutionContext({
+      userInput: "omega",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    valueRouterDefaultResult.ok &&
+      valueRouterDefaultResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.routeA,
+      )?.status === "skipped" &&
+      valueRouterDefaultResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.routeB,
+      )?.status === "skipped" &&
+      valueRouterDefaultResult.moduleResults.find(
+        (result) => result.nodeId === valueRouterFixture.branchNodeIds.defaultRoute,
+      )?.status === "ok" &&
+      valueRouterDefaultResult.finalOutputs[valueRouterFixture.branchNodeIds.output]
+        ?.value_out === "payload",
+    `Expected value router package to fall back to Default when no configured route matches. Actual: ${JSON.stringify(valueRouterDefaultResult.moduleResults)}`,
   );
 
   const controlCompileRunLinkEnvelope =
@@ -9936,8 +10150,14 @@ async function runValidationSpec(): Promise<void> {
   const controlBranchPackage = compositeModules.find(
     (module) => module.moduleId === "pkg_control_branch_router",
   );
+  const controlValueRouterPackage = compositeModules.find(
+    (module) => module.moduleId === "pkg_control_value_router",
+  );
   const controlBranchContract = getCompositeTemplateContract(
     "pkg_control_branch_router",
+  );
+  const controlValueRouterContract = getCompositeTemplateContract(
+    "pkg_control_value_router",
   );
   const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
     moduleId: "pkg_full_workflow",
@@ -9956,6 +10176,16 @@ async function runValidationSpec(): Promise<void> {
     exposedConfig: {
       negate: true,
       join_mode: "all",
+    },
+  });
+  const instantiatedValueRouterPackage = instantiateCompositeTemplate({
+    moduleId: "pkg_control_value_router",
+    origin: { x: 240, y: 520 },
+    exposedConfig: {
+      case_a: "north",
+      case_b: "south",
+      case_sensitive: true,
+      trim_whitespace: false,
     },
   });
   assert(
@@ -10008,6 +10238,56 @@ async function runValidationSpec(): Promise<void> {
       instantiatedControlBranchPackage.nodes.filter(
         (node) => node.moduleId === "cmp_passthrough",
       ).length === 3 &&
+      controlValueRouterPackage?.compositeTemplate?.nodes.length === 9 &&
+      controlValueRouterPackage.compositeTemplate.edges.length === 10 &&
+      controlValueRouterPackage.configSchema?.some(
+        (field) => field.key === "case_a",
+      ) &&
+      controlValueRouterContract?.entries.some(
+        (entry) =>
+          entry.key === "route_key" &&
+          entry.targets.length === 2 &&
+          entry.targets.every((target) => target.nodeLabel.startsWith("匹配 ")),
+      ) &&
+      controlValueRouterContract.entries.some(
+        (entry) =>
+          entry.key === "value" &&
+          entry.targets.length === 4 &&
+          entry.targets.some((target) => target.nodeLabel === "Route A") &&
+          entry.targets.some((target) => target.nodeLabel === "Route B") &&
+          entry.targets.some((target) => target.nodeLabel === "Default") &&
+          entry.targets.some((target) => target.nodeLabel === "路由输出"),
+      ) &&
+      controlValueRouterContract.exits.some(
+        (entry) =>
+          entry.key === "value_out" &&
+          entry.source.nodeLabel === "路由输出" &&
+          entry.source.portId === "value_out",
+      ) &&
+      instantiatedValueRouterPackage?.nodes.some(
+        (node) =>
+          node.moduleId === "cmp_value_equals" &&
+          node.config.expected === "north" &&
+          node.config.case_sensitive === true &&
+          node.config.trim_whitespace === false,
+      ) &&
+      instantiatedValueRouterPackage.nodes.some(
+        (node) =>
+          node.moduleId === "cmp_value_equals" &&
+          node.config.expected === "south" &&
+          node.config.case_sensitive === true &&
+          node.config.trim_whitespace === false,
+      ) &&
+      instantiatedValueRouterPackage.contract.entries.some(
+        (entry) =>
+          entry.key === "route_key" &&
+          entry.targets.every((target) => target.nodeId.includes("match_")),
+      ) &&
+      instantiatedValueRouterPackage.contract.exits.some(
+        (entry) =>
+          entry.key === "value_out" &&
+          entry.source.nodeId.includes("after_join_"),
+      ) &&
       fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
       fullWorkflowPackage.compositeTemplate.edges.length === 5 &&
       fullWorkflowPackage.configSchema?.some(
@@ -10031,7 +10311,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===

@@ -893,6 +893,58 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
   });
 
   registerNodeHandler({
+    moduleId: "cmp_value_equals",
+    handlerId: "cmp_value_equals",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ node, inputs }) => {
+      const normalizeComparable = (value: unknown): string => {
+        if (value === null || value === undefined) {
+          return "";
+        }
+        if (typeof value === "string") {
+          return value;
+        }
+        if (typeof value === "number" || typeof value === "boolean") {
+          return String(value);
+        }
+        if (Array.isArray(value)) {
+          return value.map((entry) => normalizeComparable(entry)).join(",");
+        }
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      };
+
+      const normalizeText = (value: unknown): string => {
+        let text = normalizeComparable(value);
+        if (node.config.trim_whitespace !== false) {
+          text = text.trim();
+        }
+        if (node.config.case_sensitive !== true) {
+          text = text.toLowerCase();
+        }
+        return text;
+      };
+
+      const expectedCandidate =
+        inputs.expected !== undefined ? inputs.expected : node.config.expected;
+      const normalizedValue = normalizeText(inputs.value);
+      const normalizedExpected = normalizeText(expectedCandidate);
+      return {
+        outputs: {
+          matched: normalizedValue === normalizedExpected,
+          normalized_value: normalizedValue,
+          expected_value: normalizedExpected,
+        },
+        handlerId: "cmp_value_equals",
+      };
+    },
+  });
+
+  registerNodeHandler({
     moduleId: "ctl_if",
     handlerId: "ctl_if",
     kind: "builtin",

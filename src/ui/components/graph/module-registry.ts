@@ -894,6 +894,66 @@ const COMPOSE_MODULES: ModuleBlueprint[] = [
     ],
     defaultConfig: {},
   },
+  {
+    moduleId: "cmp_value_equals",
+    label: "值匹配",
+    category: "compose",
+    color: "#10b981",
+    icon: "≟",
+    description:
+      "把输入值归一化后与目标值做相等比较，输出布尔命中结果，适合作为 router / branch 宏的前置比较节点。",
+    ports: [
+      {
+        id: "value",
+        label: "输入值",
+        direction: "in",
+        dataType: "any",
+      },
+      {
+        id: "expected",
+        label: "目标值",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "matched",
+        label: "命中",
+        direction: "out",
+        dataType: "boolean",
+      },
+      textOut("normalized_value", "归一化输入"),
+      textOut("expected_value", "归一化目标"),
+    ],
+    defaultConfig: {
+      expected: "",
+      case_sensitive: false,
+      trim_whitespace: true,
+    },
+    configSchema: [
+      {
+        key: "expected",
+        label: "目标值",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "当 expected 输入未接线时，使用这里的值作为匹配目标。",
+      },
+      {
+        key: "case_sensitive",
+        label: "区分大小写",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "关闭时会把输入值和目标值统一转成小写后比较。",
+      },
+      {
+        key: "trim_whitespace",
+        label: "去除首尾空白",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用后比较前会 trim 输入值和目标值。",
+      },
+    ],
+  },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -1590,6 +1650,223 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
           label: "汇合后值",
           source: { nodeId: "after_join", portId: "value_out" },
           description: "默认从汇合后占位导出组合后的值。",
+        },
+      ],
+    },
+    isComposite: true,
+  },
+  {
+    moduleId: "pkg_control_value_router",
+    label: "🗺️ 多路路由脚手架",
+    category: "control",
+    color: "#f97316",
+    icon: "🗺️",
+    description:
+      "Builder 宏脚手架：先匹配 case A，再匹配 case B，未命中则落到 default。插入后展开为 compare + if + join 的可编辑子图。",
+    ports: [
+      {
+        id: "route_key",
+        label: "路由键",
+        direction: "in",
+        dataType: "any",
+      },
+      {
+        id: "value",
+        label: "透传值",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "value_out",
+        label: "路由输出",
+        direction: "out",
+        dataType: "any",
+      },
+    ],
+    defaultConfig: {
+      case_a: "alpha",
+      case_b: "beta",
+      case_sensitive: false,
+      trim_whitespace: true,
+    },
+    configSchema: [
+      {
+        key: "case_a",
+        label: "Case A",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "先尝试匹配的第一条路由值。",
+      },
+      {
+        key: "case_b",
+        label: "Case B",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "当 Case A 未命中时，继续尝试匹配的第二条路由值。",
+      },
+      {
+        key: "case_sensitive",
+        label: "区分大小写",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "关闭时内部比较节点会统一转成小写后比较。",
+      },
+      {
+        key: "trim_whitespace",
+        label: "去除首尾空白",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用后内部比较节点会 trim 路由键和值。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("match_a", "cmp_value_equals", 0, -120, {
+          _label: "匹配 A",
+        }),
+        compositeNode("if_a", "ctl_if", 260, -120, { _label: "路由 A" }),
+        compositeNode("branch_a", "cmp_passthrough", 520, -220, {
+          _label: "Route A",
+        }),
+        compositeNode("match_b", "cmp_value_equals", 0, 140, {
+          _label: "匹配 B",
+        }),
+        compositeNode("if_b", "ctl_if", 260, 140, { _label: "路由 B" }),
+        compositeNode("branch_b", "cmp_passthrough", 520, 40, {
+          _label: "Route B",
+        }),
+        compositeNode("branch_default", "cmp_passthrough", 520, 300, {
+          _label: "Default",
+        }),
+        compositeNode("route_join", "ctl_join", 800, 40, {
+          _label: "路由汇合",
+          mode: "any",
+        }),
+        compositeNode("after_join", "cmp_passthrough", 1060, 40, {
+          _label: "路由输出",
+        }),
+      ],
+      edges: [
+        compositeEdge("edge_match_a_to_if", "match_a", "matched", "if_a", "condition"),
+        compositeEdge(
+          "edge_if_a_then",
+          "if_a",
+          "then",
+          "branch_a",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_if_a_else_to_if_b",
+          "if_a",
+          "else",
+          "if_b",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge("edge_match_b_to_if", "match_b", "matched", "if_b", "condition"),
+        compositeEdge(
+          "edge_if_b_then",
+          "if_b",
+          "then",
+          "branch_b",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_if_b_else_to_default",
+          "if_b",
+          "else",
+          "branch_default",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_branch_a_done",
+          "branch_a",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "route_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_branch_b_done",
+          "branch_b",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "route_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_branch_default_done",
+          "branch_default",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "route_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_join_to_after",
+          "route_join",
+          "joined",
+          "after_join",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "case_a",
+          targetNodeId: "match_a",
+          targetConfigKey: "expected",
+        },
+        {
+          sourceKey: "case_b",
+          targetNodeId: "match_b",
+          targetConfigKey: "expected",
+        },
+        {
+          sourceKey: "case_sensitive",
+          targetNodeId: "match_a",
+          targetConfigKey: "case_sensitive",
+        },
+        {
+          sourceKey: "case_sensitive",
+          targetNodeId: "match_b",
+          targetConfigKey: "case_sensitive",
+        },
+        {
+          sourceKey: "trim_whitespace",
+          targetNodeId: "match_a",
+          targetConfigKey: "trim_whitespace",
+        },
+        {
+          sourceKey: "trim_whitespace",
+          targetNodeId: "match_b",
+          targetConfigKey: "trim_whitespace",
+        },
+      ],
+      entryBindings: [
+        {
+          key: "route_key",
+          label: "路由键",
+          targets: [
+            { nodeId: "match_a", portId: "value" },
+            { nodeId: "match_b", portId: "value" },
+          ],
+          description: "同时送入两条内部比较链路，先试 A，再在 A 未命中时试 B。",
+        },
+        {
+          key: "value",
+          label: "透传值",
+          targets: [
+            { nodeId: "branch_a", portId: "value" },
+            { nodeId: "branch_b", portId: "value" },
+            { nodeId: "branch_default", portId: "value" },
+            { nodeId: "after_join", portId: "value" },
+          ],
+          description: "默认同时注入各路由占位和汇合后占位，方便插入后替换内部链路。",
+        },
+      ],
+      exitBindings: [
+        {
+          key: "value_out",
+          label: "路由输出",
+          source: { nodeId: "after_join", portId: "value_out" },
+          description: "从汇合后占位导出当前命中路由的最终值。",
         },
       ],
     },
