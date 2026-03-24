@@ -155,6 +155,12 @@
               {{ formatCompositeKind(pkg) }}
             </span>
             <span class="ew-builder-workbench__chip">{{ pkg.category }}</span>
+            <span
+              v-if="getCompositeRetryReasonLabel(pkg.moduleId)"
+              class="ew-builder-workbench__chip"
+            >
+              {{ getCompositeRetryReasonLabel(pkg.moduleId) }}
+            </span>
           </div>
           <h4 class="ew-builder-workbench__template-title">
             {{ pkg.label }}
@@ -306,6 +312,21 @@
                 <span
                   v-for="label in getCompositeExitContractLabels(pkg.moduleId)"
                   :key="`${pkg.moduleId}-exit-${label}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ label }}
+                </span>
+              </div>
+            </template>
+            <template v-if="getCompositeRetryReasonLabel(pkg.moduleId)">
+              <div class="ew-builder-workbench__summary-label">重试资格</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span class="ew-builder-workbench__template-tag">
+                  {{ getCompositeRetryReasonLabel(pkg.moduleId) }}
+                </span>
+                <span
+                  v-for="label in getCompositeRetryBlockingLabels(pkg.moduleId)"
+                  :key="`${pkg.moduleId}-retry-${label}`"
                   class="ew-builder-workbench__template-tag"
                 >
                   {{ label }}
@@ -799,6 +820,7 @@ import EwGraphEditor from "./EwGraphEditor.vue";
 import {
   getCompositeModuleKind,
   getCompositeModules,
+  getCompositeRetrySafety,
   getCompositeTemplateContract,
   getModuleBlueprint,
   getModuleExplainContract,
@@ -1134,6 +1156,19 @@ function getCompositeExitContractLabels(moduleId: string): string[] {
   return contract.exits.map((entry) => {
     return `${entry.label} · ${formatCompositeContractTarget(entry.source)}`;
   });
+}
+
+function getCompositeRetryReasonLabel(moduleId: string): string | null {
+  const retrySafety = getCompositeRetrySafety(moduleId);
+  return retrySafety?.reasonLabel ?? null;
+}
+
+function getCompositeRetryBlockingLabels(moduleId: string): string[] {
+  const retrySafety = getCompositeRetrySafety(moduleId);
+  if (!retrySafety || retrySafety.blockingNodeLabels.length === 0) {
+    return [];
+  }
+  return retrySafety.blockingNodeLabels.map((label) => `阻塞节点 · ${label}`);
 }
 
 function getNextPackageOrigin(): { x: number; y: number } {

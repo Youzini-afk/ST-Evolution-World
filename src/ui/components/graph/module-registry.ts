@@ -9,6 +9,7 @@ import {
 } from "./module-types";
 import type {
   CompositeModuleKind,
+  CompositeRetryBlockingIssue,
   CompositeTemplatePortBindingRef,
   HostWriteSummary,
   InstantiatedCompositeTemplateFragment,
@@ -23,6 +24,7 @@ import type {
   ModuleMetadataUiSummary,
   ModuleMetadataValidationSummary,
   ModulePortDef,
+  ResolvedCompositeRetrySafetySummary,
   ResolvedCompositeTemplateContractSummary,
   ResolvedCompositeTemplateContractTarget,
 } from "./module-types";
@@ -1582,6 +1584,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       join_mode: "any",
     },
     compositeKind: "fragment",
+    retryContract: {
+      immediateRetryCandidate: true,
+    },
     configSchema: [
       {
         key: "negate",
@@ -1731,6 +1736,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       trim_whitespace: true,
     },
     compositeKind: "fragment",
+    retryContract: {
+      immediateRetryCandidate: true,
+    },
     configSchema: [
       {
         key: "case_a",
@@ -1927,6 +1935,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
     ],
     defaultConfig: {},
     compositeKind: "fragment",
+    retryContract: {
+      immediateRetryCandidate: true,
+    },
     compositeTemplate: {
       nodes: [
         compositeNode("strip_mvu", "flt_mvu_strip", 0, 0, {
@@ -1989,6 +2000,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       skip_empty: true,
     },
     compositeKind: "fragment",
+    retryContract: {
+      immediateRetryCandidate: true,
+    },
     configSchema: [
       {
         key: "separator",
@@ -2952,6 +2966,64 @@ function resolveCompositeTemplateContract(params: {
   return { entries, exits };
 }
 
+function collectCompositeRetryBlockingIssues(params: {
+  template: NonNullable<ModuleBlueprint["compositeTemplate"]>;
+  visited: Set<string>;
+  templateNodeIdPrefix?: string;
+  labelPrefix?: string;
+}): CompositeRetryBlockingIssue[] {
+  const issues: CompositeRetryBlockingIssue[] = [];
+
+  for (const node of params.template.nodes) {
+    const nodeBlueprint = MODULE_REGISTRY.get(node.moduleId);
+    if (!nodeBlueprint) {
+      continue;
+    }
+
+    const nodeLabel = params.labelPrefix
+      ? `${params.labelPrefix} > ${resolveCompositeTemplateNodeLabel(node)}`
+      : resolveCompositeTemplateNodeLabel(node);
+    const templateNodeId = params.templateNodeIdPrefix
+      ? `${params.templateNodeIdPrefix}.${node.id}`
+      : node.id;
+    const metadata = nodeBlueprint.metadata;
+    const writesHost =
+      metadata?.semantic.capability === "writes_host" ||
+      Boolean(metadata?.semantic.hostWriteHint) ||
+      nodeBlueprint.runtimeMeta?.capability === "writes_host" ||
+      nodeBlueprint.runtimeMeta?.sideEffect === "writes_host";
+
+    if (writesHost) {
+      issues.push({
+        templateNodeId,
+        nodeLabel,
+        moduleId: node.moduleId,
+        reasonCode: "writes_host",
+        reasonLabel: "包含宿主写入节点",
+      });
+    }
+
+    if (
+      nodeBlueprint.isComposite &&
+      nodeBlueprint.compositeTemplate?.nodes.length &&
+      !params.visited.has(nodeBlueprint.moduleId)
+    ) {
+      const nextVisited = new Set(params.visited);
+      nextVisited.add(nodeBlueprint.moduleId);
+      issues.push(
+        ...collectCompositeRetryBlockingIssues({
+          template: nodeBlueprint.compositeTemplate,
+          visited: nextVisited,
+          templateNodeIdPrefix: templateNodeId,
+          labelPrefix: nodeLabel,
+        }),
+      );
+    }
+  }
+
+  return issues;
+}
+
 export function instantiateCompositeTemplate(params: {
   moduleId: string;
   origin?: { x: number; y: number };
@@ -3032,6 +3104,50 @@ export function getCompositeTemplateContract(
     return null;
   }
   return resolveCompositeTemplateContract({ template });
+}
+
+export function getCompositeRetrySafety(
+  moduleId: string,
+): ResolvedCompositeRetrySafetySummary | null {
+  const blueprint = MODULE_REGISTRY.get(moduleId);
+  const template = blueprint?.compositeTemplate;
+  if (!blueprint || !blueprint.isComposite || !template) {
+    return null;
+  }
+
+  const requested = blueprint.retryContract?.immediateRetryCandidate === true;
+  const issues = collectCompositeRetryBlockingIssues({
+    template,
+    visited: new Set([moduleId]),
+  });
+  const blockingNodeIds = Array.from(
+    new Set(issues.map((issue) => issue.templateNodeId)),
+  );
+  const blockingNodeLabels = Array.from(
+    new Set(issues.map((issue) => issue.nodeLabel)),
+  );
+  const eligible = requested && issues.length === 0;
+  const status = !requested
+    ? "not_requested"
+    : eligible
+      ? "eligible"
+      : "ineligible";
+  const reasonLabel =
+    status === "eligible"
+      ? "可立即重试（无宿主写入）"
+      : status === "ineligible"
+        ? "不可立即重试（包含宿主写入）"
+        : "未声明立即重试片段";
+
+  return {
+    status,
+    requested,
+    eligible,
+    reasonLabel,
+    blockingNodeIds,
+    blockingNodeLabels,
+    issues,
+  };
 }
 
 export function getModuleMetadataSurface(

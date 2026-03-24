@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from "pinia";
 
 import {
   getCompositeModules,
+  getCompositeRetrySafety,
   getCompositeTemplateContract,
   getModuleExplainContract,
   getModuleMetadataSummary,
@@ -10458,6 +10459,19 @@ async function runValidationSpec(): Promise<void> {
   const parallelTextFanInContract = getCompositeTemplateContract(
     "frag_parallel_text_fan_in",
   );
+  const controlBranchRetrySafety = getCompositeRetrySafety(
+    "pkg_control_branch_router",
+  );
+  const controlValueRouterRetrySafety = getCompositeRetrySafety(
+    "pkg_control_value_router",
+  );
+  const textCleanupFragmentRetrySafety = getCompositeRetrySafety(
+    "frag_text_cleanup_stage",
+  );
+  const parallelTextFanInRetrySafety = getCompositeRetrySafety(
+    "frag_parallel_text_fan_in",
+  );
+  const fullWorkflowRetrySafety = getCompositeRetrySafety("pkg_full_workflow");
   const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
     moduleId: "pkg_full_workflow",
     origin: { x: 400, y: 120 },
@@ -10501,12 +10515,15 @@ async function runValidationSpec(): Promise<void> {
   });
   assert(
     controlBranchPackage?.compositeKind === "fragment" &&
+    controlBranchPackage.retryContract?.immediateRetryCandidate === true &&
     controlBranchPackage?.compositeTemplate?.nodes.length === 5 &&
       controlBranchPackage.compositeTemplate.edges.length === 5 &&
       controlBranchPackage.configSchema?.some(
         (field) => field.key === "join_mode",
       ) &&
       controlValueRouterPackage?.compositeKind === "fragment" &&
+      controlValueRouterPackage.retryContract?.immediateRetryCandidate ===
+        true &&
       controlBranchContract?.entries.some(
         (entry) =>
           entry.key === "condition" &&
@@ -10602,6 +10619,7 @@ async function runValidationSpec(): Promise<void> {
           entry.source.nodeId.includes("after_join_"),
       ) &&
       textCleanupFragment?.compositeKind === "fragment" &&
+      textCleanupFragment.retryContract?.immediateRetryCandidate === true &&
       textCleanupFragment.compositeTemplate?.nodes.length === 2 &&
       textCleanupFragment.compositeTemplate.edges.length === 1 &&
       textCleanupFragmentContract?.entries.some(
@@ -10628,6 +10646,7 @@ async function runValidationSpec(): Promise<void> {
           entry.source.nodeId.includes("regex_process_"),
       ) &&
       parallelTextFanInFragment?.compositeKind === "fragment" &&
+      parallelTextFanInFragment.retryContract?.immediateRetryCandidate === true &&
       parallelTextFanInFragment.compositeTemplate?.nodes.length === 4 &&
       parallelTextFanInFragment.compositeTemplate.edges.length === 5 &&
       parallelTextFanInFragment.configSchema?.some(
@@ -10671,6 +10690,19 @@ async function runValidationSpec(): Promise<void> {
           entry.key === "text_out" &&
           entry.source.nodeId.includes("merge_text_"),
       ) &&
+      controlBranchRetrySafety?.status === "eligible" &&
+      controlBranchRetrySafety.issues.length === 0 &&
+      controlValueRouterRetrySafety?.status === "eligible" &&
+      controlValueRouterRetrySafety.issues.length === 0 &&
+      textCleanupFragmentRetrySafety?.status === "eligible" &&
+      textCleanupFragmentRetrySafety.issues.length === 0 &&
+      parallelTextFanInRetrySafety?.status === "eligible" &&
+      parallelTextFanInRetrySafety.issues.length === 0 &&
+      fullWorkflowRetrySafety?.status === "not_requested" &&
+      fullWorkflowRetrySafety.eligible === false &&
+      fullWorkflowRetrySafety.issues.some(
+        (issue) => issue.moduleId === "out_reply_inject",
+      ) &&
       fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
       fullWorkflowPackage.compositeTemplate.edges.length === 5 &&
       fullWorkflowPackage.configSchema?.some(
@@ -10694,7 +10726,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings, entry/exit contracts, and retry-safety facts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlRetry=${JSON.stringify(controlBranchRetrySafety)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterRetry=${JSON.stringify(controlValueRouterRetrySafety)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupRetry=${JSON.stringify(textCleanupFragmentRetrySafety)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextRetry=${JSON.stringify(parallelTextFanInRetrySafety)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} fullRetry=${JSON.stringify(fullWorkflowRetrySafety)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===

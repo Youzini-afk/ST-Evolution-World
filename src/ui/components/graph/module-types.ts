@@ -251,6 +251,33 @@ export interface CompositeTemplateConfigBinding {
 
 export type CompositeModuleKind = "package" | "fragment";
 
+export interface CompositeRetryContract {
+  immediateRetryCandidate?: boolean;
+}
+
+export type CompositeRetrySafetyStatus =
+  | "eligible"
+  | "ineligible"
+  | "not_requested";
+
+export interface CompositeRetryBlockingIssue {
+  templateNodeId: string;
+  nodeLabel: string;
+  moduleId: string;
+  reasonCode: "writes_host";
+  reasonLabel: string;
+}
+
+export interface ResolvedCompositeRetrySafetySummary {
+  status: CompositeRetrySafetyStatus;
+  requested: boolean;
+  eligible: boolean;
+  reasonLabel: string;
+  blockingNodeIds: string[];
+  blockingNodeLabels: string[];
+  issues: CompositeRetryBlockingIssue[];
+}
+
 export interface CompositeTemplatePortBindingRef {
   nodeId: string;
   portId: string;
@@ -332,6 +359,8 @@ export interface ModuleBlueprint {
   isComposite?: boolean;
   /** For composite modules: builder-facing presentation kind */
   compositeKind?: CompositeModuleKind;
+  /** For composite modules: future retry-related static contract */
+  retryContract?: CompositeRetryContract;
   /** For composite modules: the pre-wired sub-graph template */
   compositeTemplate?: {
     nodes: WorkbenchNode[];
