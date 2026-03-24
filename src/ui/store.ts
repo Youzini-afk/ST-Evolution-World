@@ -103,6 +103,7 @@ import type {
   GraphRunNonContinuableReasonKind,
   GraphRunPartialOutputSummary,
   GraphRunPhase,
+  GraphRunRetrySummary,
   GraphRunRecoveryEligibilityFact,
   GraphRunRecoveryEvidenceTrust,
   GraphRunStatus,
@@ -796,6 +797,14 @@ export const useEwStore = defineStore("evolution-world-store", () => {
               : undefined,
             reusableOutputsHit: item.reusableOutputsHit === true,
             skipReuseOutputsHit: item.skipReuseOutputsHit === true,
+            retryAttempt: Number.isFinite(Number(item.retryAttempt))
+              ? Math.max(0, Math.trunc(Number(item.retryAttempt)))
+              : undefined,
+            retryAttemptLimit: Number.isFinite(Number(item.retryAttemptLimit))
+              ? Math.max(0, Math.trunc(Number(item.retryAttemptLimit)))
+              : undefined,
+            retryUsed: item.retryUsed === true,
+            retryExhausted: item.retryExhausted === true,
           };
         })
         .filter((item) => item.nodeId && item.moduleId);
@@ -1056,6 +1065,12 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         label: dirtyReasonLabels[reason],
         count,
       }));
+    const retryNodeCount =
+      overview.nodeDiagnostics?.filter((item) => item.retryUsed === true)
+        .length ?? 0;
+    const retryExhaustedNodeCount =
+      overview.nodeDiagnostics?.filter((item) => item.retryExhausted === true)
+        .length ?? 0;
     const primaryReuseReasons = overview.reuse
       ? ((
           Object.entries(overview.reuse.verdictCounts) as Array<
@@ -1108,6 +1123,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       reuseIneligibleNodeCount: overview.reuse?.ineligibleNodeCount ?? 0,
       skipReuseOutputHitCount:
         overview.executionDecision?.skipReuseOutputNodeIds.length ?? 0,
+      retryNodeCount,
+      retryExhaustedNodeCount,
       primaryReuseReasons,
       primaryExecutionDecisionReasons,
       bridgeIntentSummary,
@@ -1568,6 +1585,47 @@ export const useEwStore = defineStore("evolution-world-store", () => {
             : "waiting_user",
       };
     };
+    const toRetrySummary = (
+      value: unknown,
+    ): GraphRunRetrySummary | undefined => {
+      if (!_.isPlainObject(value)) {
+        return undefined;
+      }
+      const record = value as Record<string, unknown>;
+      const timestamp = Number(record.timestamp);
+      const retryAttempt = Number(record.retryAttempt);
+      const retryAttemptLimit = Number(record.retryAttemptLimit);
+      const outcome =
+        record.outcome === "started" ||
+        record.outcome === "failed" ||
+        record.outcome === "succeeded" ||
+        record.outcome === "exhausted"
+          ? record.outcome
+          : undefined;
+      if (
+        !outcome ||
+        !Number.isFinite(retryAttempt) ||
+        !Number.isFinite(retryAttemptLimit) ||
+        retryAttempt <= 0 ||
+        retryAttemptLimit <= 0
+      ) {
+        return undefined;
+      }
+      return {
+        timestamp: Number.isFinite(timestamp)
+          ? Math.max(0, Math.trunc(timestamp))
+          : 0,
+        nodeId: typeof record.nodeId === "string" ? record.nodeId : undefined,
+        moduleId:
+          typeof record.moduleId === "string" ? record.moduleId : undefined,
+        nodeIndex: Number.isFinite(Number(record.nodeIndex))
+          ? Math.max(0, Math.trunc(Number(record.nodeIndex)))
+          : undefined,
+        retryAttempt: Math.max(1, Math.trunc(retryAttempt)),
+        retryAttemptLimit: Math.max(1, Math.trunc(retryAttemptLimit)),
+        outcome,
+      };
+    };
     const status =
       typeof artifact.status === "string"
         ? (artifact.status as GraphRunStatus)
@@ -1700,6 +1758,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       latestHeartbeat: toHeartbeatSummary(artifact.latestHeartbeat),
       latestPartialOutput: toPartialOutputSummary(artifact.latestPartialOutput),
       waitingUser: toWaitingUserSummary(artifact.waitingUser),
+      latestRetry: toRetrySummary(artifact.latestRetry),
       eventCount: Number.isFinite(eventCount)
         ? Math.max(0, Math.trunc(eventCount))
         : 0,
@@ -1725,6 +1784,59 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       reason: candidate.reason,
       createdAt: candidate.createdAt,
     };
+  }
+
+  function formatRetrySummaryLabel(
+    retry: GraphRunRetrySummary | null | undefined,
+  ): string {
+    if (!retry) {
+      return "未观察到立即重试";
+    }
+    const nodeLabel = [retry.nodeId, retry.moduleId]
+      .filter((value): value is string => Boolean(value))
+      .join(" · ");
+    const prefix = nodeLabel ? `${nodeLabel} · ` : "";
+    switch (retry.outcome) {
+      case "started":
+        return `${prefix}正在执行第 ${retry.retryAttempt}/${retry.retryAttemptLimit} 次尝试`;
+      case "failed":
+        return `${prefix}第 ${retry.retryAttempt}/${retry.retryAttemptLimit} 次尝试失败，准备继续`;
+      case "succeeded":
+        return `${prefix}第 ${retry.retryAttempt}/${retry.retryAttemptLimit} 次尝试成功`;
+      case "exhausted":
+        return `${prefix}已耗尽 ${retry.retryAttemptLimit} 次立即重试`;
+      default:
+        return `${prefix}立即重试状态未知`;
+    }
+  }
+
+  function formatNodeRetryLabel(
+    nodeDiagnostics: Pick<
+      GraphNodeDiagnosticsView,
+      "retryAttempt" | "retryAttemptLimit" | "retryUsed" | "retryExhausted"
+    >,
+  ): string {
+    const retryAttemptLimit = Math.max(
+      0,
+      Math.trunc(Number(nodeDiagnostics.retryAttemptLimit) || 0),
+    );
+    const retryAttempt = Math.max(
+      0,
+      Math.trunc(Number(nodeDiagnostics.retryAttempt) || 0),
+    );
+    if (retryAttemptLimit <= 1) {
+      return "未触发立即重试";
+    }
+    if (nodeDiagnostics.retryExhausted === true) {
+      return `已耗尽 ${retryAttemptLimit} 次立即重试`;
+    }
+    if (nodeDiagnostics.retryUsed === true && retryAttempt > 1) {
+      return `第 ${retryAttempt}/${retryAttemptLimit} 次尝试成功`;
+    }
+    if (retryAttempt > 0) {
+      return `允许 ${retryAttemptLimit} 次尝试，本次停在 ${retryAttempt}/${retryAttemptLimit}`;
+    }
+    return `允许 ${retryAttemptLimit} 次尝试，本次未触发`;
   }
 
   function toNodeDiagnosticsViewModel(
@@ -1893,6 +2005,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       executionDecisionLabel: nodeDiagnostics.executionDecision
         ? `${nodeDiagnostics.executionDecision.shouldSkip ? "跳过" : nodeDiagnostics.executionDecision.shouldExecute ? "执行" : "观察中"} · ${executionDecisionLabels[nodeDiagnostics.executionDecision.reason]}`
         : "无 execution decision 事实",
+      retryLabel: formatNodeRetryLabel(nodeDiagnostics),
       inputSourcesSummary:
         nodeDiagnostics.inputSources.length > 0
           ? nodeDiagnostics.inputSources
@@ -2160,6 +2273,8 @@ export const useEwStore = defineStore("evolution-world-store", () => {
         : "无 partial output",
       waitingUser: artifact.waitingUser ?? null,
       waitingUserLabel: artifact.waitingUser?.reason ?? "未进入 waiting_user",
+      latestRetry: artifact.latestRetry ?? null,
+      latestRetryLabel: formatRetrySummaryLabel(artifact.latestRetry),
       bridgeIntentSummary,
       controlFlowSummary,
       controlPreconditionsLabel,

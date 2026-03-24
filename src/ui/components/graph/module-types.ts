@@ -1438,6 +1438,10 @@ export interface GraphNodeDiagnosticsView {
   cacheKey?: GraphNodeDiagnosticsCacheKeySummary;
   reusableOutputsHit: boolean;
   skipReuseOutputsHit: boolean;
+  retryAttempt?: number;
+  retryAttemptLimit?: number;
+  retryUsed?: boolean;
+  retryExhausted?: boolean;
 }
 
 export type GraphNodeReuseReason =
@@ -1754,6 +1758,10 @@ export type GraphRunEventType =
   | "node_finished"
   | "node_failed"
   | "node_skipped"
+  | "retry_attempt_started"
+  | "retry_attempt_failed"
+  | "retry_attempt_succeeded"
+  | "retry_exhausted"
   | "checkpoint_candidate"
   | "heartbeat"
   | "partial_output"
@@ -1782,6 +1790,22 @@ export interface GraphRunWaitingUserSummary {
   moduleId?: string;
   nodeIndex?: number;
   reason: string;
+}
+
+export type GraphRunRetryOutcome =
+  | "started"
+  | "failed"
+  | "succeeded"
+  | "exhausted";
+
+export interface GraphRunRetrySummary {
+  timestamp: number;
+  nodeId?: string;
+  moduleId?: string;
+  nodeIndex?: number;
+  retryAttempt: number;
+  retryAttemptLimit: number;
+  outcome: GraphRunRetryOutcome;
 }
 
 export interface GraphRunCheckpointSummary {
@@ -1822,6 +1846,7 @@ export interface GraphRunOverviewRecordV1 {
   latestHeartbeat?: GraphRunHeartbeatSummary;
   latestPartialOutput?: GraphRunPartialOutputSummary;
   waitingUser?: GraphRunWaitingUserSummary;
+  latestRetry?: GraphRunRetrySummary;
   eventCount: number;
   updatedAt: number;
 }
@@ -1849,6 +1874,7 @@ export interface GraphRunEventRecordV1 {
   heartbeat?: GraphRunHeartbeatSummary;
   partialOutput?: GraphRunPartialOutputSummary;
   waitingUser?: GraphRunWaitingUserSummary;
+  retry?: GraphRunRetrySummary;
   error?: string;
   timestamp: number;
 }
@@ -1891,6 +1917,7 @@ export interface GraphRunArtifact {
   latestHeartbeat?: GraphRunHeartbeatSummary;
   latestPartialOutput?: GraphRunPartialOutputSummary;
   waitingUser?: GraphRunWaitingUserSummary;
+  latestRetry?: GraphRunRetrySummary;
   eventCount: number;
   updatedAt: number;
 }
@@ -1919,6 +1946,7 @@ export interface GraphRunEvent {
   heartbeat?: GraphRunHeartbeatSummary;
   partialOutput?: GraphRunPartialOutputSummary;
   waitingUser?: GraphRunWaitingUserSummary;
+  retry?: GraphRunRetrySummary;
   error?: string;
   timestamp: number;
 }
@@ -2076,6 +2104,8 @@ export interface GraphRunDiagnosticsSummaryViewModel {
   reuseEligibleNodeCount: number;
   reuseIneligibleNodeCount: number;
   skipReuseOutputHitCount: number;
+  retryNodeCount: number;
+  retryExhaustedNodeCount: number;
   primaryReuseReasons: GraphRunDiagnosticsReasonBadge<GraphNodeReuseReason>[];
   primaryExecutionDecisionReasons: GraphRunDiagnosticsReasonBadge<GraphNodeExecutionDecisionReason>[];
   bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null;
@@ -2102,6 +2132,7 @@ export interface GraphNodeDiagnosticsViewModel {
   dirtyReasonLabel: string;
   reuseVerdictLabel: string;
   executionDecisionLabel: string;
+  retryLabel: string;
   inputSourcesSummary: string;
   cacheKeyFactsSummary: string;
   reusableOutputsFactLabel: string;
@@ -2173,6 +2204,8 @@ export interface GraphActiveRunSummaryViewModel {
   latestPartialOutputLabel: string;
   waitingUser: GraphRunWaitingUserSummary | null;
   waitingUserLabel: string;
+  latestRetry: GraphRunRetrySummary | null;
+  latestRetryLabel: string;
   bridgeIntentSummary: GraphBridgeIntentSummaryViewModel | null;
   controlFlowSummary: GraphControlFlowExplainSummaryViewModel | null;
   diagnosticsSummary: GraphRunDiagnosticsSummaryViewModel | null;

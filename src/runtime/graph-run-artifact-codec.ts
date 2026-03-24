@@ -13,6 +13,7 @@ import type {
   GraphRunHeartbeatSummary,
   GraphRunPartialOutputSummary,
   GraphRunPhase,
+  GraphRunRetrySummary,
   GraphRunRecoveryEligibilityFact,
   GraphRunStatus,
   GraphRunTerminalOutcome,
@@ -44,6 +45,7 @@ export interface GraphRunOverviewRecordV1 {
   latestHeartbeat?: GraphRunHeartbeatSummary;
   latestPartialOutput?: GraphRunPartialOutputSummary;
   waitingUser?: GraphRunWaitingUserSummary;
+  latestRetry?: GraphRunRetrySummary;
   eventCount: number;
   updatedAt: number;
 }
@@ -71,6 +73,7 @@ export interface GraphRunEventRecordV1 {
   heartbeat?: GraphRunHeartbeatSummary;
   partialOutput?: GraphRunPartialOutputSummary;
   waitingUser?: GraphRunWaitingUserSummary;
+  retry?: GraphRunRetrySummary;
   error?: string;
   timestamp: number;
 }
@@ -115,12 +118,17 @@ const GRAPH_RUN_TERMINAL_OUTCOMES: GraphRunTerminalOutcome[] = [
 const GRAPH_RUN_EVENT_TYPES: GraphRunEventType[] = [
   "run_queued",
   "run_started",
+  "run_cancelled",
   "stage_started",
   "stage_finished",
   "node_started",
   "node_finished",
   "node_failed",
   "node_skipped",
+  "retry_attempt_started",
+  "retry_attempt_failed",
+  "retry_attempt_succeeded",
+  "retry_exhausted",
   "checkpoint_candidate",
   "heartbeat",
   "partial_output",
@@ -279,6 +287,37 @@ function cloneWaitingUserSummary(
   };
 }
 
+function cloneRetrySummary(
+  value: unknown,
+): GraphRunRetrySummary | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const retryAttempt = toNonNegativeInt(value.retryAttempt);
+  const retryAttemptLimit = toNonNegativeInt(value.retryAttemptLimit);
+  const outcome =
+    value.outcome === "started" ||
+    value.outcome === "failed" ||
+    value.outcome === "succeeded" ||
+    value.outcome === "exhausted"
+      ? value.outcome
+      : undefined;
+  if (!outcome || retryAttempt <= 0 || retryAttemptLimit <= 0) {
+    return undefined;
+  }
+  return {
+    timestamp: toNonNegativeInt(value.timestamp),
+    ...(typeof value.nodeId === "string" ? { nodeId: value.nodeId } : {}),
+    ...(typeof value.moduleId === "string" ? { moduleId: value.moduleId } : {}),
+    ...(value.nodeIndex !== undefined
+      ? { nodeIndex: toNonNegativeInt(value.nodeIndex) }
+      : {}),
+    retryAttempt,
+    retryAttemptLimit,
+    outcome,
+  };
+}
+
 export function toGraphRunOverviewRecordV1(
   value: unknown,
 ): GraphRunOverviewRecordV1 | null {
@@ -416,6 +455,9 @@ export function toGraphRunOverviewRecordV1(
     ...(cloneWaitingUserSummary(value.waitingUser)
       ? { waitingUser: cloneWaitingUserSummary(value.waitingUser) }
       : {}),
+    ...(cloneRetrySummary(value.latestRetry)
+      ? { latestRetry: cloneRetrySummary(value.latestRetry) }
+      : {}),
     eventCount: toNonNegativeInt(value.eventCount),
     updatedAt: toNonNegativeInt(value.updatedAt),
   };
@@ -516,6 +558,9 @@ export function toGraphRunEventRecordV1(
       : {}),
     ...(cloneWaitingUserSummary(value.waitingUser)
       ? { waitingUser: cloneWaitingUserSummary(value.waitingUser) }
+      : {}),
+    ...(cloneRetrySummary(value.retry)
+      ? { retry: cloneRetrySummary(value.retry) }
       : {}),
     ...(typeof value.error === "string" ? { error: value.error } : {}),
     timestamp: toNonNegativeInt(value.timestamp),

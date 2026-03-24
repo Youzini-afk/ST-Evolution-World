@@ -107,6 +107,12 @@
             <span class="ew-workbench__diagnostics-item">
               事件 {{ activeRunSummary.eventCount }}
             </span>
+            <span
+              v-if="activeRunSummary.latestRetry"
+              class="ew-workbench__diagnostics-item"
+            >
+              立即重试 {{ activeRunSummary.latestRetryLabel }}
+            </span>
             <span class="ew-workbench__diagnostics-item">
               阻塞契约
               {{ activeRunSummary.hasBlockingContract ? "存在" : "无" }}
@@ -183,6 +189,14 @@
                   : "无"
               }}
             </span>
+            <span class="ew-workbench__diagnostics-item">
+              retry
+              {{
+                activeRunSummary.latestRetry
+                  ? activeRunSummary.latestRetryLabel
+                  : "未触发"
+              }}
+            </span>
             <span
               class="ew-workbench__diagnostics-reason"
               :data-waiting-user="activeRunSummary.waitingUser ? '1' : '0'"
@@ -254,6 +268,18 @@
             <span class="ew-workbench__diagnostics-item">
               skip_reuse_outputs
               {{ diagnosticsSummary.skipReuseOutputHitCount }}
+            </span>
+            <span
+              v-if="diagnosticsSummary.retryNodeCount > 0"
+              class="ew-workbench__diagnostics-item"
+            >
+              retry used {{ diagnosticsSummary.retryNodeCount }}
+            </span>
+            <span
+              v-if="diagnosticsSummary.retryExhaustedNodeCount > 0"
+              class="ew-workbench__diagnostics-item"
+            >
+              retry exhausted {{ diagnosticsSummary.retryExhaustedNodeCount }}
             </span>
             <span
               v-if="diagnosticsSummary.controlFlowSummary"
@@ -564,6 +590,9 @@
                 </div>
                 <div class="ew-workbench__module-explain-text">
                   {{ selectedNodeDiagnostics.skipReuseOutputsFactLabel }}
+                </div>
+                <div class="ew-workbench__module-explain-text">
+                  {{ selectedNodeDiagnostics.retryLabel }}
                 </div>
               </div>
               <div

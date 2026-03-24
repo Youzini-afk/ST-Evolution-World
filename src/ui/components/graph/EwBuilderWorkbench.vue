@@ -532,6 +532,13 @@
                 {{ visibleActiveRunSummary.phaseLabel }}
               </span>
               <span
+                v-if="visibleActiveRunSummary.latestRetry"
+                class="ew-builder-workbench__chip"
+              >
+                重试
+                {{ visibleActiveRunSummary.latestRetry.retryAttempt }}/{{ visibleActiveRunSummary.latestRetry.retryAttemptLimit }}
+              </span>
+              <span
                 v-if="visibleActiveRunSummary.controlFlowSummary"
                 class="ew-builder-workbench__chip"
               >
@@ -568,6 +575,10 @@
               <span>waiting_user</span>
               <strong>{{ visibleActiveRunSummary.waitingUserLabel }}</strong>
             </div>
+            <div class="ew-builder-workbench__kv">
+              <span>立即重试</span>
+              <strong>{{ visibleActiveRunSummary.latestRetryLabel }}</strong>
+            </div>
             <div
               v-if="visibleActiveRunSummary.controlFlowSummary"
               class="ew-builder-workbench__kv"
@@ -599,6 +610,19 @@
                 指纹 {{ visibleDiagnosticsSummary.compileFingerprintShort }}
               </span>
               <span
+                v-if="visibleDiagnosticsSummary.retryNodeCount > 0"
+                class="ew-builder-workbench__chip"
+              >
+                retry used {{ visibleDiagnosticsSummary.retryNodeCount }}
+              </span>
+              <span
+                v-if="visibleDiagnosticsSummary.retryExhaustedNodeCount > 0"
+                class="ew-builder-workbench__chip"
+              >
+                retry exhausted
+                {{ visibleDiagnosticsSummary.retryExhaustedNodeCount }}
+              </span>
+              <span
                 v-if="visibleDiagnosticsSummary.controlFlowSummary"
                 class="ew-builder-workbench__chip"
               >
@@ -618,6 +642,16 @@
               <span>Reuse eligible</span>
               <strong>{{
                 visibleDiagnosticsSummary.reuseEligibleNodeCount
+              }}</strong>
+            </div>
+            <div class="ew-builder-workbench__kv">
+              <span>触发重试节点</span>
+              <strong>{{ visibleDiagnosticsSummary.retryNodeCount }}</strong>
+            </div>
+            <div class="ew-builder-workbench__kv">
+              <span>重试耗尽节点</span>
+              <strong>{{
+                visibleDiagnosticsSummary.retryExhaustedNodeCount
               }}</strong>
             </div>
             <div
@@ -775,6 +809,10 @@
               <strong>{{
                 selectedNodeDiagnostics.skipReuseOutputsFactLabel
               }}</strong>
+            </div>
+            <div class="ew-builder-workbench__kv">
+              <span>立即重试</span>
+              <strong>{{ selectedNodeDiagnostics.retryLabel }}</strong>
             </div>
             <div
               v-if="selectedNodeDiagnostics.hasControlFlowExplain"

@@ -3621,17 +3621,57 @@ async function runValidationSpec(): Promise<void> {
   const transientProbeResult = transientProbeRetryResult.moduleResults.find(
     (result) => result.nodeId === "probe_retry",
   );
+  const transientProbeRetrySnapshot = createGraphRunSnapshotEnvelope({
+    overview: transientProbeRetryResult.runArtifact,
+    events: transientProbeRetryResult.runEvents,
+    diagnosticsOverview: transientProbeRetryResult.diagnosticsOverview,
+  });
+  const transientProbeRetryRoundtrip = readGraphRunSnapshotEnvelope({
+    graph_run_snapshot: transientProbeRetrySnapshot,
+  });
   assert(
     transientProbeRetryResult.ok &&
       transientProbeResult?.status === "ok" &&
       transientProbeResult.outputs.value_out === "retry payload" &&
       transientProbeResult.retryAttempt === 2 &&
       transientProbeResult.retryAttemptLimit === 2 &&
+      transientProbeRetryResult.runArtifact?.latestRetry?.outcome ===
+        "succeeded" &&
+      transientProbeRetryResult.runEvents.some(
+        (event) =>
+          event.type === "retry_attempt_failed" &&
+          event.retry?.retryAttempt === 1 &&
+          event.retry?.retryAttemptLimit === 2,
+      ) &&
+      transientProbeRetryResult.runEvents.some(
+        (event) =>
+          event.type === "retry_attempt_started" &&
+          event.retry?.retryAttempt === 2 &&
+          event.retry?.retryAttemptLimit === 2,
+      ) &&
+      transientProbeRetryResult.runEvents.some(
+        (event) =>
+          event.type === "retry_attempt_succeeded" &&
+          event.retry?.retryAttempt === 2 &&
+          event.retry?.retryAttemptLimit === 2,
+      ) &&
       transientProbeRetryResult.runEvents.some(
         (event) =>
           event.type === "heartbeat" &&
           event.heartbeat?.message?.includes("准备立即重试"),
-      ),
+      ) &&
+      transientProbeRetrySnapshot?.snapshot.overview.latestRetry?.outcome ===
+        "succeeded" &&
+      transientProbeRetrySnapshot?.snapshot.events.some(
+        (event) =>
+          event.type === "retry_attempt_started" &&
+          event.retry?.retryAttempt === 2,
+      ) &&
+      transientProbeRetryRoundtrip?.snapshot.overview.latestRetry?.outcome ===
+        "succeeded" &&
+      transientProbeRetryRoundtrip?.snapshot.diagnosticsOverview?.nodeDiagnostics?.find(
+        (node) => node.nodeId === "probe_retry",
+      )?.retryUsed === true,
     `Expected transient probe node to succeed on the second in-run immediate retry attempt. Actual: ${JSON.stringify(transientProbeRetryResult)}`,
   );
 

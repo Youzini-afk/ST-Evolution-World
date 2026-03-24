@@ -63,6 +63,7 @@ import type {
   GraphRunManualInputSlotSchema,
   GraphRunNonContinuableReasonKind,
   GraphRunPhase,
+  GraphRunRetrySummary,
   GraphRunRecoveryEligibilityFact,
   GraphRunRecoveryEvidenceFact,
   GraphRunRecoveryPrerequisiteFact,
@@ -1106,6 +1107,25 @@ function createCheckpointCandidate(params: {
   };
 }
 
+function createRetrySummary(params: {
+  nodeId: string;
+  moduleId: string;
+  nodeIndex: number;
+  retryAttempt: number;
+  retryAttemptLimit: number;
+  outcome: GraphRunRetrySummary["outcome"];
+}): GraphRunRetrySummary {
+  return {
+    timestamp: Date.now(),
+    nodeId: params.nodeId,
+    moduleId: params.moduleId,
+    nodeIndex: params.nodeIndex,
+    retryAttempt: params.retryAttempt,
+    retryAttemptLimit: params.retryAttemptLimit,
+    outcome: params.outcome,
+  };
+}
+
 function createGraphRunArtifact(params: {
   runId: string;
   graphId: string;
@@ -1122,6 +1142,7 @@ function createGraphRunArtifact(params: {
   latestHeartbeat?: GraphRunArtifact["latestHeartbeat"];
   latestPartialOutput?: GraphRunArtifact["latestPartialOutput"];
   waitingUser?: GraphRunArtifact["waitingUser"];
+  latestRetry?: GraphRunArtifact["latestRetry"];
   eventCount: number;
 }): GraphRunArtifact {
   const readModel = deriveRunReadModel({
@@ -1162,6 +1183,7 @@ function createGraphRunArtifact(params: {
     latestHeartbeat: params.latestHeartbeat,
     latestPartialOutput: params.latestPartialOutput,
     waitingUser: params.waitingUser,
+    latestRetry: params.latestRetry,
     eventCount: params.eventCount,
     updatedAt: Date.now(),
   };
@@ -1184,6 +1206,7 @@ function buildRunObservation(params: {
   latestHeartbeat?: GraphRunArtifact["latestHeartbeat"];
   latestPartialOutput?: GraphRunArtifact["latestPartialOutput"];
   waitingUser?: GraphRunArtifact["waitingUser"];
+  latestRetry?: GraphRunArtifact["latestRetry"];
   eventCount: number;
 }): Pick<
   GraphExecutionResult,
@@ -1217,6 +1240,7 @@ function buildRunObservation(params: {
       latestHeartbeat: params.latestHeartbeat,
       latestPartialOutput: params.latestPartialOutput,
       waitingUser: params.waitingUser,
+      latestRetry: params.latestRetry,
       eventCount: params.eventCount,
     }),
     checkpointCandidate: params.checkpointCandidate,
@@ -1778,7 +1802,15 @@ function createNodeDiagnosticsView(trace: {
   cacheKeyFacts?: GraphNodeCacheKeyFacts;
   reuseVerdict?: GraphNodeReuseVerdict;
   executionDecision?: GraphNodeExecutionDecision;
+  status?: ModuleExecutionResult["status"] | "skipped";
+  retryAttempt?: number;
+  retryAttemptLimit?: number;
 }): GraphNodeDiagnosticsView {
+  const retryAttemptLimit = Math.max(
+    0,
+    Math.trunc(Number(trace.retryAttemptLimit) || 0),
+  );
+  const retryAttempt = Math.max(0, Math.trunc(Number(trace.retryAttempt) || 0));
   return {
     nodeId: trace.nodeId,
     moduleId: trace.moduleId,
@@ -1815,6 +1847,15 @@ function createNodeDiagnosticsView(trace: {
     skipReuseOutputsHit:
       trace.executionDecision?.reason === "skip_reuse_outputs" &&
       trace.executionDecision.shouldSkip === true,
+    ...(retryAttemptLimit > 1
+      ? {
+          retryAttempt,
+          retryAttemptLimit,
+          retryUsed: retryAttempt > 1,
+          retryExhausted:
+            trace.status === "error" && retryAttempt === retryAttemptLimit,
+        }
+      : {}),
   };
 }
 
@@ -1849,6 +1890,9 @@ export function buildGraphRunDiagnosticsOverview(
       cacheKeyFacts: moduleResult.cacheKeyFacts,
       reuseVerdict: moduleResult.reuseVerdict,
       executionDecision: moduleResult.executionDecision,
+      status: moduleResult.status,
+      retryAttempt: moduleResult.retryAttempt,
+      retryAttemptLimit: moduleResult.retryAttemptLimit,
     }));
 
   return {
@@ -2265,6 +2309,7 @@ export async function executeCompiledGraph(
       heartbeat?: GraphRunEvent["heartbeat"];
       partialOutput?: GraphRunEvent["partialOutput"];
       waitingUser?: GraphRunEvent["waitingUser"];
+      retry?: GraphRunEvent["retry"];
       error?: string;
     },
   ) => {
@@ -2279,6 +2324,7 @@ export async function executeCompiledGraph(
       latestHeartbeat: params.heartbeat,
       latestPartialOutput: params.partialOutput,
       waitingUser: params.waitingUser,
+      latestRetry: params.retry,
       eventCount: runEvents.length + 1,
     });
     const event: GraphRunEvent = {
@@ -2322,6 +2368,7 @@ export async function executeCompiledGraph(
       ...(params.heartbeat ? { heartbeat: params.heartbeat } : {}),
       ...(params.partialOutput ? { partialOutput: params.partialOutput } : {}),
       ...(params.waitingUser ? { waitingUser: params.waitingUser } : {}),
+      ...(params.retry ? { retry: params.retry } : {}),
       ...(params.error ? { error: params.error } : {}),
       artifact,
     };
@@ -2610,6 +2657,21 @@ export async function executeCompiledGraph(
     for (let retryAttempt = 1; retryAttempt <= retryAttemptLimit; retryAttempt++) {
       retryAttemptUsed = retryAttempt;
       if (retryAttempt > 1) {
+        const retryStarted = createRetrySummary({
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          retryAttempt,
+          retryAttemptLimit,
+          outcome: "started",
+        });
+        emitNodeEvent("retry_attempt_started", {
+          status: "running",
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          retry: retryStarted,
+        });
         emitNodeEvent("heartbeat", {
           status: "running",
           nodeId: node.id,
@@ -2643,6 +2705,20 @@ export async function executeCompiledGraph(
         finalFailedAt =
           error instanceof NodeExecutionError ? error.failedAt : "handler";
         if (retryAttempt < retryAttemptLimit) {
+          emitNodeEvent("retry_attempt_failed", {
+            status: "running",
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            retry: createRetrySummary({
+              nodeId: node.id,
+              moduleId: node.moduleId,
+              nodeIndex: planNode.order,
+              retryAttempt,
+              retryAttemptLimit,
+              outcome: "failed",
+            }),
+          });
           emitNodeEvent("heartbeat", {
             status: "running",
             nodeId: node.id,
@@ -2705,6 +2781,23 @@ export async function executeCompiledGraph(
                 ? effectiveNode.config.waitingUserReason.trim()
                 : `节点 ${node.id} 进入 waiting_user 观测态`,
           },
+        });
+      }
+
+      if (retryAttemptLimit > 1 && retryAttemptUsed > 1) {
+        emitNodeEvent("retry_attempt_succeeded", {
+          status: "running",
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          retry: createRetrySummary({
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            retryAttempt: retryAttemptUsed,
+            retryAttemptLimit,
+            outcome: "succeeded",
+          }),
         });
       }
 
@@ -2800,6 +2893,22 @@ export async function executeCompiledGraph(
       const errorMsg = finalErrorMsg ?? "unknown execution failure";
       const elapsedMs = Date.now() - nodeStart;
       const failedAt = finalFailedAt;
+      if (retryAttemptLimit > 1) {
+        emitNodeEvent("retry_exhausted", {
+          status: "running",
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          retry: createRetrySummary({
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            retryAttempt: retryAttemptUsed,
+            retryAttemptLimit,
+            outcome: "exhausted",
+          }),
+        });
+      }
       moduleResults.push({
         nodeId: node.id,
         moduleId: node.moduleId,
@@ -2948,6 +3057,7 @@ export async function executeGraph(
   let latestHeartbeat: GraphRunArtifact["latestHeartbeat"];
   let latestPartialOutput: GraphRunArtifact["latestPartialOutput"];
   let waitingUser: GraphRunArtifact["waitingUser"];
+  let latestRetry: GraphRunArtifact["latestRetry"];
 
   const buildOverview = (params: {
     runState: GraphExecutionResult["runState"];
@@ -2988,6 +3098,9 @@ export async function executeGraph(
         cacheKeyFacts: moduleResult.cacheKeyFacts,
         reuseVerdict: moduleResult.reuseVerdict,
         executionDecision: moduleResult.executionDecision,
+        status: moduleResult.status,
+        retryAttempt: moduleResult.retryAttempt,
+        retryAttemptLimit: moduleResult.retryAttemptLimit,
       })) ??
       [];
 
@@ -3083,6 +3196,7 @@ export async function executeGraph(
       latestHeartbeat,
       latestPartialOutput,
       waitingUser,
+      latestRetry,
       eventCount: runEvents.length + 1,
     });
     const runArtifact = observation.runArtifact;
@@ -3244,6 +3358,7 @@ export async function executeGraph(
       latestHeartbeat,
       latestPartialOutput,
       waitingUser,
+      latestRetry,
       eventCount: runEvents.length + 1,
     });
     const compileCheckpointArtifact = compileCheckpointObservation.runArtifact;
@@ -3373,6 +3488,10 @@ export async function executeGraph(
       if (lastWaitingUserEvent?.waitingUser) {
         waitingUser = lastWaitingUserEvent.waitingUser;
       }
+      const lastRetryEvent = reversedEvents.find((event) => event.retry);
+      if (lastRetryEvent?.retry) {
+        latestRetry = lastRetryEvent.retry;
+      }
     }
     checkpointCandidate = execution.checkpointCandidate;
     trace.push(executeTimer.finish("ok"));
@@ -3433,6 +3552,7 @@ export async function executeGraph(
         latestHeartbeat,
         latestPartialOutput,
         waitingUser,
+        latestRetry,
         eventCount: runEvents.length,
       }),
       runEvents,
@@ -3488,6 +3608,10 @@ export async function executeGraph(
       );
       if (lastWaitingUserEvent?.waitingUser) {
         waitingUser = lastWaitingUserEvent.waitingUser;
+      }
+      const lastRetryEvent = reversedFailureEvents.find((event) => event.retry);
+      if (lastRetryEvent?.retry) {
+        latestRetry = lastRetryEvent.retry;
       }
     }
     const combinedNodeTraces = [...nodeTraces, ...executeNodeTraces];
@@ -3571,6 +3695,7 @@ export async function executeGraph(
         latestHeartbeat,
         latestPartialOutput,
         waitingUser,
+        latestRetry,
         eventCount: runEvents.length,
       }),
       runEvents,
