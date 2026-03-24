@@ -154,6 +154,7 @@ export interface RegistryResolveResult {
 
 const _descriptors = new Map<string, NodeHandlerDescriptor>();
 let _initialized = false;
+const transientProbeAttemptByExecutionKey = new Map<string, number>();
 
 function normalizeCapability(
   capability?: WorkbenchCapability,
@@ -986,6 +987,42 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
   });
 
   registerNodeHandler({
+    moduleId: "cmp_transient_probe",
+    handlerId: "cmp_transient_probe",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ node, inputs, context }) => {
+      const failAttempts = Math.max(
+        0,
+        Math.trunc(Number(node.config.fail_attempts_before_success) || 0),
+      );
+      const failureKey =
+        typeof node.config.failure_key === "string" &&
+        node.config.failure_key.trim()
+          ? node.config.failure_key.trim()
+          : "default";
+      const attemptKey = `${context.requestId}:${node.id}:${failureKey}`;
+      const nextAttempt =
+        (transientProbeAttemptByExecutionKey.get(attemptKey) ?? 0) + 1;
+      transientProbeAttemptByExecutionKey.set(attemptKey, nextAttempt);
+      if (nextAttempt <= failAttempts) {
+        throw new Error(
+          typeof node.config.failure_message === "string" &&
+            node.config.failure_message.trim()
+            ? node.config.failure_message.trim()
+            : "transient probe failure",
+        );
+      }
+      return {
+        outputs: {
+          value_out: inputs.value ?? null,
+        },
+        handlerId: "cmp_transient_probe",
+      };
+    },
+  });
+
+  registerNodeHandler({
     moduleId: "ctl_if",
     handlerId: "ctl_if",
     kind: "builtin",
@@ -1308,4 +1345,5 @@ export function ensureBuiltinHandlers(modules: RuntimeImplModules): void {
 export function _resetRegistryForTesting(): void {
   _descriptors.clear();
   _initialized = false;
+  transientProbeAttemptByExecutionKey.clear();
 }

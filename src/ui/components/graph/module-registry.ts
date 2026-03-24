@@ -995,6 +995,60 @@ const COMPOSE_MODULES: ModuleBlueprint[] = [
       },
     ],
   },
+  {
+    moduleId: "cmp_transient_probe",
+    label: "瞬态失败探针",
+    category: "compose",
+    color: "#10b981",
+    icon: "⏳",
+    description:
+      "用于受控测试即时重试语义：在前 N 次尝试里故意失败，之后透传输入值成功返回。",
+    ports: [
+      {
+        id: "value",
+        label: "输入值",
+        direction: "in",
+        dataType: "any",
+        optional: true,
+      },
+      {
+        id: "value_out",
+        label: "探针输出",
+        direction: "out",
+        dataType: "any",
+      },
+    ],
+    defaultConfig: {
+      fail_attempts_before_success: 1,
+      failure_key: "default",
+      failure_message: "transient probe failure",
+    },
+    configSchema: [
+      {
+        key: "fail_attempts_before_success",
+        label: "失败次数",
+        type: "number",
+        min: 0,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "前 N 次执行会故意失败，第 N+1 次开始成功。",
+      },
+      {
+        key: "failure_key",
+        label: "失败作用域键",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "用于区分同一 request 内不同探针实例的失败计数。",
+      },
+      {
+        key: "failure_message",
+        label: "失败消息",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "探针在故意失败时抛出的错误消息。",
+      },
+    ],
+  },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -1582,6 +1636,7 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
     defaultConfig: {
       negate: false,
       join_mode: "any",
+      retry_attempts: 1,
     },
     compositeKind: "fragment",
     retryContract: {
@@ -1603,6 +1658,15 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
         exposeInSimpleMode: false,
         description:
           "any 适合普通两路路由；all 适合后续把占位扩展成并行分支后再汇合。",
+      },
+      {
+        key: "retry_attempts",
+        label: "即时重试次数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "大于 1 时，会把这个片段作为同次运行内的立即重试边界执行。",
       },
     ],
     compositeTemplate: {
@@ -1734,6 +1798,7 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       case_b: "beta",
       case_sensitive: false,
       trim_whitespace: true,
+      retry_attempts: 1,
     },
     compositeKind: "fragment",
     retryContract: {
@@ -1767,6 +1832,15 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
         type: "boolean",
         exposeInSimpleMode: false,
         description: "启用后内部比较节点会 trim 路由键和值。",
+      },
+      {
+        key: "retry_attempts",
+        label: "即时重试次数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "大于 1 时，会把这个片段作为同次运行内的立即重试边界执行。",
       },
     ],
     compositeTemplate: {
@@ -1933,11 +2007,24 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       textIn("text_in", "输入文本"),
       textOut("text_out", "清洗结果"),
     ],
-    defaultConfig: {},
+    defaultConfig: {
+      retry_attempts: 1,
+    },
     compositeKind: "fragment",
     retryContract: {
       immediateRetryCandidate: true,
     },
+    configSchema: [
+      {
+        key: "retry_attempts",
+        label: "即时重试次数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "大于 1 时，会把这个片段作为同次运行内的立即重试边界执行。",
+      },
+    ],
     compositeTemplate: {
       nodes: [
         compositeNode("strip_mvu", "flt_mvu_strip", 0, 0, {
@@ -1998,6 +2085,7 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
     defaultConfig: {
       separator: "\n",
       skip_empty: true,
+      retry_attempts: 1,
     },
     compositeKind: "fragment",
     retryContract: {
@@ -2017,6 +2105,15 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
         type: "boolean",
         exposeInSimpleMode: false,
         description: "启用后内部合流节点会跳过空文本 lane。",
+      },
+      {
+        key: "retry_attempts",
+        label: "即时重试次数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "大于 1 时，会把这个片段作为同次运行内的立即重试边界执行。",
       },
     ],
     compositeTemplate: {
@@ -2888,6 +2985,14 @@ function resolveCompositeTemplateNodeLabel(node: { moduleId: string; config: Rec
   return blueprint?.label ?? node.moduleId;
 }
 
+function toRetryAttemptLimit(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 1;
+  }
+  return Math.max(1, Math.trunc(numeric));
+}
+
 function resolveCompositeTemplateContractTarget(params: {
   templateNodes: NonNullable<ModuleBlueprint["compositeTemplate"]>["nodes"];
   bindingRef: CompositeTemplatePortBindingRef;
@@ -3045,6 +3150,12 @@ export function instantiateCompositeTemplate(params: {
   const idSuffix = `${Date.now().toString(36)}_${Math.random()
     .toString(36)
     .slice(2, 7)}`;
+  const retryAttemptLimit =
+    blueprint.retryContract?.immediateRetryCandidate === true
+      ? toRetryAttemptLimit(effectiveExposedConfig.retry_attempts)
+      : 1;
+  const retryBoundaryId =
+    retryAttemptLimit > 1 ? `${params.moduleId}:${idSuffix}:retry` : undefined;
   const nodeIdMap = new Map<string, string>();
 
   const nodes = template.nodes.map((node) => {
@@ -3058,7 +3169,19 @@ export function instantiateCompositeTemplate(params: {
         y: origin.y + (node.position.y - minY),
       },
       config: resolveModuleConfigWithDefaults(node.moduleId, node.config),
-      runtimeMeta: node.runtimeMeta ? { ...node.runtimeMeta } : undefined,
+      runtimeMeta:
+        retryBoundaryId || node.runtimeMeta
+          ? {
+              ...(node.runtimeMeta ? { ...node.runtimeMeta } : {}),
+              ...(retryBoundaryId
+                ? {
+                    retryBoundaryId,
+                    retryBoundaryModuleId: params.moduleId,
+                    retryAttemptLimit,
+                  }
+                : {}),
+            }
+          : undefined,
     };
   });
 

@@ -2375,6 +2375,10 @@ export async function executeCompiledGraph(
       ...node,
       config: resolveModuleConfigWithDefaults(node.moduleId, node.config),
     };
+    const retryAttemptLimit = Math.max(
+      1,
+      Math.trunc(Number(effectiveNode.runtimeMeta?.retryAttemptLimit) || 0),
+    );
 
     const nodeStart = Date.now();
     const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
@@ -2540,6 +2544,12 @@ export async function executeCompiledGraph(
         executionDecision,
         hostWriteSummary: planNode.hostWriteSummary,
         hostCommitSummary: planNode.hostCommitSummary,
+        ...(retryAttemptLimit > 1
+          ? {
+              retryAttempt: 1,
+              retryAttemptLimit,
+            }
+          : {}),
       });
       nodeTraces.push({
         ...nodeTraceBase,
@@ -2549,6 +2559,12 @@ export async function executeCompiledGraph(
         durationMs: 0,
         completedAt: nodeStart,
         isFallback: false,
+        ...(retryAttemptLimit > 1
+          ? {
+              retryAttempt: 1,
+              retryAttemptLimit,
+            }
+          : {}),
       });
       checkpointCandidate = createCheckpointCandidate({
         runId: context.requestId,
@@ -2586,17 +2602,66 @@ export async function executeCompiledGraph(
       graph_id: graph.id,
     });
 
-    try {
-      const dispatchResult = await dispatchNodeExecution({
-        graph,
-        planNode,
-        node: effectiveNode,
-        inputs,
-        inputSources,
-        configuredInputEdgeCounts,
-        context,
-        modules: runtimeModules,
-      });
+    let dispatchResult: NodeHandlerResult | null = null;
+    let finalErrorMsg: string | null = null;
+    let finalFailedAt: "dispatch" | "handler" = "handler";
+    let retryAttemptUsed = 1;
+
+    for (let retryAttempt = 1; retryAttempt <= retryAttemptLimit; retryAttempt++) {
+      retryAttemptUsed = retryAttempt;
+      if (retryAttempt > 1) {
+        emitNodeEvent("heartbeat", {
+          status: "running",
+          nodeId: node.id,
+          moduleId: node.moduleId,
+          nodeIndex: planNode.order,
+          heartbeat: {
+            timestamp: Date.now(),
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            message: `节点 ${node.id} 正在执行第 ${retryAttempt}/${retryAttemptLimit} 次尝试`,
+          },
+        });
+      }
+
+      try {
+        dispatchResult = await dispatchNodeExecution({
+          graph,
+          planNode,
+          node: effectiveNode,
+          inputs,
+          inputSources,
+          configuredInputEdgeCounts,
+          context,
+          modules: runtimeModules,
+        });
+        finalErrorMsg = null;
+        break;
+      } catch (error) {
+        finalErrorMsg = error instanceof Error ? error.message : String(error);
+        finalFailedAt =
+          error instanceof NodeExecutionError ? error.failedAt : "handler";
+        if (retryAttempt < retryAttemptLimit) {
+          emitNodeEvent("heartbeat", {
+            status: "running",
+            nodeId: node.id,
+            moduleId: node.moduleId,
+            nodeIndex: planNode.order,
+            heartbeat: {
+              timestamp: Date.now(),
+              nodeId: node.id,
+              moduleId: node.moduleId,
+              nodeIndex: planNode.order,
+              message: `节点 ${node.id} 第 ${retryAttempt}/${retryAttemptLimit} 次尝试失败，准备立即重试`,
+            },
+          });
+          continue;
+        }
+      }
+    }
+
+    if (dispatchResult) {
       const outputs = dispatchResult.outputs;
       nodeOutputs.set(node.id, createInternalNodeOutputs(outputs));
 
@@ -2677,6 +2742,12 @@ export async function executeCompiledGraph(
         hostCommitSummary: planNode.hostCommitSummary,
         hostWrites: nodeHostWrites,
         hostCommitContracts: nodeHostCommitContracts,
+        ...(retryAttemptLimit > 1
+          ? {
+              retryAttempt: retryAttemptUsed,
+              retryAttemptLimit,
+            }
+          : {}),
       });
       const resultCapability = dispatchResult.capability ?? planNode.capability;
       nodeTraces.push({
@@ -2695,6 +2766,12 @@ export async function executeCompiledGraph(
         isFallback: dispatchResult.isFallback === true,
         hostWrites: nodeHostWrites,
         hostCommitContracts: nodeHostCommitContracts,
+        ...(retryAttemptLimit > 1
+          ? {
+              retryAttempt: retryAttemptUsed,
+              retryAttemptLimit,
+            }
+          : {}),
       });
       checkpointCandidate = createCheckpointCandidate({
         runId: context.requestId,
@@ -2719,11 +2796,10 @@ export async function executeCompiledGraph(
         nodeIndex: planNode.order,
         checkpoint: checkpointCandidate,
       });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+    } else {
+      const errorMsg = finalErrorMsg ?? "unknown execution failure";
       const elapsedMs = Date.now() - nodeStart;
-      const failedAt =
-        error instanceof NodeExecutionError ? error.failedAt : "handler";
+      const failedAt = finalFailedAt;
       moduleResults.push({
         nodeId: node.id,
         moduleId: node.moduleId,
@@ -2745,6 +2821,12 @@ export async function executeCompiledGraph(
         executionDecision,
         hostWriteSummary: planNode.hostWriteSummary,
         hostCommitSummary: planNode.hostCommitSummary,
+        ...(retryAttemptLimit > 1
+          ? {
+              retryAttempt: retryAttemptUsed,
+              retryAttemptLimit,
+            }
+          : {}),
       });
       nodeTraces.push({
         ...nodeTraceBase,
@@ -2756,6 +2838,12 @@ export async function executeCompiledGraph(
         error: errorMsg,
         failedAt,
         isFallback: false,
+        ...(retryAttemptLimit > 1
+          ? {
+              retryAttempt: retryAttemptUsed,
+              retryAttemptLimit,
+            }
+          : {}),
       });
       emitNodeEvent("node_failed", {
         status: "failed",
@@ -3837,6 +3925,16 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
         metadataSummary?.semantic.capability === "writes_host" ||
         metadataSummary?.semantic.hostWriteHint
       ) {
+        const retryAttemptLimit = Math.max(
+          1,
+          Math.trunc(Number(node.runtimeMeta?.retryAttemptLimit) || 0),
+        );
+        if (retryAttemptLimit > 1) {
+          errors.push({
+            nodeId: node.id,
+            message: `${formatNodeRef(node, bp.label)} 当前被标记为即时重试边界节点，但它包含宿主写入语义；writes_host 节点不能进入 retry-safe 立即重试范围。`,
+          });
+        }
         if (isHostWriteNodeMisplaced(graph, node)) {
           const hostWriteLabel =
             explain?.diagnostics.hostWrite ??

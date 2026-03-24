@@ -1788,6 +1788,94 @@ function makeParallelTextFanInFragmentGraph(
   };
 }
 
+function makeTransientProbeRetryGraph(): WorkbenchGraph {
+  return {
+    id: "graph_transient_probe_retry",
+    name: "Transient Probe Retry Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "probe_retry",
+        moduleId: "cmp_transient_probe",
+        position: { x: 240, y: 0 },
+        config: {
+          fail_attempts_before_success: 1,
+          failure_key: "retry_graph",
+          failure_message: "probe retry expected failure",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "retry_probe_boundary",
+          retryBoundaryModuleId: "manual_retry_probe",
+          retryAttemptLimit: 2,
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "edge_retry_probe_value",
+        source: "src_text",
+        sourcePort: "text",
+        target: "probe_retry",
+        targetPort: "value",
+      },
+    ],
+  };
+}
+
+function makeUnsafeHostRetryGraph(): WorkbenchGraph {
+  return {
+    id: "graph_unsafe_host_retry",
+    name: "Unsafe Host Retry Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "out_reply",
+        moduleId: "out_reply_inject",
+        position: { x: 240, y: 0 },
+        config: {},
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "unsafe_host_retry",
+          retryBoundaryModuleId: "unsafe_host_retry",
+          retryAttemptLimit: 2,
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "edge_src_to_reply",
+        source: "src_text",
+        sourcePort: "text",
+        target: "out_reply",
+        targetPort: "instruction",
+      },
+    ],
+  };
+}
+
 function makeOptionalMainTakeoverGraph(
   graph: WorkbenchGraph = makeBaseGraph(),
 ): WorkbenchGraph {
@@ -2669,6 +2757,12 @@ async function runValidationSpec(): Promise<void> {
   );
   assertNoMessage(hostWriteMisplacedValidation.errors, "host-write 提示");
 
+  const unsafeHostRetryValidation = validateGraph(makeUnsafeHostRetryGraph());
+  assertHasMessage(
+    unsafeHostRetryValidation.errors,
+    "writes_host 节点不能进入 retry-safe 立即重试范围",
+  );
+
   const defaultBackfilledConfigGraph = makeBaseGraph();
   defaultBackfilledConfigGraph.nodes.push({
     id: "reply_output_default_backfilled",
@@ -3508,6 +3602,37 @@ async function runValidationSpec(): Promise<void> {
         parallelTextFanInFixture.nodeIds.output
       ] === undefined,
     `Expected parallel text fan-in fragment to keep fan-in output inactive when the shared activation is not selected. Actual: ${JSON.stringify(parallelTextFanInInactiveResult)}`,
+  );
+
+  const transientProbeRetryGraph = makeTransientProbeRetryGraph();
+  const transientProbeRetryValidation = validateGraph(transientProbeRetryGraph);
+  assert(
+    transientProbeRetryValidation.errors.length === 0,
+    `Expected transient probe retry graph fixture to validate. Actual: ${JSON.stringify(transientProbeRetryValidation.errors)}`,
+  );
+  const transientProbeRetryResult = await executeGraph(
+    transientProbeRetryGraph,
+    makeExecutionContext({
+      requestId: "req_transient_retry_graph",
+      userInput: "retry payload",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const transientProbeResult = transientProbeRetryResult.moduleResults.find(
+    (result) => result.nodeId === "probe_retry",
+  );
+  assert(
+    transientProbeRetryResult.ok &&
+      transientProbeResult?.status === "ok" &&
+      transientProbeResult.outputs.value_out === "retry payload" &&
+      transientProbeResult.retryAttempt === 2 &&
+      transientProbeResult.retryAttemptLimit === 2 &&
+      transientProbeRetryResult.runEvents.some(
+        (event) =>
+          event.type === "heartbeat" &&
+          event.heartbeat?.message?.includes("准备立即重试"),
+      ),
+    `Expected transient probe node to succeed on the second in-run immediate retry attempt. Actual: ${JSON.stringify(transientProbeRetryResult)}`,
   );
 
   const controlCompileRunLinkEnvelope =
@@ -10506,6 +10631,9 @@ async function runValidationSpec(): Promise<void> {
   const instantiatedTextCleanupFragment = instantiateCompositeTemplate({
     moduleId: "frag_text_cleanup_stage",
     origin: { x: 240, y: 740 },
+    exposedConfig: {
+      retry_attempts: 2,
+    },
   });
   const instantiatedParallelTextFanInFragment = instantiateCompositeTemplate({
     moduleId: "frag_parallel_text_fan_in",
@@ -10513,6 +10641,7 @@ async function runValidationSpec(): Promise<void> {
     exposedConfig: {
       separator: " | ",
       skip_empty: true,
+      retry_attempts: 2,
     },
   });
   assert(
@@ -10673,6 +10802,12 @@ async function runValidationSpec(): Promise<void> {
           entry.key === "text_out" &&
           entry.source.nodeId.includes("regex_process_"),
       ) &&
+      instantiatedTextCleanupFragment.nodes.every(
+        (node) =>
+          node.runtimeMeta?.retryBoundaryId &&
+          node.runtimeMeta.retryAttemptLimit === 2 &&
+          node.runtimeMeta.retryBoundaryModuleId === "frag_text_cleanup_stage",
+      ) &&
       parallelTextFanInFragment?.compositeKind === "fragment" &&
       parallelTextFanInFragment.retryContract?.immediateRetryCandidate === true &&
       parallelTextFanInFragment.compositeTemplate?.nodes.length === 4 &&
@@ -10717,6 +10852,13 @@ async function runValidationSpec(): Promise<void> {
         (entry) =>
           entry.key === "text_out" &&
           entry.source.nodeId.includes("merge_text_"),
+      ) &&
+      instantiatedParallelTextFanInFragment.nodes.every(
+        (node) =>
+          node.runtimeMeta?.retryBoundaryId &&
+          node.runtimeMeta.retryAttemptLimit === 2 &&
+          node.runtimeMeta.retryBoundaryModuleId ===
+            "frag_parallel_text_fan_in",
       ) &&
       controlBranchRetrySafety?.status === "eligible" &&
       controlBranchRetrySafety.issues.length === 0 &&

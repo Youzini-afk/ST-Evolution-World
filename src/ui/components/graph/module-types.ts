@@ -401,6 +401,9 @@ export interface WorkbenchNode {
     sideEffect?: WorkbenchSideEffectLevel;
     migration?: RuntimeMigrationMeta;
     disabled?: boolean;
+    retryBoundaryId?: string;
+    retryBoundaryModuleId?: string;
+    retryAttemptLimit?: number;
   };
 }
 
@@ -1521,6 +1524,8 @@ export interface GraphNodeTrace {
   hostCommitSummary?: HostCommitSummary;
   hostWrites?: HostWriteDescriptor[];
   hostCommitContracts?: HostCommitContract[];
+  retryAttempt?: number;
+  retryAttemptLimit?: number;
 }
 
 export interface GraphExecutionTrace {
@@ -1967,6 +1972,8 @@ export interface ModuleExecutionResult {
   hostCommitSummary?: HostCommitSummary;
   hostWrites?: HostWriteDescriptor[];
   hostCommitContracts?: HostCommitContract[];
+  retryAttempt?: number;
+  retryAttemptLimit?: number;
 }
 
 export interface GraphRunState {
