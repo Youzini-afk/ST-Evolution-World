@@ -20,6 +20,7 @@ export interface BuilderWorkflowTemplateDefinition {
   tags: readonly string[];
   learningHighlights: readonly string[];
   contractPreview: readonly string[];
+  structurePreview: readonly BuilderWorkflowTemplateStructureItem[];
   templateKind: BuilderTemplateKind;
   featureFamily: BuilderTemplateFeatureFamily;
   featured?: boolean;
@@ -27,6 +28,11 @@ export interface BuilderWorkflowTemplateDefinition {
   recommendedBuilderMode: WorkbenchBuilderMode;
   timing: WorkbenchGraph["timing"];
   createGraph: () => WorkbenchGraph;
+}
+
+export interface BuilderWorkflowTemplateStructureItem {
+  moduleId: string;
+  role: string;
 }
 
 function createGraphId(seed: string): string {
@@ -454,6 +460,7 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "输出 · 无预设输出",
         "元数据 · 保留 builderMode / ownership",
       ],
+      structurePreview: [],
       templateKind: "starter",
       featureFamily: "general",
       ownership: "assistive",
@@ -477,6 +484,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "入口 · user_input.text",
         "处理 · flt_mvu_strip",
         "输出 · reply.instruction",
+      ],
+      structurePreview: [
+        { moduleId: "src_user_input", role: "入口" },
+        { moduleId: "flt_mvu_strip", role: "清洗" },
+        { moduleId: "out_reply_inject", role: "输出" },
       ],
       templateKind: "starter",
       featureFamily: "reply_inject",
@@ -503,6 +515,13 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "所有权 · optional_main_takeover",
         "输出 · reply.instruction",
       ],
+      structurePreview: [
+        { moduleId: "src_chat_history", role: "消息入口" },
+        { moduleId: "cfg_api_preset", role: "API 预设" },
+        { moduleId: "cfg_generation", role: "生成参数" },
+        { moduleId: "exe_llm_call", role: "主执行" },
+        { moduleId: "out_reply_inject", role: "输出" },
+      ],
       templateKind: "starter",
       featureFamily: "main_takeover",
       featured: true,
@@ -528,6 +547,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "处理 · cmp_json_body_build",
         "输出 · floor.result",
       ],
+      structurePreview: [
+        { moduleId: "src_flow_context", role: "上下文入口" },
+        { moduleId: "cmp_json_body_build", role: "结果组装" },
+        { moduleId: "out_floor_bind", role: "楼层输出" },
+      ],
       templateKind: "starter",
       featureFamily: "floor_binding",
       ownership: "assistive",
@@ -551,6 +575,12 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "入口 · flow_context.context",
         "处理 · cmp_request_template.body",
         "输出 · floor.result",
+      ],
+      structurePreview: [
+        { moduleId: "src_flow_context", role: "上下文入口" },
+        { moduleId: "cmp_json_body_build", role: "Body 组装" },
+        { moduleId: "cmp_request_template", role: "模板展开" },
+        { moduleId: "out_floor_bind", role: "楼层输出" },
       ],
       templateKind: "composition_lab",
       featureFamily: "request_template",
@@ -576,6 +606,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "边界 · frag_retry_fallback_text_cleanup",
         "surface · retry_exhausted",
         "输出 · reply.instruction",
+      ],
+      structurePreview: [
+        { moduleId: "src_user_input", role: "入口" },
+        { moduleId: "frag_retry_fallback_text_cleanup", role: "边界" },
+        { moduleId: "out_reply_inject", role: "输出" },
       ],
       templateKind: "starter",
       featureFamily: "retry_fallback",
@@ -603,6 +638,12 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
         "边界 · frag_text_cleanup_stage",
         "读取 · frag_retry_value_fallback.retry_exhausted",
         "输出 · reply.instruction",
+      ],
+      structurePreview: [
+        { moduleId: "src_user_input", role: "入口" },
+        { moduleId: "frag_text_cleanup_stage", role: "成功边界" },
+        { moduleId: "frag_retry_value_fallback", role: "回退路由" },
+        { moduleId: "out_reply_inject", role: "输出" },
       ],
       templateKind: "composition_lab",
       featureFamily: "retry_fallback",

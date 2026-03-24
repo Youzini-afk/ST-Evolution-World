@@ -168,6 +168,21 @@
                   </span>
                 </div>
               </div>
+              <div
+                v-if="template.structurePreview.length > 0"
+                class="ew-builder-workbench__stack"
+              >
+                <div class="ew-builder-workbench__summary-label">内部关键积木</div>
+                <div class="ew-builder-workbench__template-tags">
+                  <span
+                    v-for="item in template.structurePreview"
+                    :key="`${template.id}-structure-${item.role}-${item.moduleId}`"
+                    class="ew-builder-workbench__template-tag"
+                  >
+                    {{ formatTemplateStructureItem(item) }}
+                  </span>
+                </div>
+              </div>
               <div class="ew-builder-workbench__template-tags">
                 <span
                   v-for="tag in template.tags"
@@ -591,6 +606,18 @@
                 </span>
               </div>
             </template>
+            <template v-if="activeTemplateStructurePreview.length > 0">
+              <div class="ew-builder-workbench__summary-label">模板内部关键积木</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="item in activeTemplateStructurePreview"
+                  :key="`active-template-structure-${item.role}-${item.moduleId}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ formatTemplateStructureItem(item) }}
+                </span>
+              </div>
+            </template>
             <p class="ew-builder-workbench__text">
               {{ generationOwnershipHint }}
             </p>
@@ -965,6 +992,7 @@ import { klona } from "klona/full";
 import {
   BUILDER_WORKFLOW_TEMPLATES,
   type BuilderWorkflowTemplateDefinition,
+  type BuilderWorkflowTemplateStructureItem,
   createBlankBuilderGraph,
   findBuilderWorkflowTemplate,
 } from "./builder-templates";
@@ -1231,6 +1259,10 @@ const activeTemplateContractPreview = computed(() => {
   return activeTemplate.value?.contractPreview ?? [];
 });
 
+const activeTemplateStructurePreview = computed(() => {
+  return activeTemplate.value?.structurePreview ?? [];
+});
+
 const isActiveGraphEffectivelyEmpty = computed(() => {
   return Boolean(
     activeGraph.value &&
@@ -1381,6 +1413,16 @@ function formatTemplateFeatureFamily(
 
 function formatBuilderKitFamily(family: BuilderKitFamily): string {
   return KIT_FAMILY_LABELS[family];
+}
+
+function formatTemplateStructureItem(
+  item: BuilderWorkflowTemplateStructureItem,
+): string {
+  try {
+    return `${item.role} · ${getModuleBlueprint(item.moduleId).label}`;
+  } catch {
+    return `${item.role} · ${item.moduleId}`;
+  }
 }
 
 function formatCompositeKind(module: ModuleBlueprint): string {

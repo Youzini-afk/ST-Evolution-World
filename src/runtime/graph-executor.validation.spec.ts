@@ -12200,6 +12200,11 @@ async function runValidationSpec(): Promise<void> {
       retryFallbackTemplate.contractPreview.includes(
         "surface · retry_exhausted",
       ) &&
+      retryFallbackTemplate.structurePreview.some(
+        (entry) =>
+          entry.moduleId === "frag_retry_fallback_text_cleanup" &&
+          entry.role === "边界",
+      ) &&
       retryFallbackTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_cleanup" &&
       retryFallbackTemplateGraph?.runtimeMeta?.builderMode === "simple" &&
@@ -12235,6 +12240,16 @@ async function runValidationSpec(): Promise<void> {
       ) &&
       retryFallbackCompositionTemplate.contractPreview.includes(
         "读取 · frag_retry_value_fallback.retry_exhausted",
+      ) &&
+      retryFallbackCompositionTemplate.structurePreview.some(
+        (entry) =>
+          entry.moduleId === "frag_text_cleanup_stage" &&
+          entry.role === "成功边界",
+      ) &&
+      retryFallbackCompositionTemplate.structurePreview.some(
+        (entry) =>
+          entry.moduleId === "frag_retry_value_fallback" &&
+          entry.role === "回退路由",
       ) &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_composition_lab" &&
