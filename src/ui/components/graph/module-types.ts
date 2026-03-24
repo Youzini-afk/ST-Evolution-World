@@ -99,6 +99,19 @@ export type WorkbenchBuilderMode = "simple" | "advanced";
 export type WorkbenchGenerationOwnership =
   | "assistive"
   | "optional_main_takeover";
+export type BuilderKitFamily =
+  | "retry_fallback"
+  | "control_flow"
+  | "workflow_package"
+  | "utility";
+export type BuilderTemplateKind = "starter" | "composition_lab";
+export type BuilderTemplateFeatureFamily =
+  | "general"
+  | "reply_inject"
+  | "main_takeover"
+  | "floor_binding"
+  | "request_template"
+  | "retry_fallback";
 
 export interface RuntimeMigrationMeta {
   from?: string;
@@ -363,6 +376,12 @@ export interface ModuleBlueprint {
   isComposite?: boolean;
   /** For composite modules: builder-facing presentation kind */
   compositeKind?: CompositeModuleKind;
+  /** Optional Builder kit family for grouped discovery surfaces */
+  kitFamily?: BuilderKitFamily;
+  /** Optional Builder-side featured hint for sorting/prominence */
+  featured?: boolean;
+  /** Optional Builder-side recommended mode hint */
+  recommendedBuilderMode?: WorkbenchBuilderMode;
   /** For composite modules: future retry-related static contract */
   retryContract?: CompositeRetryContract;
   /** For composite modules: the pre-wired sub-graph template */

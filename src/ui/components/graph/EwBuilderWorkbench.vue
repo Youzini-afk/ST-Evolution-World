@@ -85,49 +85,77 @@
           先用较大颗粒的起步图把工作流跑起来，再进入底层图继续改。
         </p>
       </div>
-      <div class="ew-builder-workbench__template-grid">
-        <article
-          v-for="template in builderTemplates"
-          :key="template.id"
-          class="ew-builder-workbench__template-card"
-          :data-ownership="template.ownership"
+      <div class="ew-builder-workbench__template-sections">
+        <section
+          v-for="section in templateSections"
+          :key="section.id"
+          class="ew-builder-workbench__template-section"
         >
-          <div class="ew-builder-workbench__chips">
-            <span class="ew-builder-workbench__chip">
-              {{ formatOwnership(template.ownership) }}
-            </span>
-            <span class="ew-builder-workbench__chip">
-              {{ formatBuilderMode(template.recommendedBuilderMode) }}
-            </span>
-            <span class="ew-builder-workbench__chip">
-              {{ formatTiming(template.timing) }}
-            </span>
+          <div class="ew-builder-workbench__template-section-header">
+            <div>
+              <div class="ew-builder-workbench__summary-label">
+                {{ formatTemplateKind(section.kind) }}
+              </div>
+              <strong>{{ section.title }}</strong>
+            </div>
+            <p class="ew-builder-workbench__starter-copy">
+              {{ section.copy }}
+            </p>
           </div>
-          <h4 class="ew-builder-workbench__template-title">
-            {{ template.label }}
-          </h4>
-          <p class="ew-builder-workbench__template-summary">
-            {{ template.summary }}
-          </p>
-          <p class="ew-builder-workbench__template-description">
-            {{ template.description }}
-          </p>
-          <div class="ew-builder-workbench__template-tags">
-            <span
-              v-for="tag in template.tags"
-              :key="`${template.id}-${tag}`"
-              class="ew-builder-workbench__template-tag"
+          <div class="ew-builder-workbench__template-grid">
+            <article
+              v-for="template in section.templates"
+              :key="template.id"
+              class="ew-builder-workbench__template-card"
+              :data-ownership="template.ownership"
             >
-              {{ tag }}
-            </span>
+              <div class="ew-builder-workbench__chips">
+                <span
+                  v-if="template.featured"
+                  class="ew-builder-workbench__chip"
+                >
+                  精选
+                </span>
+                <span class="ew-builder-workbench__chip">
+                  {{ formatTemplateFeatureFamily(template.featureFamily) }}
+                </span>
+                <span class="ew-builder-workbench__chip">
+                  {{ formatOwnership(template.ownership) }}
+                </span>
+                <span class="ew-builder-workbench__chip">
+                  {{ formatBuilderMode(template.recommendedBuilderMode) }}
+                </span>
+                <span class="ew-builder-workbench__chip">
+                  {{ formatTiming(template.timing) }}
+                </span>
+              </div>
+              <h4 class="ew-builder-workbench__template-title">
+                {{ template.label }}
+              </h4>
+              <p class="ew-builder-workbench__template-summary">
+                {{ template.summary }}
+              </p>
+              <p class="ew-builder-workbench__template-description">
+                {{ template.description }}
+              </p>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="tag in template.tags"
+                  :key="`${template.id}-${tag}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ tag }}
+                </span>
+              </div>
+              <button
+                class="ew-builder-workbench__template-action"
+                @click="createGraphFromTemplate(template.id)"
+              >
+                {{ replaceEmptyGraph ? "套用到当前空图" : "新建模板图" }}
+              </button>
+            </article>
           </div>
-          <button
-            class="ew-builder-workbench__template-action"
-            @click="createGraphFromTemplate(template.id)"
-          >
-            {{ replaceEmptyGraph ? "套用到当前空图" : "新建模板图" }}
-          </button>
-        </article>
+        </section>
       </div>
     </section>
 
@@ -155,6 +183,24 @@
             <span class="ew-builder-workbench__chip">
               {{ formatCompositeKind(pkg) }}
             </span>
+            <span
+              v-if="pkg.kitFamily"
+              class="ew-builder-workbench__chip"
+            >
+              {{ formatBuilderKitFamily(pkg.kitFamily) }}
+            </span>
+            <span
+              v-if="pkg.featured"
+              class="ew-builder-workbench__chip"
+            >
+              精选
+            </span>
+            <span
+              v-if="pkg.recommendedBuilderMode"
+              class="ew-builder-workbench__chip"
+            >
+              {{ formatBuilderMode(pkg.recommendedBuilderMode) }}
+            </span>
             <span class="ew-builder-workbench__chip">{{ pkg.category }}</span>
             <span
               v-if="shouldShowCompositeRetry(pkg)"
@@ -169,6 +215,18 @@
           <p class="ew-builder-workbench__template-summary">
             {{ pkg.description }}
           </p>
+          <div
+            v-if="getCompositeLearningLabels(pkg.moduleId).length > 0"
+            class="ew-builder-workbench__template-tags"
+          >
+            <span
+              v-for="label in getCompositeLearningLabels(pkg.moduleId)"
+              :key="`${pkg.moduleId}-learning-${label}`"
+              class="ew-builder-workbench__template-tag"
+            >
+              {{ label }}
+            </span>
+          </div>
 
           <div
             v-if="(pkg.configSchema?.length ?? 0) > 0"
@@ -852,6 +910,7 @@
 import { klona } from "klona/full";
 import {
   BUILDER_WORKFLOW_TEMPLATES,
+  type BuilderWorkflowTemplateDefinition,
   createBlankBuilderGraph,
   findBuilderWorkflowTemplate,
 } from "./builder-templates";
@@ -866,6 +925,9 @@ import {
   instantiateCompositeTemplate,
 } from "./module-registry";
 import type {
+  BuilderKitFamily,
+  BuilderTemplateFeatureFamily,
+  BuilderTemplateKind,
   ModuleBlueprint,
   GraphActiveRunSummaryViewModel,
   GraphNodeDiagnosticsViewModel,
@@ -893,7 +955,6 @@ const activeGraphId = ref(localGraphs.value[0]?.id ?? "");
 const advancedSidebarOpen = ref(true);
 const templateLibraryOpen = ref(true);
 const selectedNodeId = ref<string | null>(null);
-const builderTemplates = BUILDER_WORKFLOW_TEMPLATES;
 const expandedPackageIds = reactive(new Set<string>());
 const packageDrafts = reactive<Record<string, Record<string, any>>>({});
 
@@ -913,6 +974,80 @@ const TIMING_LABELS: Record<WorkbenchGraph["timing"], string> = {
   after_reply: "回复后",
 };
 
+const TEMPLATE_KIND_LABELS: Record<BuilderTemplateKind, string> = {
+  starter: "Quick Start",
+  composition_lab: "Composition Lab",
+};
+
+const TEMPLATE_FEATURE_FAMILY_LABELS: Record<
+  BuilderTemplateFeatureFamily,
+  string
+> = {
+  general: "通用起步",
+  reply_inject: "回复注入",
+  main_takeover: "主生成预备",
+  floor_binding: "结果绑定",
+  request_template: "模板实验",
+  retry_fallback: "Retry / Fallback",
+};
+
+const KIT_FAMILY_LABELS: Record<BuilderKitFamily, string> = {
+  retry_fallback: "Retry / Fallback",
+  control_flow: "Control Flow",
+  workflow_package: "Workflow Package",
+  utility: "Utility",
+};
+
+function compareBuilderModes(
+  left: WorkbenchBuilderMode | undefined,
+  right: WorkbenchBuilderMode | undefined,
+): number {
+  const rank = (mode?: WorkbenchBuilderMode) =>
+    mode === "simple" ? 0 : mode === "advanced" ? 1 : 2;
+  return rank(left) - rank(right);
+}
+
+function sortTemplates(
+  left: BuilderWorkflowTemplateDefinition,
+  right: BuilderWorkflowTemplateDefinition,
+): number {
+  const featuredDiff = Number(right.featured === true) - Number(left.featured === true);
+  if (featuredDiff !== 0) {
+    return featuredDiff;
+  }
+  const modeDiff = compareBuilderModes(
+    left.recommendedBuilderMode,
+    right.recommendedBuilderMode,
+  );
+  if (modeDiff !== 0) {
+    return modeDiff;
+  }
+  return left.label.localeCompare(right.label, "zh-CN");
+}
+
+function sortModulesForBuilder(
+  left: ModuleBlueprint,
+  right: ModuleBlueprint,
+): number {
+  const featuredDiff = Number(right.featured === true) - Number(left.featured === true);
+  if (featuredDiff !== 0) {
+    return featuredDiff;
+  }
+  const modeDiff = compareBuilderModes(
+    left.recommendedBuilderMode,
+    right.recommendedBuilderMode,
+  );
+  if (modeDiff !== 0) {
+    return modeDiff;
+  }
+  const leftEligible = getCompositeRetrySafety(left.moduleId)?.eligible ? 1 : 0;
+  const rightEligible = getCompositeRetrySafety(right.moduleId)?.eligible ? 1 : 0;
+  if (leftEligible !== rightEligible) {
+    return rightEligible - leftEligible;
+  }
+  return left.label.localeCompare(right.label, "zh-CN");
+}
+
 const activeGraph = computed(() =>
   localGraphs.value.find((graph) => graph.id === activeGraphId.value) ?? null,
 );
@@ -920,28 +1055,31 @@ const activeGraph = computed(() =>
 const packageModules = computed<ModuleBlueprint[]>(() =>
   getCompositeModules("package").filter(
     (module) => (module.compositeTemplate?.nodes.length ?? 0) > 0,
-  ),
+  )
+    .slice()
+    .sort(sortModulesForBuilder),
 );
 
 const fragmentModules = computed<ModuleBlueprint[]>(() =>
   getCompositeModules("fragment")
     .filter((module) => (module.compositeTemplate?.nodes.length ?? 0) > 0)
     .slice()
-    .sort((left, right) => {
-      const leftEligible = getCompositeRetrySafety(left.moduleId)?.eligible
-        ? 1
-        : 0;
-      const rightEligible = getCompositeRetrySafety(right.moduleId)?.eligible
-        ? 1
-        : 0;
-      if (leftEligible !== rightEligible) {
-        return rightEligible - leftEligible;
-      }
-      return left.label.localeCompare(right.label, "zh-CN");
-    }),
+    .sort(sortModulesForBuilder),
 );
 
 const compositeGroups = computed(() => {
+  const retryFallbackModules = fragmentModules.value.filter(
+    (module) => module.kitFamily === "retry_fallback",
+  );
+  const controlFlowModules = fragmentModules.value.filter(
+    (module) => module.kitFamily === "control_flow",
+  );
+  const utilityModules = fragmentModules.value.filter(
+    (module) =>
+      !module.kitFamily ||
+      (module.kitFamily !== "retry_fallback" &&
+        module.kitFamily !== "control_flow"),
+  );
   const groups = [
     {
       id: "packages",
@@ -952,15 +1090,63 @@ const compositeGroups = computed(() => {
       modules: packageModules.value,
     },
     {
+      id: "retry_fallback",
+      eyebrow: "Retry / Fallback Kits",
+      title: "重试回退积木",
+      copy:
+        "这些片段专门服务 retry-safe 边界、retry_exhausted 消费和 fallback 输出，是当前最值得优先复用的一组 kits。",
+      modules: retryFallbackModules,
+    },
+    {
+      id: "control_flow",
+      eyebrow: "Control Flow Kits",
+      title: "控制流积木",
+      copy:
+        "这些片段负责 branch / router / parallel / join 相关组合语义，适合作为 Advanced 图编辑的控制流骨架。",
+      modules: controlFlowModules,
+    },
+    {
       id: "fragments",
       eyebrow: "Fragments",
-      title: "可复用子图",
+      title: "其他可复用子图",
       copy:
-        "fragment 更适合插到现有链路里做内联复用；已标记可立即重试的片段，会在这里优先靠前展示。",
-      modules: fragmentModules.value,
+        "剩余 fragment 继续适合作为内联复用子图使用；插入后会直接展开成真实节点与连线。",
+      modules: utilityModules,
     },
   ];
   return groups.filter((group) => group.modules.length > 0);
+});
+
+const builderTemplates = computed(() =>
+  [...BUILDER_WORKFLOW_TEMPLATES].sort(sortTemplates),
+);
+
+const templateSections = computed(() => {
+  const starters = builderTemplates.value.filter(
+    (template) => template.templateKind === "starter",
+  );
+  const compositionLabs = builderTemplates.value.filter(
+    (template) => template.templateKind === "composition_lab",
+  );
+  const sections = [
+    {
+      id: "starter",
+      kind: "starter" as const,
+      title: "Quick Start",
+      copy:
+        "先用一键起步图把链路跑起来，不要求先理解所有内部节点，再逐步展开深入。",
+      templates: starters,
+    },
+    {
+      id: "composition_lab",
+      kind: "composition_lab" as const,
+      title: "Composition Lab",
+      copy:
+        "这些模板会把成功路径、回退路径和组合关系明确展开，适合高级创作者边看边拆边改。",
+      templates: compositionLabs,
+    },
+  ];
+  return sections.filter((section) => section.templates.length > 0);
 });
 
 const activeTemplate = computed(() =>
@@ -1121,12 +1307,72 @@ function formatTiming(timing: WorkbenchGraph["timing"]): string {
   return TIMING_LABELS[timing];
 }
 
+function formatTemplateKind(kind: BuilderTemplateKind): string {
+  return TEMPLATE_KIND_LABELS[kind];
+}
+
+function formatTemplateFeatureFamily(
+  family: BuilderTemplateFeatureFamily,
+): string {
+  return TEMPLATE_FEATURE_FAMILY_LABELS[family];
+}
+
+function formatBuilderKitFamily(family: BuilderKitFamily): string {
+  return KIT_FAMILY_LABELS[family];
+}
+
 function formatCompositeKind(module: ModuleBlueprint): string {
   return getCompositeModuleKind(module) === "fragment" ? "片段" : "包";
 }
 
 function shouldShowCompositeRetry(module: ModuleBlueprint): boolean {
-  return getCompositeModuleKind(module) === "fragment";
+  const retrySafety = getCompositeRetrySafety(module.moduleId);
+  return (
+    getCompositeModuleKind(module) === "fragment" &&
+    retrySafety?.requested === true
+  );
+}
+
+function compositeContractHasEntry(
+  moduleId: string,
+  key: string,
+): boolean {
+  return (
+    getCompositeTemplateContract(moduleId)?.entries.some(
+      (entry) => entry.key === key,
+    ) ?? false
+  );
+}
+
+function compositeContractHasExit(
+  moduleId: string,
+  key: string,
+): boolean {
+  return (
+    getCompositeTemplateContract(moduleId)?.exits.some((entry) => entry.key === key) ??
+    false
+  );
+}
+
+function getCompositeLearningLabels(moduleId: string): string[] {
+  const blueprint = getModuleBlueprint(moduleId);
+  const labels: string[] = [];
+  if (blueprint.kitFamily) {
+    labels.push(formatBuilderKitFamily(blueprint.kitFamily));
+  }
+  if (blueprint.featured === true) {
+    labels.push("精选");
+  }
+  if (blueprint.recommendedBuilderMode) {
+    labels.push(`建议 ${formatBuilderMode(blueprint.recommendedBuilderMode)}`);
+  }
+  if (compositeContractHasExit(moduleId, "retry_exhausted")) {
+    labels.push("输出 retry_exhausted");
+  }
+  if (compositeContractHasEntry(moduleId, "retry_exhausted")) {
+    labels.push("读取 retry_exhausted");
+  }
+  return Array.from(new Set(labels));
 }
 
 function updateActiveGraphRuntimeMeta(
@@ -1511,6 +1757,25 @@ function onGraphUpdated(graph: WorkbenchGraph) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.ew-builder-workbench__template-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ew-builder-workbench__template-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ew-builder-workbench__template-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .ew-builder-workbench__package-grid {

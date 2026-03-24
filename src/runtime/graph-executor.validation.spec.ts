@@ -11553,6 +11553,9 @@ async function runValidationSpec(): Promise<void> {
   );
   assert(
     controlBranchPackage?.compositeKind === "fragment" &&
+    controlBranchPackage.kitFamily === "control_flow" &&
+    controlBranchPackage.featured === true &&
+    controlBranchPackage.recommendedBuilderMode === "advanced" &&
     controlBranchPackage.retryContract?.immediateRetryCandidate === true &&
     controlBranchPackage?.compositeTemplate?.nodes.length === 5 &&
       controlBranchPackage.compositeTemplate.edges.length === 5 &&
@@ -11657,6 +11660,8 @@ async function runValidationSpec(): Promise<void> {
           entry.source.nodeId.includes("after_join_"),
       ) &&
       textCleanupFragment?.compositeKind === "fragment" &&
+      textCleanupFragment.kitFamily === "retry_fallback" &&
+      textCleanupFragment.recommendedBuilderMode === "advanced" &&
       textCleanupFragment.retryContract?.immediateRetryCandidate === true &&
       textCleanupFragment.compositeTemplate?.nodes.length === 2 &&
       textCleanupFragment.compositeTemplate.edges.length === 1 &&
@@ -11707,6 +11712,9 @@ async function runValidationSpec(): Promise<void> {
           node.runtimeMeta.retryBoundaryModuleId === "frag_text_cleanup_stage",
       ) &&
       retryFallbackTextCleanupFragment?.compositeKind === "fragment" &&
+      retryFallbackTextCleanupFragment.kitFamily === "retry_fallback" &&
+      retryFallbackTextCleanupFragment.featured === true &&
+      retryFallbackTextCleanupFragment.recommendedBuilderMode === "simple" &&
       retryFallbackTextCleanupFragment.retryContract?.immediateRetryCandidate ===
         true &&
       retryFallbackTextCleanupFragment.compositeTemplate?.nodes.length === 7 &&
@@ -11757,6 +11765,9 @@ async function runValidationSpec(): Promise<void> {
             "frag_retry_fallback_text_cleanup",
       ) &&
       retryValueFallbackFragment?.compositeKind === "fragment" &&
+      retryValueFallbackFragment.kitFamily === "retry_fallback" &&
+      retryValueFallbackFragment.featured === true &&
+      retryValueFallbackFragment.recommendedBuilderMode === "advanced" &&
       retryValueFallbackFragment.retryContract?.immediateRetryCandidate !==
         true &&
       retryValueFallbackFragment.compositeTemplate?.nodes.length === 5 &&
@@ -11801,6 +11812,9 @@ async function runValidationSpec(): Promise<void> {
         (node) => node.runtimeMeta?.retryBoundaryId === undefined,
       ) &&
       parallelTextFanInFragment?.compositeKind === "fragment" &&
+      parallelTextFanInFragment.kitFamily === "control_flow" &&
+      parallelTextFanInFragment.featured === true &&
+      parallelTextFanInFragment.recommendedBuilderMode === "advanced" &&
       parallelTextFanInFragment.retryContract?.immediateRetryCandidate === true &&
       parallelTextFanInFragment.compositeTemplate?.nodes.length === 4 &&
       parallelTextFanInFragment.compositeTemplate.edges.length === 5 &&
@@ -12171,6 +12185,9 @@ async function runValidationSpec(): Promise<void> {
   const retryFallbackTemplateGraph = retryFallbackTemplate?.createGraph();
   assert(
     retryFallbackTemplate?.id === "starter_retry_fallback_cleanup" &&
+      retryFallbackTemplate.templateKind === "starter" &&
+      retryFallbackTemplate.featureFamily === "retry_fallback" &&
+      retryFallbackTemplate.featured === true &&
       retryFallbackTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_cleanup" &&
       retryFallbackTemplateGraph?.runtimeMeta?.builderMode === "simple" &&
@@ -12192,6 +12209,9 @@ async function runValidationSpec(): Promise<void> {
   assert(
     retryFallbackCompositionTemplate?.id ===
       "starter_retry_fallback_composition_lab" &&
+      retryFallbackCompositionTemplate.templateKind === "composition_lab" &&
+      retryFallbackCompositionTemplate.featureFamily === "retry_fallback" &&
+      retryFallbackCompositionTemplate.featured === true &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_composition_lab" &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.builderMode ===

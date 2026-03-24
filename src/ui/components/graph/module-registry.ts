@@ -1704,6 +1704,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       retry_attempts: 1,
     },
     compositeKind: "fragment",
+    kitFamily: "control_flow",
+    featured: true,
+    recommendedBuilderMode: "advanced",
     retryContract: {
       immediateRetryCandidate: true,
     },
@@ -1866,6 +1869,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       retry_attempts: 1,
     },
     compositeKind: "fragment",
+    kitFamily: "control_flow",
+    featured: true,
+    recommendedBuilderMode: "advanced",
     retryContract: {
       immediateRetryCandidate: true,
     },
@@ -2076,6 +2082,8 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       retry_attempts: 1,
     },
     compositeKind: "fragment",
+    kitFamily: "retry_fallback",
+    recommendedBuilderMode: "advanced",
     retryContract: {
       immediateRetryCandidate: true,
     },
@@ -2143,6 +2151,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       retry_attempts: 1,
     },
     compositeKind: "fragment",
+    kitFamily: "retry_fallback",
+    featured: true,
+    recommendedBuilderMode: "simple",
     retryContract: {
       immediateRetryCandidate: true,
     },
@@ -2317,6 +2328,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
     ],
     defaultConfig: {},
     compositeKind: "fragment",
+    kitFamily: "retry_fallback",
+    featured: true,
+    recommendedBuilderMode: "advanced",
     compositeTemplate: {
       nodes: [
         compositeNode("retry_if", "ctl_if", 0, 120, {
@@ -2445,6 +2459,9 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
       retry_attempts: 1,
     },
     compositeKind: "fragment",
+    kitFamily: "control_flow",
+    featured: true,
+    recommendedBuilderMode: "advanced",
     retryContract: {
       immediateRetryCandidate: true,
     },
