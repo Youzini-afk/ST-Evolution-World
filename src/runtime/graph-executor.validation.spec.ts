@@ -10429,6 +10429,8 @@ async function runValidationSpec(): Promise<void> {
     `Expected builder-facing metadata summary helpers and explain contracts to reuse high-frequency schema facts. Actual apiExplain=${JSON.stringify(apiPresetExplain)} requestTemplateExplain=${JSON.stringify(requestTemplateExplain)} apiSummary=${JSON.stringify(apiPresetMetadataSummary)} genSummary=${JSON.stringify(generationMetadataSummary)}`,
   );
   const compositeModules = getCompositeModules();
+  const packageCompositeModules = getCompositeModules("package");
+  const fragmentCompositeModules = getCompositeModules("fragment");
   const fullWorkflowPackage = compositeModules.find(
     (module) => module.moduleId === "pkg_full_workflow",
   );
@@ -10513,6 +10515,32 @@ async function runValidationSpec(): Promise<void> {
       skip_empty: true,
     },
   });
+  assert(
+    packageCompositeModules.some(
+      (module) => module.moduleId === "pkg_full_workflow",
+    ) &&
+      packageCompositeModules.some(
+        (module) => module.moduleId === "pkg_worldbook_engine",
+      ) &&
+      !packageCompositeModules.some(
+        (module) => module.moduleId === "frag_text_cleanup_stage",
+      ) &&
+      fragmentCompositeModules.some(
+        (module) => module.moduleId === "pkg_control_branch_router",
+      ) &&
+      fragmentCompositeModules.some(
+        (module) => module.moduleId === "frag_text_cleanup_stage",
+      ) &&
+      fragmentCompositeModules.some(
+        (module) => module.moduleId === "frag_parallel_text_fan_in",
+      ) &&
+      !fragmentCompositeModules.some(
+        (module) => module.moduleId === "pkg_full_workflow",
+      ) &&
+      packageCompositeModules.length + fragmentCompositeModules.length ===
+        compositeModules.length,
+    `Expected composite registry to partition package vs fragment modules. Actual packages=${packageCompositeModules.map((module) => module.moduleId).join(",")} fragments=${fragmentCompositeModules.map((module) => module.moduleId).join(",")} all=${compositeModules.map((module) => module.moduleId).join(",")}`,
+  );
   assert(
     controlBranchPackage?.compositeKind === "fragment" &&
     controlBranchPackage.retryContract?.immediateRetryCandidate === true &&

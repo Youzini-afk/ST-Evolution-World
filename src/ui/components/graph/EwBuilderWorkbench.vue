@@ -132,21 +132,22 @@
     </section>
 
     <section
-      v-if="compositePackages.length > 0"
+      v-for="group in compositeGroups"
+      :key="group.id"
       class="ew-builder-workbench__packages"
     >
       <div class="ew-builder-workbench__starter-header">
         <div>
-          <div class="ew-builder-workbench__eyebrow">Packages / Fragments</div>
-          <h3 class="ew-builder-workbench__title">大颗粒积木与可复用子图</h3>
+          <div class="ew-builder-workbench__eyebrow">{{ group.eyebrow }}</div>
+          <h3 class="ew-builder-workbench__title">{{ group.title }}</h3>
         </div>
         <p class="ew-builder-workbench__starter-copy">
-          package 适合大颗粒起步，fragment 更适合插入到现有链路里做内联复用；两者都会直接展开成真实子图。
+          {{ group.copy }}
         </p>
       </div>
       <div class="ew-builder-workbench__package-grid">
         <article
-          v-for="pkg in compositePackages"
+          v-for="pkg in group.modules"
           :key="pkg.moduleId"
           class="ew-builder-workbench__package-card"
         >
@@ -156,7 +157,7 @@
             </span>
             <span class="ew-builder-workbench__chip">{{ pkg.category }}</span>
             <span
-              v-if="getCompositeRetryReasonLabel(pkg.moduleId)"
+              v-if="shouldShowCompositeRetry(pkg)"
               class="ew-builder-workbench__chip"
             >
               {{ getCompositeRetryReasonLabel(pkg.moduleId) }}
@@ -318,7 +319,7 @@
                 </span>
               </div>
             </template>
-            <template v-if="getCompositeRetryReasonLabel(pkg.moduleId)">
+            <template v-if="shouldShowCompositeRetry(pkg)">
               <div class="ew-builder-workbench__summary-label">重试资格</div>
               <div class="ew-builder-workbench__template-tags">
                 <span class="ew-builder-workbench__template-tag">
@@ -878,11 +879,51 @@ const activeGraph = computed(() =>
   localGraphs.value.find((graph) => graph.id === activeGraphId.value) ?? null,
 );
 
-const compositePackages = computed<ModuleBlueprint[]>(() =>
-  getCompositeModules().filter(
+const packageModules = computed<ModuleBlueprint[]>(() =>
+  getCompositeModules("package").filter(
     (module) => (module.compositeTemplate?.nodes.length ?? 0) > 0,
   ),
 );
+
+const fragmentModules = computed<ModuleBlueprint[]>(() =>
+  getCompositeModules("fragment")
+    .filter((module) => (module.compositeTemplate?.nodes.length ?? 0) > 0)
+    .slice()
+    .sort((left, right) => {
+      const leftEligible = getCompositeRetrySafety(left.moduleId)?.eligible
+        ? 1
+        : 0;
+      const rightEligible = getCompositeRetrySafety(right.moduleId)?.eligible
+        ? 1
+        : 0;
+      if (leftEligible !== rightEligible) {
+        return rightEligible - leftEligible;
+      }
+      return left.label.localeCompare(right.label, "zh-CN");
+    }),
+);
+
+const compositeGroups = computed(() => {
+  const groups = [
+    {
+      id: "packages",
+      eyebrow: "Packages",
+      title: "大颗粒积木",
+      copy:
+        "package 适合大颗粒起步，直接把一段较完整的工作流骨架插进当前图里，再继续深入编辑。",
+      modules: packageModules.value,
+    },
+    {
+      id: "fragments",
+      eyebrow: "Fragments",
+      title: "可复用子图",
+      copy:
+        "fragment 更适合插到现有链路里做内联复用；已标记可立即重试的片段，会在这里优先靠前展示。",
+      modules: fragmentModules.value,
+    },
+  ];
+  return groups.filter((group) => group.modules.length > 0);
+});
 
 const activeTemplate = computed(() =>
   findBuilderWorkflowTemplate(activeGraph.value?.runtimeMeta?.templateId),
@@ -1044,6 +1085,10 @@ function formatTiming(timing: WorkbenchGraph["timing"]): string {
 
 function formatCompositeKind(module: ModuleBlueprint): string {
   return getCompositeModuleKind(module) === "fragment" ? "片段" : "包";
+}
+
+function shouldShowCompositeRetry(module: ModuleBlueprint): boolean {
+  return getCompositeModuleKind(module) === "fragment";
 }
 
 function updateActiveGraphRuntimeMeta(
