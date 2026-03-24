@@ -4105,6 +4105,83 @@ async function runValidationSpec(): Promise<void> {
         "exhausted",
     `Expected retry exhaustion to surface structured retry outputs that later control flow can consume for fallback routing. Actual: ${JSON.stringify(retryFallbackConsumptionResult)}`,
   );
+  const retryFallbackCompileRunLinkEnvelope =
+    createGraphCompileRunLinkArtifactEnvelope({
+      plan: retryFallbackConsumptionResult.compilePlan,
+      runArtifact: retryFallbackConsumptionResult.runArtifact,
+      result: retryFallbackConsumptionResult,
+    });
+  const retryFallbackOutputExplainEnvelope =
+    createGraphOutputExplainArtifactEnvelope({
+      plan: retryFallbackConsumptionResult.compilePlan,
+      runArtifact: retryFallbackConsumptionResult.runArtifact,
+      result: { moduleResults: retryFallbackConsumptionResult.moduleResults },
+      compileRunLinkArtifact: retryFallbackCompileRunLinkEnvelope?.artifact ?? null,
+    });
+  const retryFallbackFailureExplainEnvelope =
+    createGraphFailureExplainArtifactEnvelope({
+      plan: retryFallbackConsumptionResult.compilePlan,
+      runArtifact: retryFallbackConsumptionResult.runArtifact,
+      result: retryFallbackConsumptionResult,
+      compileRunLinkArtifact: retryFallbackCompileRunLinkEnvelope?.artifact ?? null,
+      outputExplainArtifact: retryFallbackOutputExplainEnvelope?.artifact ?? null,
+      hostEffectExplainArtifact: null,
+      reuseExplainArtifact: null,
+    });
+  const retryFallbackNodeDispositionEnvelope =
+    createGraphNodeExecutionDispositionExplainArtifactEnvelope({
+      plan: retryFallbackConsumptionResult.compilePlan,
+      runArtifact: retryFallbackConsumptionResult.runArtifact,
+      compileRunLinkArtifact: retryFallbackCompileRunLinkEnvelope?.artifact ?? null,
+      inputResolutionArtifact:
+        retryFallbackConsumptionResult.inputResolutionArtifact ?? null,
+      reuseExplainArtifact: null,
+      failureExplainArtifact: retryFallbackFailureExplainEnvelope?.artifact ?? null,
+      terminalOutcomeExplainArtifact: null,
+      blockingExplainArtifact: null,
+    });
+  const retryFallbackTerminalOutcomeEnvelope =
+    createGraphTerminalOutcomeExplainArtifactEnvelope({
+      plan: retryFallbackConsumptionResult.compilePlan,
+      runArtifact: retryFallbackConsumptionResult.runArtifact,
+      result: { moduleResults: retryFallbackConsumptionResult.moduleResults },
+      compileRunLinkArtifact: retryFallbackCompileRunLinkEnvelope?.artifact ?? null,
+      outputExplainArtifact: retryFallbackOutputExplainEnvelope?.artifact ?? null,
+      hostEffectExplainArtifact: null,
+      failureExplainArtifact: retryFallbackFailureExplainEnvelope?.artifact ?? null,
+    });
+  assert(
+    retryFallbackFailureExplainEnvelope?.artifact.summary.runFailed === false &&
+      retryFallbackFailureExplainEnvelope.artifact.summary.failureKind ===
+        "none" &&
+      retryFallbackFailureExplainEnvelope.artifact.summary.failedNodeCount ===
+        1 &&
+      retryFallbackFailureExplainEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "probe_stage_b",
+      )?.failureReasonKind === "retry_exhausted",
+    `Expected failure explain to preserve retry_exhausted node failure while keeping the overall run non-failed after fallback recovery. Actual: ${JSON.stringify(retryFallbackFailureExplainEnvelope)}`,
+  );
+  assert(
+    retryFallbackNodeDispositionEnvelope?.artifact.summary.reasonCounts
+      .retry_exhausted === 1 &&
+      retryFallbackNodeDispositionEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "probe_stage_b",
+      )?.primaryReasonKind === "retry_exhausted" &&
+      retryFallbackNodeDispositionEnvelope.artifact.nodes.find(
+        (node) => node.nodeId === "probe_stage_b",
+      )?.disposition === "failed",
+    `Expected node execution disposition explain to classify exhausted retry nodes distinctly instead of collapsing them into unknown failure. Actual: ${JSON.stringify(retryFallbackNodeDispositionEnvelope)}`,
+  );
+  assert(
+    retryFallbackTerminalOutcomeEnvelope?.artifact.summary.projectionDisposition ===
+      "projected_complete" &&
+      retryFallbackTerminalOutcomeEnvelope.artifact.summary.truncatedByFailure ===
+        false &&
+      retryFallbackTerminalOutcomeEnvelope.artifact.finalProjectionNodeIds.join(
+        ",",
+      ) === "retry_merge",
+    `Expected terminal outcome explain to keep retry-recovered run as projected_complete while final output comes from fallback path. Actual: ${JSON.stringify(retryFallbackTerminalOutcomeEnvelope)}`,
+  );
 
   const controlCompileRunLinkEnvelope =
     createGraphCompileRunLinkArtifactEnvelope({

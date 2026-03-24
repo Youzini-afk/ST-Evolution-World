@@ -82,6 +82,7 @@ function toFailureReasonKind(value: unknown): GraphFailureExplainReasonKindV1 {
     value === "validation_error" ||
     value === "compile_error" ||
     value === "runtime_error" ||
+    value === "retry_exhausted" ||
     value === "dependency_not_reached" ||
     value === "unknown"
     ? value
@@ -148,12 +149,35 @@ function inferFailureKind(params: {
 function inferNodeFailureReasonKind(params: {
   runDisposition: GraphFailureExplainNodeRecordV1["runDisposition"];
   stage: GraphFailureExplainStageV1;
+  moduleResult?: ModuleExecutionResult;
+  nodeTrace?: GraphNodeTrace;
 }): GraphFailureExplainReasonKindV1 {
   if (params.runDisposition === "not_reached") {
     return "dependency_not_reached";
   }
   if (params.runDisposition !== "failed") {
     return "none";
+  }
+  const retryAttempt = Math.max(
+    0,
+    Math.trunc(
+      Number(
+        params.moduleResult?.retryAttempt ?? params.nodeTrace?.retryAttempt ?? 0,
+      ) || 0,
+    ),
+  );
+  const retryAttemptLimit = Math.max(
+    0,
+    Math.trunc(
+      Number(
+        params.moduleResult?.retryAttemptLimit ??
+          params.nodeTrace?.retryAttemptLimit ??
+          0,
+      ) || 0,
+    ),
+  );
+  if (retryAttemptLimit > 1 && retryAttempt >= retryAttemptLimit) {
+    return "retry_exhausted";
   }
   switch (params.stage) {
     case "validate":
@@ -533,6 +557,8 @@ function createNodeRecord(params: {
     failureReasonKind: inferNodeFailureReasonKind({
       runDisposition,
       stage,
+      moduleResult,
+      nodeTrace,
     }),
     isTerminal: planNode.isTerminal,
     isSideEffect: planNode.isSideEffectNode,

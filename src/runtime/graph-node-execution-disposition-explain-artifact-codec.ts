@@ -80,6 +80,7 @@ function toReasonKind(
     value === "executed_despite_reuse_eligibility" ||
     value === "reuse_skip" ||
     value === "control_flow_inactive" ||
+    value === "retry_exhausted" ||
     value === "dependency_not_reached" ||
     value === "input_missing_or_unresolved" ||
     value === "truncated_by_failure" ||
@@ -164,6 +165,7 @@ function createEmptyReasonCounts(): Record<
     executed_despite_reuse_eligibility: 0,
     reuse_skip: 0,
     control_flow_inactive: 0,
+    retry_exhausted: 0,
     dependency_not_reached: 0,
     input_missing_or_unresolved: 0,
     truncated_by_failure: 0,
@@ -517,7 +519,10 @@ function inferNodeRecord(params: {
         failureNode && failureNode.failureDisposition === "not_reached"
           ? "unknown"
           : "failed",
-      primaryReasonKind: "unknown",
+      primaryReasonKind:
+        failureNode?.failureReasonKind === "retry_exhausted"
+          ? "retry_exhausted"
+          : "unknown",
     };
   }
 

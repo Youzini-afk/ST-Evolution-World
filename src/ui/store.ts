@@ -1914,6 +1914,7 @@ export const useEwStore = defineStore("evolution-world-store", () => {
       executed_despite_reuse_eligibility: "可复用但仍执行",
       reuse_skip: "复用跳过",
       control_flow_inactive: "控制流未激活",
+      retry_exhausted: "立即重试已耗尽",
       dependency_not_reached: "依赖未到达",
       input_missing_or_unresolved: "输入缺失或未解析",
       truncated_by_failure: "因失败截断",

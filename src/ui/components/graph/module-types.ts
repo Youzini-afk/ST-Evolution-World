@@ -835,6 +835,7 @@ export type GraphFailureExplainReasonKindV1 =
   | "validation_error"
   | "compile_error"
   | "runtime_error"
+  | "retry_exhausted"
   | "dependency_not_reached"
   | "unknown";
 
@@ -982,6 +983,7 @@ export type GraphNodeExecutionReasonKindV1 =
   | "executed_despite_reuse_eligibility"
   | "reuse_skip"
   | "control_flow_inactive"
+  | "retry_exhausted"
   | "dependency_not_reached"
   | "input_missing_or_unresolved"
   | "truncated_by_failure"
