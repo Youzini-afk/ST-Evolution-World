@@ -2096,6 +2096,158 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
     isComposite: true,
   },
   {
+    moduleId: "frag_retry_fallback_text_cleanup",
+    label: "↺ 文本清洗回退片段",
+    category: "filter",
+    color: "#3b82f6",
+    icon: "↺",
+    description:
+      "命名 fragment：先尝试做文本清洗；若立即重试耗尽，则自动回退到原始输入文本，适合作为低门槛的 retry fallback 起步积木。",
+    ports: [
+      textIn("text_in", "输入文本"),
+      textOut("text_out", "输出文本"),
+    ],
+    defaultConfig: {
+      retry_attempts: 1,
+    },
+    compositeKind: "fragment",
+    retryContract: {
+      immediateRetryCandidate: true,
+    },
+    configSchema: [
+      {
+        key: "retry_attempts",
+        label: "即时重试次数",
+        type: "number",
+        min: 1,
+        step: 1,
+        exposeInSimpleMode: false,
+        description: "大于 1 时，会先重跑内部文本清洗边界；若仍耗尽，则自动走原文回退分支。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("strip_mvu", "flt_mvu_strip", 0, -80, {
+          _label: "MVU 剥离",
+        }),
+        compositeNode("regex_process", "flt_regex_process", 280, -80, {
+          _label: "正则处理",
+        }),
+        compositeNode("retry_if", "ctl_if", 280, 180, {
+          _label: "重试回退判断",
+        }),
+        compositeNode("success_lane", "cmp_passthrough", 560, 60, {
+          _label: "清洗成功",
+        }),
+        compositeNode("fallback_lane", "cmp_passthrough", 560, 300, {
+          _label: "原文回退",
+        }),
+        compositeNode("retry_join", "ctl_join", 840, 180, {
+          _label: "回退汇合",
+          mode: "any",
+        }),
+        compositeNode("merge_text", "cmp_text_concat", 1120, 180, {
+          _label: "回退输出",
+          separator: "",
+          skip_empty: true,
+        }),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_strip_to_regex",
+          "strip_mvu",
+          "text_out",
+          "regex_process",
+          "text_in",
+        ),
+        compositeEdge(
+          "edge_retry_condition",
+          "strip_mvu",
+          RESERVED_RETRY_EXHAUSTED_PORT_ID,
+          "retry_if",
+          "condition",
+        ),
+        compositeEdge(
+          "edge_retry_else_success",
+          "retry_if",
+          "else",
+          "success_lane",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_retry_then_fallback",
+          "retry_if",
+          "then",
+          "fallback_lane",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_success_text",
+          "regex_process",
+          "text_out",
+          "success_lane",
+          "value",
+        ),
+        compositeEdge(
+          "edge_success_done",
+          "success_lane",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "retry_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_fallback_done",
+          "fallback_lane",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "retry_join",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_join_to_merge",
+          "retry_join",
+          "joined",
+          "merge_text",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_success_to_merge",
+          "success_lane",
+          "value_out",
+          "merge_text",
+          "a",
+        ),
+        compositeEdge(
+          "edge_fallback_to_merge",
+          "fallback_lane",
+          "value_out",
+          "merge_text",
+          "b",
+        ),
+      ],
+      entryBindings: [
+        {
+          key: "text_in",
+          label: "输入文本",
+          targets: [
+            { nodeId: "strip_mvu", portId: "text_in" },
+            { nodeId: "fallback_lane", portId: "value" },
+          ],
+          description:
+            "一份输入文本同时送入清洗边界和原文回退 lane；只有重试耗尽时才会激活回退路径。",
+        },
+      ],
+      exitBindings: [
+        {
+          key: "text_out",
+          label: "输出文本",
+          source: { nodeId: "merge_text", portId: "text_out" },
+          description: "清洗成功则输出清洗结果；重试耗尽则输出原文回退结果。",
+        },
+      ],
+    },
+    isComposite: true,
+  },
+  {
     moduleId: "frag_parallel_text_fan_in",
     label: "⇉ 并行文本合流片段",
     category: "control",

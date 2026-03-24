@@ -9,6 +9,7 @@ import {
   getModuleMetadataSurface,
   instantiateCompositeTemplate,
 } from "../ui/components/graph/module-registry";
+import { findBuilderWorkflowTemplate } from "../ui/components/graph/builder-templates";
 import type {
   ExecutionContext,
   GraphCompilePlan,
@@ -1641,6 +1642,69 @@ function makeTextCleanupFragmentGraph(): {
           target: textEntry.targets[0].nodeId,
           targetPort: textEntry.targets[0].portId,
         },
+      ],
+    },
+    exitNodeId: textExit.source.nodeId,
+  };
+}
+
+function makeRetryFallbackTextCleanupFragmentGraph(): {
+  graph: WorkbenchGraph;
+  exitNodeId: string;
+} {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "frag_retry_fallback_text_cleanup",
+    origin: { x: 220, y: 0 },
+    exposedConfig: {
+      retry_attempts: 2,
+    },
+  });
+  if (!fragment) {
+    throw new Error(
+      "Expected frag_retry_fallback_text_cleanup to instantiate.",
+    );
+  }
+
+  const textEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "text_in",
+  );
+  const textExit = fragment.contract.exits.find(
+    (entry) => entry.key === "text_out",
+  );
+  if (!textEntry || !textExit || textEntry.targets.length !== 2) {
+    throw new Error(
+      `Expected retry fallback text cleanup fragment contract to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
+    );
+  }
+
+  return {
+    graph: {
+      id: "graph_retry_fallback_text_cleanup_fragment",
+      name: "Retry Fallback Text Cleanup Fragment Graph",
+      enabled: true,
+      timing: "after_reply",
+      priority: 0,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+      nodes: [
+        {
+          id: "src_text",
+          moduleId: "src_user_input",
+          position: { x: 0, y: 100 },
+          config: {},
+          collapsed: false,
+        },
+        ...fragment.nodes,
+      ],
+      edges: [
+        ...fragment.edges,
+        ...textEntry.targets.map((target, index) => ({
+          id: `edge_retry_fallback_fragment_text_${index}`,
+          source: "src_text",
+          sourcePort: "text",
+          target: target.nodeId,
+          targetPort: target.portId,
+        })),
       ],
     },
     exitNodeId: textExit.source.nodeId,
@@ -3877,6 +3941,36 @@ async function runValidationSpec(): Promise<void> {
       textCleanupResult.finalOutputs[textCleanupFragmentFixture.exitNodeId]
         ?.text_out === "fragment clean text",
     `Expected text cleanup fragment to inline into the graph and expose its contracted exit output. Actual: ${JSON.stringify(textCleanupResult)}`,
+  );
+
+  const retryFallbackTextCleanupFragmentFixture =
+    makeRetryFallbackTextCleanupFragmentGraph();
+  const retryFallbackTextCleanupValidation = validateGraph(
+    retryFallbackTextCleanupFragmentFixture.graph,
+  );
+  assert(
+    retryFallbackTextCleanupValidation.errors.length === 0,
+    `Expected frag_retry_fallback_text_cleanup graph fixture to validate. Actual: ${JSON.stringify(retryFallbackTextCleanupValidation.errors)}`,
+  );
+  const retryFallbackTextCleanupResult = await executeGraph(
+    retryFallbackTextCleanupFragmentFixture.graph,
+    makeExecutionContext({
+      userInput: "retry fallback clean text",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  assert(
+    retryFallbackTextCleanupResult.ok &&
+      retryFallbackTextCleanupResult.moduleResults.find(
+        (result) => result.moduleId === "ctl_if",
+      )?.outputs.selected_branch === "else" &&
+      retryFallbackTextCleanupResult.moduleResults.find(
+        (result) => result.moduleId === "flt_regex_process",
+      )?.status === "ok" &&
+      retryFallbackTextCleanupResult.finalOutputs[
+        retryFallbackTextCleanupFragmentFixture.exitNodeId
+      ]?.text_out === "retry fallback clean text",
+    `Expected retry fallback text cleanup fragment to take the success branch by default and expose the cleaned text output. Actual: ${JSON.stringify(retryFallbackTextCleanupResult)}`,
   );
 
   const parallelTextFanInFixture = makeParallelTextFanInFragmentGraph();
@@ -11119,6 +11213,9 @@ async function runValidationSpec(): Promise<void> {
   const textCleanupFragment = compositeModules.find(
     (module) => module.moduleId === "frag_text_cleanup_stage",
   );
+  const retryFallbackTextCleanupFragment = compositeModules.find(
+    (module) => module.moduleId === "frag_retry_fallback_text_cleanup",
+  );
   const parallelTextFanInFragment = compositeModules.find(
     (module) => module.moduleId === "frag_parallel_text_fan_in",
   );
@@ -11131,6 +11228,9 @@ async function runValidationSpec(): Promise<void> {
   const textCleanupFragmentContract = getCompositeTemplateContract(
     "frag_text_cleanup_stage",
   );
+  const retryFallbackTextCleanupFragmentContract = getCompositeTemplateContract(
+    "frag_retry_fallback_text_cleanup",
+  );
   const parallelTextFanInContract = getCompositeTemplateContract(
     "frag_parallel_text_fan_in",
   );
@@ -11142,6 +11242,9 @@ async function runValidationSpec(): Promise<void> {
   );
   const textCleanupFragmentRetrySafety = getCompositeRetrySafety(
     "frag_text_cleanup_stage",
+  );
+  const retryFallbackTextCleanupFragmentRetrySafety = getCompositeRetrySafety(
+    "frag_retry_fallback_text_cleanup",
   );
   const parallelTextFanInRetrySafety = getCompositeRetrySafety(
     "frag_parallel_text_fan_in",
@@ -11183,9 +11286,17 @@ async function runValidationSpec(): Promise<void> {
       retry_attempts: 2,
     },
   });
+  const instantiatedRetryFallbackTextCleanupFragment =
+    instantiateCompositeTemplate({
+      moduleId: "frag_retry_fallback_text_cleanup",
+      origin: { x: 240, y: 840 },
+      exposedConfig: {
+        retry_attempts: 2,
+      },
+    });
   const instantiatedParallelTextFanInFragment = instantiateCompositeTemplate({
     moduleId: "frag_parallel_text_fan_in",
-    origin: { x: 240, y: 920 },
+    origin: { x: 240, y: 1020 },
     exposedConfig: {
       separator: " | ",
       skip_empty: true,
@@ -11207,6 +11318,9 @@ async function runValidationSpec(): Promise<void> {
       ) &&
       fragmentCompositeModules.some(
         (module) => module.moduleId === "frag_text_cleanup_stage",
+      ) &&
+      fragmentCompositeModules.some(
+        (module) => module.moduleId === "frag_retry_fallback_text_cleanup",
       ) &&
       fragmentCompositeModules.some(
         (module) => module.moduleId === "frag_parallel_text_fan_in",
@@ -11373,6 +11487,56 @@ async function runValidationSpec(): Promise<void> {
           node.runtimeMeta.retryAttemptLimit === 2 &&
           node.runtimeMeta.retryBoundaryModuleId === "frag_text_cleanup_stage",
       ) &&
+      retryFallbackTextCleanupFragment?.compositeKind === "fragment" &&
+      retryFallbackTextCleanupFragment.retryContract?.immediateRetryCandidate ===
+        true &&
+      retryFallbackTextCleanupFragment.compositeTemplate?.nodes.length === 7 &&
+      retryFallbackTextCleanupFragment.compositeTemplate.edges.length === 10 &&
+      retryFallbackTextCleanupFragmentContract?.entries.some(
+        (entry) =>
+          entry.key === "text_in" &&
+          entry.targets.length === 2 &&
+          entry.targets.some(
+            (target) =>
+              target.nodeLabel === "MVU 剥离" && target.portId === "text_in",
+          ) &&
+          entry.targets.some(
+            (target) =>
+              target.nodeLabel === "原文回退" && target.portId === "value",
+          ),
+      ) &&
+      retryFallbackTextCleanupFragmentContract.exits.some(
+        (entry) =>
+          entry.key === "text_out" &&
+          entry.source.nodeLabel === "回退输出" &&
+          entry.source.portId === "text_out",
+      ) &&
+      retryFallbackTextCleanupFragmentContract.exits.some(
+        (entry) =>
+          entry.key === "retry_exhausted" &&
+          entry.source.nodeLabel === "MVU 剥离" &&
+          entry.source.portId === RESERVED_RETRY_EXHAUSTED_PORT_ID,
+      ) &&
+      instantiatedRetryFallbackTextCleanupFragment?.contract.entries.some(
+        (entry) =>
+          entry.key === "text_in" &&
+          entry.targets.some((target) => target.nodeId.includes("strip_mvu_")) &&
+          entry.targets.some(
+            (target) => target.nodeId.includes("fallback_lane_"),
+          ),
+      ) &&
+      instantiatedRetryFallbackTextCleanupFragment.contract.exits.some(
+        (entry) =>
+          entry.key === "text_out" &&
+          entry.source.nodeId.includes("merge_text_"),
+      ) &&
+      instantiatedRetryFallbackTextCleanupFragment.nodes.every(
+        (node) =>
+          node.runtimeMeta?.retryBoundaryId &&
+          node.runtimeMeta.retryAttemptLimit === 2 &&
+          node.runtimeMeta.retryBoundaryModuleId ===
+            "frag_retry_fallback_text_cleanup",
+      ) &&
       parallelTextFanInFragment?.compositeKind === "fragment" &&
       parallelTextFanInFragment.retryContract?.immediateRetryCandidate === true &&
       parallelTextFanInFragment.compositeTemplate?.nodes.length === 4 &&
@@ -11431,6 +11595,8 @@ async function runValidationSpec(): Promise<void> {
       controlValueRouterRetrySafety.issues.length === 0 &&
       textCleanupFragmentRetrySafety?.status === "eligible" &&
       textCleanupFragmentRetrySafety.issues.length === 0 &&
+      retryFallbackTextCleanupFragmentRetrySafety?.status === "eligible" &&
+      retryFallbackTextCleanupFragmentRetrySafety.issues.length === 0 &&
       parallelTextFanInRetrySafety?.status === "eligible" &&
       parallelTextFanInRetrySafety.issues.length === 0 &&
       fullWorkflowRetrySafety?.status === "not_requested" &&
@@ -11461,7 +11627,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings, entry/exit contracts, and retry-safety facts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlRetry=${JSON.stringify(controlBranchRetrySafety)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterRetry=${JSON.stringify(controlValueRouterRetrySafety)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupRetry=${JSON.stringify(textCleanupFragmentRetrySafety)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextRetry=${JSON.stringify(parallelTextFanInRetrySafety)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} fullRetry=${JSON.stringify(fullWorkflowRetrySafety)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings, entry/exit contracts, and retry-safety facts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlRetry=${JSON.stringify(controlBranchRetrySafety)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterRetry=${JSON.stringify(controlValueRouterRetrySafety)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupRetry=${JSON.stringify(textCleanupFragmentRetrySafety)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} retryFallback=${JSON.stringify(retryFallbackTextCleanupFragment)} retryFallbackContract=${JSON.stringify(retryFallbackTextCleanupFragmentContract)} retryFallbackRetry=${JSON.stringify(retryFallbackTextCleanupFragmentRetrySafety)} retryFallbackInstantiated=${JSON.stringify(instantiatedRetryFallbackTextCleanupFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextRetry=${JSON.stringify(parallelTextFanInRetrySafety)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} fullRetry=${JSON.stringify(fullWorkflowRetrySafety)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===
@@ -11732,6 +11898,26 @@ async function runValidationSpec(): Promise<void> {
       builderMetadataRoundtrip[0]?.runtimeMeta?.templateLabel ===
         "LLM 接管起步",
     `G.2c: Expected builder-facing graph metadata to roundtrip through graph document codec. Actual: ${JSON.stringify(builderMetadataRoundtrip[0]?.runtimeMeta)}`,
+  );
+
+  const retryFallbackTemplate = findBuilderWorkflowTemplate(
+    "starter_retry_fallback_cleanup",
+  );
+  const retryFallbackTemplateGraph = retryFallbackTemplate?.createGraph();
+  assert(
+    retryFallbackTemplate?.id === "starter_retry_fallback_cleanup" &&
+      retryFallbackTemplateGraph?.runtimeMeta?.templateId ===
+        "starter_retry_fallback_cleanup" &&
+      retryFallbackTemplateGraph?.runtimeMeta?.builderMode === "simple" &&
+      retryFallbackTemplateGraph?.nodes.some(
+        (node) => node.moduleId === "out_reply_inject",
+      ) &&
+      retryFallbackTemplateGraph?.nodes.some(
+        (node) =>
+          node.runtimeMeta?.retryBoundaryModuleId ===
+          "frag_retry_fallback_text_cleanup",
+      ),
+    `G.2d: Expected builder template library to expose retry fallback cleanup starter graph with instantiated retry boundary fragment. Actual template=${JSON.stringify(retryFallbackTemplate)} graph=${JSON.stringify(retryFallbackTemplateGraph)}`,
   );
 
   // G.3: Legacy flow absorption via readGraphDocumentEnvelope

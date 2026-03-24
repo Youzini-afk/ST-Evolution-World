@@ -1,4 +1,7 @@
-import { resolveModuleConfigWithDefaults } from "./module-registry";
+import {
+  instantiateCompositeTemplate,
+  resolveModuleConfigWithDefaults,
+} from "./module-registry";
 import type {
   WorkbenchBuilderMode,
   WorkbenchEdge,
@@ -255,6 +258,64 @@ function createRequestTemplateStarterGraph(): WorkbenchGraph {
   });
 }
 
+function createRetryFallbackCleanupStarterGraph(): WorkbenchGraph {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "frag_retry_fallback_text_cleanup",
+    origin: { x: 300, y: 60 },
+    exposedConfig: {
+      retry_attempts: 2,
+    },
+  });
+  if (!fragment) {
+    return createReplyInjectStarterGraph();
+  }
+
+  const textEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "text_in",
+  );
+  const textExit = fragment.contract.exits.find(
+    (entry) => entry.key === "text_out",
+  );
+  if (!textEntry || textEntry.targets.length === 0 || !textExit) {
+    return createReplyInjectStarterGraph();
+  }
+
+  const nodes = [
+    createNode("src_text", "src_user_input", 40, 220),
+    ...fragment.nodes,
+    createNode("out_reply", "out_reply_inject", 1600, 240),
+  ];
+  const edges = [
+    ...fragment.edges,
+    ...textEntry.targets.map((target, index) =>
+      createEdge(
+        `edge_retry_cleanup_input_${index}`,
+        "src_text",
+        "text",
+        target.nodeId,
+        target.portId,
+      ),
+    ),
+    createEdge(
+      "edge_retry_cleanup_to_reply",
+      textExit.source.nodeId,
+      textExit.source.portId,
+      "out_reply",
+      "instruction",
+    ),
+  ];
+
+  return createBaseGraph({
+    templateId: "starter_retry_fallback_cleanup",
+    name: "重试回退文本清洗起步",
+    timing: "before_reply",
+    ownership: "assistive",
+    builderMode: "simple",
+    nodes,
+    edges,
+  });
+}
+
 export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinition[] =
   [
     {
@@ -316,6 +377,18 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       recommendedBuilderMode: "advanced",
       timing: "after_reply",
       createGraph: createRequestTemplateStarterGraph,
+    },
+    {
+      id: "starter_retry_fallback_cleanup",
+      label: "重试回退文本清洗",
+      summary: "文本清洗先走 retry-safe 片段；若重试耗尽，则自动回退原文继续回复注入。",
+      description:
+        "适合作为 creator-oriented retry fallback 起步图。你可以先直接用模板，再展开内部片段，把成功链路和回退链路继续改成自己的工作流。",
+      tags: ["retry fallback", "文本清洗", "assistive"],
+      ownership: "assistive",
+      recommendedBuilderMode: "simple",
+      timing: "before_reply",
+      createGraph: createRetryFallbackCleanupStarterGraph,
     },
   ];
 
