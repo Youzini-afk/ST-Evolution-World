@@ -955,6 +955,44 @@ const COMPOSE_MODULES: ModuleBlueprint[] = [
       },
     ],
   },
+  {
+    moduleId: "cmp_text_concat",
+    label: "文本合流",
+    category: "compose",
+    color: "#10b981",
+    icon: "≋",
+    description:
+      "按顺序拼接两段文本，适合作为并行分支 fan-in 后的稳定数据出口。",
+    ports: [
+      textIn("a", "文本 A"),
+      textIn("b", "文本 B"),
+      {
+        ...textIn("separator", "分隔符"),
+        optional: true,
+      },
+      textOut("text_out", "合流结果"),
+    ],
+    defaultConfig: {
+      separator: "\n",
+      skip_empty: true,
+    },
+    configSchema: [
+      {
+        key: "separator",
+        label: "默认分隔符",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "当 separator 输入未接线时，使用这里的分隔符连接两段文本。",
+      },
+      {
+        key: "skip_empty",
+        label: "跳过空文本",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用后会跳过空字符串或缺失值，避免生成多余分隔符。",
+      },
+    ],
+  },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -1921,6 +1959,146 @@ const COMPOSITE_MODULES: ModuleBlueprint[] = [
           label: "清洗结果",
           source: { nodeId: "regex_process", portId: "text_out" },
           description: "导出经过剥离和正则处理后的最终文本。",
+        },
+      ],
+    },
+    isComposite: true,
+  },
+  {
+    moduleId: "frag_parallel_text_fan_in",
+    label: "⇉ 并行文本合流片段",
+    category: "control",
+    color: "#f97316",
+    icon: "⇉",
+    description:
+      "命名 fragment：两条文本 lane 并行执行，完成后通过 join 汇合，再输出稳定的文本合流结果。",
+    ports: [
+      {
+        id: "activation",
+        label: "激活",
+        direction: "in",
+        dataType: "activation",
+        optional: true,
+      },
+      textIn("left_text", "左侧文本"),
+      textIn("right_text", "右侧文本"),
+      textOut("text_out", "合流结果"),
+    ],
+    defaultConfig: {
+      separator: "\n",
+      skip_empty: true,
+    },
+    compositeKind: "fragment",
+    configSchema: [
+      {
+        key: "separator",
+        label: "分隔符",
+        type: "text",
+        exposeInSimpleMode: false,
+        description: "写入内部文本合流节点的默认分隔符。",
+      },
+      {
+        key: "skip_empty",
+        label: "跳过空文本",
+        type: "boolean",
+        exposeInSimpleMode: false,
+        description: "启用后内部合流节点会跳过空文本 lane。",
+      },
+    ],
+    compositeTemplate: {
+      nodes: [
+        compositeNode("lane_left", "cmp_passthrough", 0, -120, {
+          _label: "Lane Left",
+        }),
+        compositeNode("lane_right", "cmp_passthrough", 0, 120, {
+          _label: "Lane Right",
+        }),
+        compositeNode("join_parallel", "ctl_join", 280, 0, {
+          _label: "并行汇合",
+          mode: "all",
+        }),
+        compositeNode("merge_text", "cmp_text_concat", 560, 0, {
+          _label: "文本合流",
+        }),
+      ],
+      edges: [
+        compositeEdge(
+          "edge_left_done",
+          "lane_left",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "join_parallel",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_right_done",
+          "lane_right",
+          RESERVED_ACTIVATION_RESULT_PORT_ID,
+          "join_parallel",
+          "branches",
+        ),
+        compositeEdge(
+          "edge_join_to_merge",
+          "join_parallel",
+          "joined",
+          "merge_text",
+          RESERVED_ACTIVATION_PORT_ID,
+        ),
+        compositeEdge(
+          "edge_left_to_merge",
+          "lane_left",
+          "value_out",
+          "merge_text",
+          "a",
+        ),
+        compositeEdge(
+          "edge_right_to_merge",
+          "lane_right",
+          "value_out",
+          "merge_text",
+          "b",
+        ),
+      ],
+      configBindings: [
+        {
+          sourceKey: "separator",
+          targetNodeId: "merge_text",
+          targetConfigKey: "separator",
+        },
+        {
+          sourceKey: "skip_empty",
+          targetNodeId: "merge_text",
+          targetConfigKey: "skip_empty",
+        },
+      ],
+      entryBindings: [
+        {
+          key: "activation",
+          label: "激活",
+          targets: [
+            { nodeId: "lane_left", portId: RESERVED_ACTIVATION_PORT_ID },
+            { nodeId: "lane_right", portId: RESERVED_ACTIVATION_PORT_ID },
+          ],
+          description: "把同一个激活信号 fan-out 到两条 lane，显式表达并行启动。",
+        },
+        {
+          key: "left_text",
+          label: "左侧文本",
+          targets: [{ nodeId: "lane_left", portId: "value" }],
+          description: "注入左侧并行 lane 的文本输入。",
+        },
+        {
+          key: "right_text",
+          label: "右侧文本",
+          targets: [{ nodeId: "lane_right", portId: "value" }],
+          description: "注入右侧并行 lane 的文本输入。",
+        },
+      ],
+      exitBindings: [
+        {
+          key: "text_out",
+          label: "合流结果",
+          source: { nodeId: "merge_text", portId: "text_out" },
+          description: "导出并行 lane 全部完成后的合流文本。",
         },
       ],
     },

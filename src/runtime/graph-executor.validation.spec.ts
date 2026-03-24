@@ -1644,6 +1644,149 @@ function makeTextCleanupFragmentGraph(): {
   };
 }
 
+function makeParallelTextFanInFragmentGraph(
+  options: {
+    separator?: string;
+  } = {},
+): {
+  graph: WorkbenchGraph;
+  nodeIds: {
+    leftLane: string;
+    rightLane: string;
+    join: string;
+    output: string;
+  };
+} {
+  const fragment = instantiateCompositeTemplate({
+    moduleId: "frag_parallel_text_fan_in",
+    origin: { x: 320, y: 0 },
+    exposedConfig: {
+      separator: options.separator ?? " | ",
+      skip_empty: true,
+    },
+  });
+  if (!fragment) {
+    throw new Error("Expected frag_parallel_text_fan_in to instantiate.");
+  }
+
+  const activationEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "activation",
+  );
+  const leftEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "left_text",
+  );
+  const rightEntry = fragment.contract.entries.find(
+    (entry) => entry.key === "right_text",
+  );
+  const textExit = fragment.contract.exits.find(
+    (entry) => entry.key === "text_out",
+  );
+  if (
+    !activationEntry ||
+    !leftEntry ||
+    !rightEntry ||
+    !textExit ||
+    activationEntry.targets.length !== 2 ||
+    leftEntry.targets.length !== 1 ||
+    rightEntry.targets.length !== 1
+  ) {
+    throw new Error(
+      `Expected parallel text fan-in fragment contract to resolve. Actual: ${JSON.stringify(fragment.contract)}`,
+    );
+  }
+
+  const leftLaneId = leftEntry.targets[0].nodeId;
+  const rightLaneId = rightEntry.targets[0].nodeId;
+  const joinNodeId =
+    fragment.nodes.find((node) => node.config?._label === "并行汇合")?.id ??
+    "";
+  if (!leftLaneId || !rightLaneId || !joinNodeId) {
+    throw new Error(
+      `Expected parallel text fan-in fragment node ids to resolve. Actual: ${JSON.stringify(fragment.nodes)}`,
+    );
+  }
+
+  return {
+    graph: {
+      id: "graph_parallel_text_fan_in_fragment",
+      name: "Parallel Text Fan-In Fragment Graph",
+      enabled: true,
+      timing: "after_reply",
+      priority: 0,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      runtimeMeta: { schemaVersion: 1, runtimeKind: "control" },
+      nodes: [
+        {
+          id: "src_activation",
+          moduleId: "src_user_input",
+          position: { x: 0, y: -140 },
+          config: {},
+          collapsed: false,
+        },
+        {
+          id: "ctl_if",
+          moduleId: "ctl_if",
+          position: { x: 220, y: -140 },
+          config: {},
+          collapsed: false,
+        },
+        {
+          id: "src_left",
+          moduleId: "cfg_system_prompt",
+          position: { x: 0, y: 40 },
+          config: { content: "left lane" },
+          collapsed: false,
+        },
+        {
+          id: "src_right",
+          moduleId: "cfg_system_prompt",
+          position: { x: 0, y: 220 },
+          config: { content: "right lane" },
+          collapsed: false,
+        },
+        ...fragment.nodes,
+      ],
+      edges: [
+        ...fragment.edges,
+        {
+          id: "edge_activation_condition",
+          source: "src_activation",
+          sourcePort: "text",
+          target: "ctl_if",
+          targetPort: "condition",
+        },
+        ...activationEntry.targets.map((target, index) => ({
+          id: `edge_parallel_activation_${index}`,
+          source: "ctl_if",
+          sourcePort: "then",
+          target: target.nodeId,
+          targetPort: target.portId,
+        })),
+        {
+          id: "edge_parallel_left_text",
+          source: "src_left",
+          sourcePort: "prompt",
+          target: leftEntry.targets[0].nodeId,
+          targetPort: leftEntry.targets[0].portId,
+        },
+        {
+          id: "edge_parallel_right_text",
+          source: "src_right",
+          sourcePort: "prompt",
+          target: rightEntry.targets[0].nodeId,
+          targetPort: rightEntry.targets[0].portId,
+        },
+      ],
+    },
+    nodeIds: {
+      leftLane: leftLaneId,
+      rightLane: rightLaneId,
+      join: joinNodeId,
+      output: textExit.source.nodeId,
+    },
+  };
+}
+
 function makeOptionalMainTakeoverGraph(
   graph: WorkbenchGraph = makeBaseGraph(),
 ): WorkbenchGraph {
@@ -3303,6 +3446,67 @@ async function runValidationSpec(): Promise<void> {
       textCleanupResult.finalOutputs[textCleanupFragmentFixture.exitNodeId]
         ?.text_out === "fragment clean text",
     `Expected text cleanup fragment to inline into the graph and expose its contracted exit output. Actual: ${JSON.stringify(textCleanupResult)}`,
+  );
+
+  const parallelTextFanInFixture = makeParallelTextFanInFragmentGraph();
+  const parallelTextFanInValidation = validateGraph(
+    parallelTextFanInFixture.graph,
+  );
+  assert(
+    parallelTextFanInValidation.errors.length === 0,
+    `Expected frag_parallel_text_fan_in graph fixture to validate. Actual: ${JSON.stringify(parallelTextFanInValidation.errors)}`,
+  );
+  const parallelTextFanInActiveResult = await executeGraph(
+    parallelTextFanInFixture.graph,
+    makeExecutionContext({
+      userInput: "fanout",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const parallelFanInJoinResult = parallelTextFanInActiveResult.moduleResults.find(
+    (result) => result.nodeId === parallelTextFanInFixture.nodeIds.join,
+  );
+  assert(
+    parallelTextFanInActiveResult.ok &&
+      parallelTextFanInActiveResult.moduleResults.find(
+        (result) => result.nodeId === parallelTextFanInFixture.nodeIds.leftLane,
+      )?.status === "ok" &&
+      parallelTextFanInActiveResult.moduleResults.find(
+        (result) => result.nodeId === parallelTextFanInFixture.nodeIds.rightLane,
+      )?.status === "ok" &&
+      parallelFanInJoinResult?.outputs.joined === true &&
+      parallelFanInJoinResult.outputs.joined_count === 2 &&
+      parallelTextFanInActiveResult.finalOutputs[
+        parallelTextFanInFixture.nodeIds.output
+      ]?.text_out === "left lane | right lane",
+    `Expected parallel text fan-in fragment to fan out one activation into two lanes and merge both text outputs. Actual: ${JSON.stringify(parallelTextFanInActiveResult)}`,
+  );
+
+  const parallelTextFanInInactiveResult = await executeGraph(
+    parallelTextFanInFixture.graph,
+    makeExecutionContext({
+      userInput: "",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const inactiveParallelJoinResult =
+    parallelTextFanInInactiveResult.moduleResults.find(
+      (result) => result.nodeId === parallelTextFanInFixture.nodeIds.join,
+    );
+  assert(
+    parallelTextFanInInactiveResult.ok &&
+      parallelTextFanInInactiveResult.moduleResults.find(
+        (result) => result.nodeId === parallelTextFanInFixture.nodeIds.leftLane,
+      )?.status === "skipped" &&
+      parallelTextFanInInactiveResult.moduleResults.find(
+        (result) => result.nodeId === parallelTextFanInFixture.nodeIds.rightLane,
+      )?.status === "skipped" &&
+      inactiveParallelJoinResult?.outputs.joined === false &&
+      inactiveParallelJoinResult.outputs.pending_count === 2 &&
+      parallelTextFanInInactiveResult.finalOutputs[
+        parallelTextFanInFixture.nodeIds.output
+      ] === undefined,
+    `Expected parallel text fan-in fragment to keep fan-in output inactive when the shared activation is not selected. Actual: ${JSON.stringify(parallelTextFanInInactiveResult)}`,
   );
 
   const controlCompileRunLinkEnvelope =
@@ -10239,6 +10443,9 @@ async function runValidationSpec(): Promise<void> {
   const textCleanupFragment = compositeModules.find(
     (module) => module.moduleId === "frag_text_cleanup_stage",
   );
+  const parallelTextFanInFragment = compositeModules.find(
+    (module) => module.moduleId === "frag_parallel_text_fan_in",
+  );
   const controlBranchContract = getCompositeTemplateContract(
     "pkg_control_branch_router",
   );
@@ -10247,6 +10454,9 @@ async function runValidationSpec(): Promise<void> {
   );
   const textCleanupFragmentContract = getCompositeTemplateContract(
     "frag_text_cleanup_stage",
+  );
+  const parallelTextFanInContract = getCompositeTemplateContract(
+    "frag_parallel_text_fan_in",
   );
   const instantiatedFullWorkflowPackage = instantiateCompositeTemplate({
     moduleId: "pkg_full_workflow",
@@ -10280,6 +10490,14 @@ async function runValidationSpec(): Promise<void> {
   const instantiatedTextCleanupFragment = instantiateCompositeTemplate({
     moduleId: "frag_text_cleanup_stage",
     origin: { x: 240, y: 740 },
+  });
+  const instantiatedParallelTextFanInFragment = instantiateCompositeTemplate({
+    moduleId: "frag_parallel_text_fan_in",
+    origin: { x: 240, y: 920 },
+    exposedConfig: {
+      separator: " | ",
+      skip_empty: true,
+    },
   });
   assert(
     controlBranchPackage?.compositeKind === "fragment" &&
@@ -10409,6 +10627,50 @@ async function runValidationSpec(): Promise<void> {
           entry.key === "text_out" &&
           entry.source.nodeId.includes("regex_process_"),
       ) &&
+      parallelTextFanInFragment?.compositeKind === "fragment" &&
+      parallelTextFanInFragment.compositeTemplate?.nodes.length === 4 &&
+      parallelTextFanInFragment.compositeTemplate.edges.length === 5 &&
+      parallelTextFanInFragment.configSchema?.some(
+        (field) => field.key === "separator",
+      ) &&
+      parallelTextFanInContract?.entries.some(
+        (entry) =>
+          entry.key === "activation" &&
+          entry.targets.length === 2 &&
+          entry.targets.every((target) => target.kind === "activation"),
+      ) &&
+      parallelTextFanInContract.entries.some(
+        (entry) =>
+          entry.key === "left_text" &&
+          entry.targets[0]?.nodeLabel === "Lane Left",
+      ) &&
+      parallelTextFanInContract.entries.some(
+        (entry) =>
+          entry.key === "right_text" &&
+          entry.targets[0]?.nodeLabel === "Lane Right",
+      ) &&
+      parallelTextFanInContract.exits.some(
+        (entry) =>
+          entry.key === "text_out" &&
+          entry.source.nodeLabel === "文本合流" &&
+          entry.source.portId === "text_out",
+      ) &&
+      instantiatedParallelTextFanInFragment?.nodes.some(
+        (node) =>
+          node.moduleId === "cmp_text_concat" &&
+          node.config.separator === " | " &&
+          node.config.skip_empty === true,
+      ) &&
+      instantiatedParallelTextFanInFragment.contract.entries.some(
+        (entry) =>
+          entry.key === "activation" &&
+          entry.targets.every((target) => target.nodeId.includes("lane_")),
+      ) &&
+      instantiatedParallelTextFanInFragment.contract.exits.some(
+        (entry) =>
+          entry.key === "text_out" &&
+          entry.source.nodeId.includes("merge_text_"),
+      ) &&
       fullWorkflowPackage?.compositeTemplate?.nodes.length === 6 &&
       fullWorkflowPackage.compositeTemplate.edges.length === 5 &&
       fullWorkflowPackage.configSchema?.some(
@@ -10432,7 +10694,7 @@ async function runValidationSpec(): Promise<void> {
           node.config.request_thinking === true &&
           node.config.reasoning_effort === "high",
       ),
-    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
+    `Expected composite packages and fragments to expose instantiable builder subgraphs with configurable bindings and entry/exit contracts. Actual control=${JSON.stringify(controlBranchPackage)} controlContract=${JSON.stringify(controlBranchContract)} controlInstantiated=${JSON.stringify(instantiatedControlBranchPackage)} valueRouter=${JSON.stringify(controlValueRouterPackage)} valueRouterContract=${JSON.stringify(controlValueRouterContract)} valueRouterInstantiated=${JSON.stringify(instantiatedValueRouterPackage)} textCleanup=${JSON.stringify(textCleanupFragment)} textCleanupContract=${JSON.stringify(textCleanupFragmentContract)} textCleanupInstantiated=${JSON.stringify(instantiatedTextCleanupFragment)} parallelText=${JSON.stringify(parallelTextFanInFragment)} parallelTextContract=${JSON.stringify(parallelTextFanInContract)} parallelTextInstantiated=${JSON.stringify(instantiatedParallelTextFanInFragment)} full=${JSON.stringify(fullWorkflowPackage)} worldbook=${JSON.stringify(worldbookPackage)} instantiated=${JSON.stringify(instantiatedFullWorkflowPackage)}`,
   );
   assert(
     srcUserResolve.descriptor.metadataSummary?.helpSummary ===

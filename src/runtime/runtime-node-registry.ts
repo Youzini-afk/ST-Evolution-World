@@ -945,6 +945,47 @@ export function registerBuiltinHandlers(modules: RuntimeImplModules): void {
   });
 
   registerNodeHandler({
+    moduleId: "cmp_text_concat",
+    handlerId: "cmp_text_concat",
+    kind: "builtin",
+    sideEffect: "pure",
+    execute: async ({ node, inputs }) => {
+      const normalizeText = (value: unknown): string => {
+        if (typeof value === "string") {
+          return value;
+        }
+        if (value === null || value === undefined) {
+          return "";
+        }
+        if (typeof value === "number" || typeof value === "boolean") {
+          return String(value);
+        }
+        try {
+          return JSON.stringify(value);
+        } catch {
+          return String(value);
+        }
+      };
+
+      const parts = [normalizeText(inputs.a), normalizeText(inputs.b)];
+      const separatorCandidate =
+        typeof inputs.separator === "string"
+          ? inputs.separator
+          : normalizeText(node.config.separator ?? "\n");
+      const joinableParts =
+        node.config.skip_empty !== false
+          ? parts.filter((part) => part.length > 0)
+          : parts;
+      return {
+        outputs: {
+          text_out: joinableParts.join(separatorCandidate),
+        },
+        handlerId: "cmp_text_concat",
+      };
+    },
+  });
+
+  registerNodeHandler({
     moduleId: "ctl_if",
     handlerId: "ctl_if",
     kind: "builtin",
