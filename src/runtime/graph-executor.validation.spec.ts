@@ -12188,6 +12188,12 @@ async function runValidationSpec(): Promise<void> {
       retryFallbackTemplate.templateKind === "starter" &&
       retryFallbackTemplate.featureFamily === "retry_fallback" &&
       retryFallbackTemplate.featured === true &&
+      retryFallbackTemplate.learningHighlights.includes(
+        "包含 retry-safe boundary",
+      ) &&
+      retryFallbackTemplate.learningHighlights.includes(
+        "自动消费 retry_exhausted",
+      ) &&
       retryFallbackTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_cleanup" &&
       retryFallbackTemplateGraph?.runtimeMeta?.builderMode === "simple" &&
@@ -12212,6 +12218,12 @@ async function runValidationSpec(): Promise<void> {
       retryFallbackCompositionTemplate.templateKind === "composition_lab" &&
       retryFallbackCompositionTemplate.featureFamily === "retry_fallback" &&
       retryFallbackCompositionTemplate.featured === true &&
+      retryFallbackCompositionTemplate.learningHighlights.includes(
+        "显式展示 retry_exhausted 消费",
+      ) &&
+      retryFallbackCompositionTemplate.learningHighlights.includes(
+        "拆开成功链路与回退链路",
+      ) &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.templateId ===
         "starter_retry_fallback_composition_lab" &&
       retryFallbackCompositionTemplateGraph?.runtimeMeta?.builderMode ===

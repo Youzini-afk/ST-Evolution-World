@@ -138,6 +138,21 @@
               <p class="ew-builder-workbench__template-description">
                 {{ template.description }}
               </p>
+              <div
+                v-if="template.learningHighlights.length > 0"
+                class="ew-builder-workbench__stack"
+              >
+                <div class="ew-builder-workbench__summary-label">学习重点</div>
+                <div class="ew-builder-workbench__template-tags">
+                  <span
+                    v-for="highlight in template.learningHighlights"
+                    :key="`${template.id}-learning-${highlight}`"
+                    class="ew-builder-workbench__template-tag"
+                  >
+                    {{ highlight }}
+                  </span>
+                </div>
+              </div>
               <div class="ew-builder-workbench__template-tags">
                 <span
                   v-for="tag in template.tags"
@@ -537,6 +552,18 @@
             >
               {{ activeTemplateDescription }}
             </p>
+            <template v-if="activeTemplateLearningHighlights.length > 0">
+              <div class="ew-builder-workbench__summary-label">模板学习重点</div>
+              <div class="ew-builder-workbench__template-tags">
+                <span
+                  v-for="highlight in activeTemplateLearningHighlights"
+                  :key="`active-template-learning-${highlight}`"
+                  class="ew-builder-workbench__template-tag"
+                >
+                  {{ highlight }}
+                </span>
+              </div>
+            </template>
             <p class="ew-builder-workbench__text">
               {{ generationOwnershipHint }}
             </p>
@@ -1169,6 +1196,10 @@ const activeTemplateDescription = computed(() => {
   return activeTemplate.value?.description ?? null;
 });
 
+const activeTemplateLearningHighlights = computed(() => {
+  return activeTemplate.value?.learningHighlights ?? [];
+});
+
 const isActiveGraphEffectivelyEmpty = computed(() => {
   return Boolean(
     activeGraph.value &&
@@ -1356,6 +1387,7 @@ function compositeContractHasExit(
 
 function getCompositeLearningLabels(moduleId: string): string[] {
   const blueprint = getModuleBlueprint(moduleId);
+  const retrySafety = getCompositeRetrySafety(moduleId);
   const labels: string[] = [];
   if (blueprint.kitFamily) {
     labels.push(formatBuilderKitFamily(blueprint.kitFamily));
@@ -1365,6 +1397,11 @@ function getCompositeLearningLabels(moduleId: string): string[] {
   }
   if (blueprint.recommendedBuilderMode) {
     labels.push(`建议 ${formatBuilderMode(blueprint.recommendedBuilderMode)}`);
+  }
+  if (retrySafety?.requested === true) {
+    labels.push(
+      retrySafety.eligible ? "retry-safe 边界" : "声明立即重试边界",
+    );
   }
   if (compositeContractHasExit(moduleId, "retry_exhausted")) {
     labels.push("输出 retry_exhausted");

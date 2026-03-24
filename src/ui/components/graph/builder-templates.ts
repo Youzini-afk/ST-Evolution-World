@@ -18,6 +18,7 @@ export interface BuilderWorkflowTemplateDefinition {
   summary: string;
   description: string;
   tags: readonly string[];
+  learningHighlights: readonly string[];
   templateKind: BuilderTemplateKind;
   featureFamily: BuilderTemplateFeatureFamily;
   featured?: boolean;
@@ -442,6 +443,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "适合已经知道要搭什么的人。会保留 simple/advanced 与生成所有权占位，不需要先手写图文档。",
       tags: ["空白画布", "自定义", "Builder 骨架"],
+      learningHighlights: [
+        "自由画布起步",
+        "保留 Builder 元数据骨架",
+        "适合直接开画",
+      ],
       templateKind: "starter",
       featureFamily: "general",
       ownership: "assistive",
@@ -456,6 +462,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "这是最适合新手理解的起步图：先拿到用户输入，再做一层净化，最后把结果注入回复指令。",
       tags: ["辅助工作流", "回复注入", "simple"],
+      learningHighlights: [
+        "Simple 起步图",
+        "辅助工作流入口",
+        "用户输入到回复注入",
+      ],
       templateKind: "starter",
       featureFamily: "reply_inject",
       featured: true,
@@ -471,6 +482,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "用于搭建“渐进主生成接管”骨架。它不会切死 legacy，但会把主生成 ownership 的入口与图结构先立起来。",
       tags: ["主生成预备", "LLM", "takeover"],
+      learningHighlights: [
+        "渐进主生成接管预备",
+        "保留 legacy fallback",
+        "Advanced 起步骨架",
+      ],
       templateKind: "starter",
       featureFamily: "main_takeover",
       featured: true,
@@ -486,6 +502,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "这类图适合做辅助结果链路，例如把工作流结果挂回当前对话楼层，后面再逐步补更复杂的处理节点。",
       tags: ["后处理", "楼层绑定", "assistive"],
+      learningHighlights: [
+        "结果绑定起步",
+        "回复后链路",
+        "适合后处理与可视化",
+      ],
       templateKind: "starter",
       featureFamily: "floor_binding",
       ownership: "assistive",
@@ -500,6 +521,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "适合先试模板、占位 JSON 和调试 body 结构，再决定要不要继续接到更完整的执行链路。",
       tags: ["模板实验", "JSON", "advanced"],
+      learningHighlights: [
+        "Composition Lab",
+        "JSON Body 试验台",
+        "适合拆解请求模板",
+      ],
       templateKind: "composition_lab",
       featureFamily: "request_template",
       ownership: "assistive",
@@ -514,6 +540,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "适合作为 creator-oriented retry fallback 起步图。你可以先直接用模板，再展开内部片段，把成功链路和回退链路继续改成自己的工作流。",
       tags: ["retry fallback", "文本清洗", "assistive"],
+      learningHighlights: [
+        "包含 retry-safe boundary",
+        "自动消费 retry_exhausted",
+        "Simple 起步图",
+      ],
       templateKind: "starter",
       featureFamily: "retry_fallback",
       featured: true,
@@ -530,6 +561,11 @@ export const BUILDER_WORKFLOW_TEMPLATES: readonly BuilderWorkflowTemplateDefinit
       description:
         "这张图不会把 retry fallback 封进黑盒，而是明确展示 retry_exhausted、primary_value、fallback_value 和最终输出的组合关系，方便你继续替换成功链路或回退链路。",
       tags: ["retry fallback", "组合范本", "advanced"],
+      learningHighlights: [
+        "显式展示 retry_exhausted 消费",
+        "拆开成功链路与回退链路",
+        "Advanced 拆解范本",
+      ],
       templateKind: "composition_lab",
       featureFamily: "retry_fallback",
       featured: true,
