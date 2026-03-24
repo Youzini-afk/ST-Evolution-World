@@ -1834,6 +1834,155 @@ function makeTransientProbeRetryGraph(): WorkbenchGraph {
   };
 }
 
+function makeFragmentRetryBoundaryGraph(): WorkbenchGraph {
+  return {
+    id: "graph_fragment_retry_boundary",
+    name: "Fragment Retry Boundary Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "probe_stage_a",
+        moduleId: "cmp_transient_probe",
+        position: { x: 220, y: 0 },
+        config: {
+          fail_attempts_before_success: 0,
+          failure_key: "fragment_stage_a",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "fragment_retry_boundary",
+          retryBoundaryModuleId: "frag_retry_boundary",
+          retryAttemptLimit: 2,
+        },
+      },
+      {
+        id: "probe_stage_b",
+        moduleId: "cmp_transient_probe",
+        position: { x: 460, y: 0 },
+        config: {
+          fail_attempts_before_success: 1,
+          failure_key: "fragment_stage_b",
+          failure_message: "fragment retry expected failure",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "fragment_retry_boundary",
+          retryBoundaryModuleId: "frag_retry_boundary",
+          retryAttemptLimit: 2,
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "edge_fragment_retry_src",
+        source: "src_text",
+        sourcePort: "text",
+        target: "probe_stage_a",
+        targetPort: "value",
+      },
+      {
+        id: "edge_fragment_retry_stage",
+        source: "probe_stage_a",
+        sourcePort: "value_out",
+        target: "probe_stage_b",
+        targetPort: "value",
+      },
+    ],
+  };
+}
+
+function makeNonContiguousRetryBoundaryGraph(): WorkbenchGraph {
+  return {
+    id: "graph_non_contiguous_retry_boundary",
+    name: "Non Contiguous Retry Boundary Graph",
+    enabled: true,
+    timing: "after_reply",
+    priority: 0,
+    viewport: { x: 0, y: 0, zoom: 1 },
+    runtimeMeta: { schemaVersion: 1, runtimeKind: "dataflow" },
+    nodes: [
+      {
+        id: "src_text",
+        moduleId: "src_user_input",
+        position: { x: 0, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "boundary_start",
+        moduleId: "cmp_transient_probe",
+        position: { x: 220, y: 0 },
+        config: {
+          fail_attempts_before_success: 0,
+          failure_key: "retry_non_contiguous_a",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "retry_non_contiguous",
+          retryBoundaryModuleId: "frag_retry_non_contiguous",
+          retryAttemptLimit: 2,
+        },
+      },
+      {
+        id: "outside_mid",
+        moduleId: "cmp_passthrough",
+        position: { x: 460, y: 0 },
+        config: {},
+        collapsed: false,
+      },
+      {
+        id: "boundary_end",
+        moduleId: "cmp_transient_probe",
+        position: { x: 700, y: 0 },
+        config: {
+          fail_attempts_before_success: 0,
+          failure_key: "retry_non_contiguous_b",
+        },
+        collapsed: false,
+        runtimeMeta: {
+          retryBoundaryId: "retry_non_contiguous",
+          retryBoundaryModuleId: "frag_retry_non_contiguous",
+          retryAttemptLimit: 2,
+        },
+      },
+    ],
+    edges: [
+      {
+        id: "edge_non_contiguous_src",
+        source: "src_text",
+        sourcePort: "text",
+        target: "boundary_start",
+        targetPort: "value",
+      },
+      {
+        id: "edge_non_contiguous_mid",
+        source: "boundary_start",
+        sourcePort: "value_out",
+        target: "outside_mid",
+        targetPort: "input",
+      },
+      {
+        id: "edge_non_contiguous_back",
+        source: "outside_mid",
+        sourcePort: "output",
+        target: "boundary_end",
+        targetPort: "value",
+      },
+    ],
+  };
+}
+
 function makeUnsafeHostRetryGraph(): WorkbenchGraph {
   return {
     id: "graph_unsafe_host_retry",
@@ -2762,6 +2911,13 @@ async function runValidationSpec(): Promise<void> {
     unsafeHostRetryValidation.errors,
     "writes_host 节点不能进入 retry-safe 立即重试范围",
   );
+  const nonContiguousRetryValidation = validateGraph(
+    makeNonContiguousRetryBoundaryGraph(),
+  );
+  assertHasMessage(
+    nonContiguousRetryValidation.errors,
+    "必须形成连续的拓扑执行区域",
+  );
 
   const defaultBackfilledConfigGraph = makeBaseGraph();
   defaultBackfilledConfigGraph.nodes.push({
@@ -3655,11 +3811,6 @@ async function runValidationSpec(): Promise<void> {
           event.retry?.retryAttempt === 2 &&
           event.retry?.retryAttemptLimit === 2,
       ) &&
-      transientProbeRetryResult.runEvents.some(
-        (event) =>
-          event.type === "heartbeat" &&
-          event.heartbeat?.message?.includes("准备立即重试"),
-      ) &&
       transientProbeRetrySnapshot?.snapshot.overview.latestRetry?.outcome ===
         "succeeded" &&
       transientProbeRetrySnapshot?.snapshot.events.some(
@@ -3673,6 +3824,53 @@ async function runValidationSpec(): Promise<void> {
         (node) => node.nodeId === "probe_retry",
       )?.retryUsed === true,
     `Expected transient probe node to succeed on the second in-run immediate retry attempt. Actual: ${JSON.stringify(transientProbeRetryResult)}`,
+  );
+
+  const fragmentRetryBoundaryGraph = makeFragmentRetryBoundaryGraph();
+  const fragmentRetryBoundaryValidation = validateGraph(
+    fragmentRetryBoundaryGraph,
+  );
+  assert(
+    fragmentRetryBoundaryValidation.errors.length === 0,
+    `Expected fragment retry boundary graph fixture to validate. Actual: ${JSON.stringify(fragmentRetryBoundaryValidation.errors)}`,
+  );
+  const fragmentRetryBoundaryResult = await executeGraph(
+    fragmentRetryBoundaryGraph,
+    makeExecutionContext({
+      requestId: "req_fragment_retry_boundary",
+      userInput: "fragment retry payload",
+      settings: { experimentalGraphReuseSkip: true },
+    }),
+  );
+  const fragmentRetryStageA = fragmentRetryBoundaryResult.moduleResults.find(
+    (result) => result.nodeId === "probe_stage_a",
+  );
+  const fragmentRetryStageB = fragmentRetryBoundaryResult.moduleResults.find(
+    (result) => result.nodeId === "probe_stage_b",
+  );
+  const fragmentRetryStageAStarts =
+    fragmentRetryBoundaryResult.runEvents.filter(
+      (event) =>
+        event.type === "node_started" && event.nodeId === "probe_stage_a",
+    ).length;
+  const fragmentRetryStageBStarts =
+    fragmentRetryBoundaryResult.runEvents.filter(
+      (event) =>
+        event.type === "node_started" && event.nodeId === "probe_stage_b",
+    ).length;
+  assert(
+    fragmentRetryBoundaryResult.ok &&
+      fragmentRetryStageA?.status === "ok" &&
+      fragmentRetryStageA.retryAttempt === 2 &&
+      fragmentRetryStageA.retryAttemptLimit === 2 &&
+      fragmentRetryStageB?.status === "ok" &&
+      fragmentRetryStageB.retryAttempt === 2 &&
+      fragmentRetryStageB.retryAttemptLimit === 2 &&
+      fragmentRetryStageAStarts === 2 &&
+      fragmentRetryStageBStarts === 2 &&
+      fragmentRetryBoundaryResult.runArtifact?.latestRetry?.outcome ===
+        "succeeded",
+    `Expected retry boundary to rerun the whole fragment instead of retrying only the failed node. Actual: ${JSON.stringify(fragmentRetryBoundaryResult)}`,
   );
 
   const controlCompileRunLinkEnvelope =

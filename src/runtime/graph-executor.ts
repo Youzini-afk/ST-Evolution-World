@@ -1126,6 +1126,60 @@ function createRetrySummary(params: {
   };
 }
 
+interface RetryBoundaryRegion {
+  boundaryId: string;
+  boundaryModuleId: string;
+  retryAttemptLimit: number;
+  nodeIds: string[];
+  firstIndex: number;
+  lastIndex: number;
+}
+
+function collectRetryBoundaryRegions(params: {
+  nodeOrder: readonly string[];
+  nodeMap: ReadonlyMap<string, WorkbenchNode>;
+}): RetryBoundaryRegion[] {
+  const regions = new Map<string, RetryBoundaryRegion>();
+  for (const [index, nodeId] of params.nodeOrder.entries()) {
+    const node = params.nodeMap.get(nodeId);
+    if (!node) {
+      continue;
+    }
+    const retryAttemptLimit = Math.max(
+      1,
+      Math.trunc(Number(node.runtimeMeta?.retryAttemptLimit) || 0),
+    );
+    if (retryAttemptLimit <= 1) {
+      continue;
+    }
+    const boundaryIdCandidate =
+      typeof node.runtimeMeta?.retryBoundaryId === "string" &&
+      node.runtimeMeta.retryBoundaryId.trim()
+        ? node.runtimeMeta.retryBoundaryId.trim()
+        : `node:${node.id}`;
+    const boundaryModuleId =
+      typeof node.runtimeMeta?.retryBoundaryModuleId === "string" &&
+      node.runtimeMeta.retryBoundaryModuleId.trim()
+        ? node.runtimeMeta.retryBoundaryModuleId.trim()
+        : node.moduleId;
+    const existing = regions.get(boundaryIdCandidate);
+    if (existing) {
+      existing.nodeIds.push(nodeId);
+      existing.lastIndex = index;
+      continue;
+    }
+    regions.set(boundaryIdCandidate, {
+      boundaryId: boundaryIdCandidate,
+      boundaryModuleId,
+      retryAttemptLimit,
+      nodeIds: [nodeId],
+      firstIndex: index,
+      lastIndex: index,
+    });
+  }
+  return [...regions.values()].sort((left, right) => left.firstIndex - right.firstIndex);
+}
+
 function createGraphRunArtifact(params: {
   runId: string;
   graphId: string;
@@ -2399,8 +2453,101 @@ export async function executeCompiledGraph(
     executeImpls,
     outputImpls,
   };
+  const retryBoundaryRegions = collectRetryBoundaryRegions({
+    nodeOrder: plan.nodeOrder,
+    nodeMap,
+  });
+  const retryBoundaryRegionByNodeId = new Map<string, RetryBoundaryRegion>();
+  const retryBoundaryRegionByFirstIndex = new Map<number, RetryBoundaryRegion>();
+  for (const region of retryBoundaryRegions) {
+    retryBoundaryRegionByFirstIndex.set(region.firstIndex, region);
+    for (const nodeId of region.nodeIds) {
+      retryBoundaryRegionByNodeId.set(nodeId, region);
+    }
+  }
+  const retryBoundaryAttemptById = new Map<string, number>();
+  const pendingRetryRestartByBoundaryId = new Map<
+    string,
+    {
+      nodeId: string;
+      moduleId: string;
+      nodeIndex: number;
+      retryAttempt: number;
+      retryAttemptLimit: number;
+    }
+  >();
+  const clearRetryBoundaryExecutionState = (region: RetryBoundaryRegion) => {
+    const boundaryNodeIds = new Set(region.nodeIds);
+    for (const nodeId of boundaryNodeIds) {
+      nodeOutputs.delete(nodeId);
+      dirtyStateByNodeId.delete(nodeId);
+    }
+    for (let index = dirtySetEntries.length - 1; index >= 0; index--) {
+      if (boundaryNodeIds.has(dirtySetEntries[index]?.nodeId)) {
+        dirtySetEntries.splice(index, 1);
+      }
+    }
+    for (let index = reuseVerdicts.length - 1; index >= 0; index--) {
+      if (boundaryNodeIds.has(reuseVerdicts[index]?.nodeId)) {
+        reuseVerdicts.splice(index, 1);
+      }
+    }
+    for (let index = executionDecisions.length - 1; index >= 0; index--) {
+      if (boundaryNodeIds.has(executionDecisions[index]?.nodeId)) {
+        executionDecisions.splice(index, 1);
+      }
+    }
+    for (let index = moduleResults.length - 1; index >= 0; index--) {
+      if (boundaryNodeIds.has(moduleResults[index]?.nodeId)) {
+        moduleResults.splice(index, 1);
+      }
+    }
+    for (let index = nodeTraces.length - 1; index >= 0; index--) {
+      if (boundaryNodeIds.has(nodeTraces[index]?.nodeId)) {
+        nodeTraces.splice(index, 1);
+      }
+    }
+  };
 
-  for (const nodeId of plan.nodeOrder) {
+  for (let nodeOrderIndex = 0; nodeOrderIndex < plan.nodeOrder.length; nodeOrderIndex++) {
+    const boundaryRestart = retryBoundaryRegionByFirstIndex.get(nodeOrderIndex);
+    if (boundaryRestart) {
+      const pendingRestart = pendingRetryRestartByBoundaryId.get(
+        boundaryRestart.boundaryId,
+      );
+      if (pendingRestart) {
+        emitNodeEvent("retry_attempt_started", {
+          status: "running",
+          nodeId: pendingRestart.nodeId,
+          moduleId: pendingRestart.moduleId,
+          nodeIndex: pendingRestart.nodeIndex,
+          retry: createRetrySummary({
+            nodeId: pendingRestart.nodeId,
+            moduleId: pendingRestart.moduleId,
+            nodeIndex: pendingRestart.nodeIndex,
+            retryAttempt: pendingRestart.retryAttempt,
+            retryAttemptLimit: pendingRestart.retryAttemptLimit,
+            outcome: "started",
+          }),
+        });
+        emitNodeEvent("heartbeat", {
+          status: "running",
+          nodeId: pendingRestart.nodeId,
+          moduleId: pendingRestart.moduleId,
+          nodeIndex: pendingRestart.nodeIndex,
+          heartbeat: {
+            timestamp: Date.now(),
+            nodeId: pendingRestart.nodeId,
+            moduleId: pendingRestart.moduleId,
+            nodeIndex: pendingRestart.nodeIndex,
+            message: `节点 ${pendingRestart.nodeId} 正在触发第 ${pendingRestart.retryAttempt}/${pendingRestart.retryAttemptLimit} 次边界重试`,
+          },
+        });
+        pendingRetryRestartByBoundaryId.delete(boundaryRestart.boundaryId);
+      }
+    }
+
+    const nodeId = plan.nodeOrder[nodeOrderIndex];
     const planNode = planNodeMap.get(nodeId);
     if (!planNode) {
       throw new Error(`compile plan 缺少节点元数据: ${nodeId}`);
@@ -2422,10 +2569,16 @@ export async function executeCompiledGraph(
       ...node,
       config: resolveModuleConfigWithDefaults(node.moduleId, node.config),
     };
-    const retryAttemptLimit = Math.max(
-      1,
-      Math.trunc(Number(effectiveNode.runtimeMeta?.retryAttemptLimit) || 0),
-    );
+    const retryBoundaryRegion = retryBoundaryRegionByNodeId.get(node.id);
+    const retryAttemptLimit =
+      retryBoundaryRegion?.retryAttemptLimit ??
+      Math.max(
+        1,
+        Math.trunc(Number(effectiveNode.runtimeMeta?.retryAttemptLimit) || 0),
+      );
+    const retryAttemptUsed = retryBoundaryRegion
+      ? (retryBoundaryAttemptById.get(retryBoundaryRegion.boundaryId) ?? 1)
+      : 1;
 
     const nodeStart = Date.now();
     const inputs = collectNodeInputs(node, graph.edges, nodeOutputs);
@@ -2502,7 +2655,7 @@ export async function executeCompiledGraph(
     const reusableOutputs = previousReusableOutputsByNode.get(
       `${graph.id}:${node.id}`,
     );
-    const executionDecision = createExecutionDecision({
+    const baseExecutionDecision = createExecutionDecision({
       featureEnabled: reuseSkipEnabled,
       isActivationGated,
       activationActive,
@@ -2517,6 +2670,18 @@ export async function executeCompiledGraph(
       reuseVerdict,
       reusableOutputs,
     });
+    const executionDecision =
+      retryAttemptUsed > 1 &&
+      baseExecutionDecision.shouldSkip &&
+      baseExecutionDecision.reason === "skip_reuse_outputs"
+        ? {
+            ...baseExecutionDecision,
+            shouldExecute: true,
+            shouldSkip: false,
+            reason: "execute" as const,
+            reusableOutputHit: false,
+          }
+        : baseExecutionDecision;
     executionDecisions.push({
       nodeId: node.id,
       executionDecision,
@@ -2593,7 +2758,7 @@ export async function executeCompiledGraph(
         hostCommitSummary: planNode.hostCommitSummary,
         ...(retryAttemptLimit > 1
           ? {
-              retryAttempt: 1,
+              retryAttempt: retryAttemptUsed,
               retryAttemptLimit,
             }
           : {}),
@@ -2608,7 +2773,7 @@ export async function executeCompiledGraph(
         isFallback: false,
         ...(retryAttemptLimit > 1
           ? {
-              retryAttempt: 1,
+              retryAttempt: retryAttemptUsed,
               retryAttemptLimit,
             }
           : {}),
@@ -2652,89 +2817,22 @@ export async function executeCompiledGraph(
     let dispatchResult: NodeHandlerResult | null = null;
     let finalErrorMsg: string | null = null;
     let finalFailedAt: "dispatch" | "handler" = "handler";
-    let retryAttemptUsed = 1;
-
-    for (let retryAttempt = 1; retryAttempt <= retryAttemptLimit; retryAttempt++) {
-      retryAttemptUsed = retryAttempt;
-      if (retryAttempt > 1) {
-        const retryStarted = createRetrySummary({
-          nodeId: node.id,
-          moduleId: node.moduleId,
-          nodeIndex: planNode.order,
-          retryAttempt,
-          retryAttemptLimit,
-          outcome: "started",
-        });
-        emitNodeEvent("retry_attempt_started", {
-          status: "running",
-          nodeId: node.id,
-          moduleId: node.moduleId,
-          nodeIndex: planNode.order,
-          retry: retryStarted,
-        });
-        emitNodeEvent("heartbeat", {
-          status: "running",
-          nodeId: node.id,
-          moduleId: node.moduleId,
-          nodeIndex: planNode.order,
-          heartbeat: {
-            timestamp: Date.now(),
-            nodeId: node.id,
-            moduleId: node.moduleId,
-            nodeIndex: planNode.order,
-            message: `节点 ${node.id} 正在执行第 ${retryAttempt}/${retryAttemptLimit} 次尝试`,
-          },
-        });
-      }
-
-      try {
-        dispatchResult = await dispatchNodeExecution({
-          graph,
-          planNode,
-          node: effectiveNode,
-          inputs,
-          inputSources,
-          configuredInputEdgeCounts,
-          context,
-          modules: runtimeModules,
-        });
-        finalErrorMsg = null;
-        break;
-      } catch (error) {
-        finalErrorMsg = error instanceof Error ? error.message : String(error);
-        finalFailedAt =
-          error instanceof NodeExecutionError ? error.failedAt : "handler";
-        if (retryAttempt < retryAttemptLimit) {
-          emitNodeEvent("retry_attempt_failed", {
-            status: "running",
-            nodeId: node.id,
-            moduleId: node.moduleId,
-            nodeIndex: planNode.order,
-            retry: createRetrySummary({
-              nodeId: node.id,
-              moduleId: node.moduleId,
-              nodeIndex: planNode.order,
-              retryAttempt,
-              retryAttemptLimit,
-              outcome: "failed",
-            }),
-          });
-          emitNodeEvent("heartbeat", {
-            status: "running",
-            nodeId: node.id,
-            moduleId: node.moduleId,
-            nodeIndex: planNode.order,
-            heartbeat: {
-              timestamp: Date.now(),
-              nodeId: node.id,
-              moduleId: node.moduleId,
-              nodeIndex: planNode.order,
-              message: `节点 ${node.id} 第 ${retryAttempt}/${retryAttemptLimit} 次尝试失败，准备立即重试`,
-            },
-          });
-          continue;
-        }
-      }
+    try {
+      dispatchResult = await dispatchNodeExecution({
+        graph,
+        planNode,
+        node: effectiveNode,
+        inputs,
+        inputSources,
+        configuredInputEdgeCounts,
+        context,
+        modules: runtimeModules,
+      });
+      finalErrorMsg = null;
+    } catch (error) {
+      finalErrorMsg = error instanceof Error ? error.message : String(error);
+      finalFailedAt =
+        error instanceof NodeExecutionError ? error.failedAt : "handler";
     }
 
     if (dispatchResult) {
@@ -2784,7 +2882,12 @@ export async function executeCompiledGraph(
         });
       }
 
-      if (retryAttemptLimit > 1 && retryAttemptUsed > 1) {
+      if (
+        retryAttemptLimit > 1 &&
+        retryAttemptUsed > 1 &&
+        (!retryBoundaryRegion ||
+          nodeOrderIndex === retryBoundaryRegion.lastIndex)
+      ) {
         emitNodeEvent("retry_attempt_succeeded", {
           status: "running",
           nodeId: node.id,
@@ -2893,15 +2996,62 @@ export async function executeCompiledGraph(
       const errorMsg = finalErrorMsg ?? "unknown execution failure";
       const elapsedMs = Date.now() - nodeStart;
       const failedAt = finalFailedAt;
+      if (
+        retryAttemptLimit > 1 &&
+        retryAttemptUsed < retryAttemptLimit &&
+        retryBoundaryRegion
+      ) {
+        emitNodeEvent("retry_attempt_failed", {
+          status: "running",
+          nodeId: node.id,
+          moduleId: retryBoundaryRegion.boundaryModuleId,
+          nodeIndex: planNode.order,
+          retry: createRetrySummary({
+            nodeId: node.id,
+            moduleId: retryBoundaryRegion.boundaryModuleId,
+            nodeIndex: planNode.order,
+            retryAttempt: retryAttemptUsed,
+            retryAttemptLimit,
+            outcome: "failed",
+          }),
+        });
+        emitNodeEvent("heartbeat", {
+          status: "running",
+          nodeId: node.id,
+          moduleId: retryBoundaryRegion.boundaryModuleId,
+          nodeIndex: planNode.order,
+          heartbeat: {
+            timestamp: Date.now(),
+            nodeId: node.id,
+            moduleId: retryBoundaryRegion.boundaryModuleId,
+            nodeIndex: planNode.order,
+            message: `节点 ${node.id} 第 ${retryAttemptUsed}/${retryAttemptLimit} 次边界尝试失败，准备重跑整个片段`,
+          },
+        });
+        clearRetryBoundaryExecutionState(retryBoundaryRegion);
+        retryBoundaryAttemptById.set(
+          retryBoundaryRegion.boundaryId,
+          retryAttemptUsed + 1,
+        );
+        pendingRetryRestartByBoundaryId.set(retryBoundaryRegion.boundaryId, {
+          nodeId: node.id,
+          moduleId: retryBoundaryRegion.boundaryModuleId,
+          nodeIndex: planNode.order,
+          retryAttempt: retryAttemptUsed + 1,
+          retryAttemptLimit,
+        });
+        nodeOrderIndex = retryBoundaryRegion.firstIndex - 1;
+        continue;
+      }
       if (retryAttemptLimit > 1) {
         emitNodeEvent("retry_exhausted", {
           status: "running",
           nodeId: node.id,
-          moduleId: node.moduleId,
+          moduleId: retryBoundaryRegion?.boundaryModuleId ?? node.moduleId,
           nodeIndex: planNode.order,
           retry: createRetrySummary({
             nodeId: node.id,
-            moduleId: node.moduleId,
+            moduleId: retryBoundaryRegion?.boundaryModuleId ?? node.moduleId,
             nodeIndex: planNode.order,
             retryAttempt: retryAttemptUsed,
             retryAttemptLimit,
@@ -3822,6 +3972,7 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
   const edgeIds = new Set<string>();
   const nodeMap = new Map<string, WorkbenchNode>();
   const incomingEdgeCountByPort = new Map<string, number>();
+  let sortedNodeOrder: string[] | null = null;
 
   for (const node of graph.nodes) {
     if (nodeIds.has(node.id)) {
@@ -4078,13 +4229,43 @@ export function validateGraph(graph: WorkbenchGraph): GraphValidationResult {
     }
   }
 
-  // Check for cycles
   try {
-    topologicalSort(graph.nodes, graph.edges);
+    sortedNodeOrder = topologicalSort(graph.nodes, graph.edges).map(
+      (entry) => entry.node.id,
+    );
   } catch (error) {
     errors.push({
       message: error instanceof Error ? error.message : "图中存在循环依赖",
     });
+  }
+
+  if (sortedNodeOrder) {
+    const retryBoundaryRegions = collectRetryBoundaryRegions({
+      nodeOrder: sortedNodeOrder,
+      nodeMap,
+    });
+    for (const region of retryBoundaryRegions) {
+      if (region.lastIndex - region.firstIndex + 1 !== region.nodeIds.length) {
+        errors.push({
+          nodeId: region.nodeIds[0],
+          message: `即时重试边界 ${region.boundaryModuleId} (${region.boundaryId}) 必须形成连续的拓扑执行区域；当前边界节点被外部节点插入，无法保证 fragment 级立即重试回滚与重放语义。`,
+        });
+      }
+      const retryLimitSet = new Set(
+        region.nodeIds.map((nodeId) =>
+          Math.max(
+            1,
+            Math.trunc(Number(nodeMap.get(nodeId)?.runtimeMeta?.retryAttemptLimit) || 0),
+          ),
+        ),
+      );
+      if (retryLimitSet.size > 1) {
+        errors.push({
+          nodeId: region.nodeIds[0],
+          message: `即时重试边界 ${region.boundaryModuleId} (${region.boundaryId}) 内的节点必须共享同一个 retryAttemptLimit；当前检测到 ${[...retryLimitSet].join("、")}。`,
+        });
+      }
+    }
   }
 
   return {
