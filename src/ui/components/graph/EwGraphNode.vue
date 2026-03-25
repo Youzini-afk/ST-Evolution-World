@@ -13,10 +13,17 @@
       @pointerdown.stop="onHeaderPointerDown"
     >
       <span class="ew-graph-node__icon">{{ blueprint?.icon ?? "?" }}</span>
-      <span class="ew-graph-node__title">{{
-        node.config?._label ?? blueprint?.label ?? node.moduleId
-      }}</span>
-      <span class="ew-graph-node__module-id">{{ node.moduleId }}</span>
+      <div class="ew-graph-node__title-stack">
+        <span class="ew-graph-node__title">{{
+          node.config?._label ?? blueprint?.label ?? node.moduleId
+        }}</span>
+        <div class="ew-graph-node__meta">
+          <span class="ew-graph-node__category">
+            {{ categoryVisual.icon }} {{ categoryVisual.label }}
+          </span>
+          <span class="ew-graph-node__module-id">{{ node.moduleId }}</span>
+        </div>
+      </div>
       <button
         type="button"
         class="ew-graph-node__collapse"
@@ -44,6 +51,10 @@
         <div class="ew-graph-node__summary">
           {{ summaryText }}
         </div>
+        <div class="ew-graph-node__body-meta">
+          <span>入 {{ inPorts.length }} · 出 {{ outPorts.length }}</span>
+          <span v-if="visibleConfigCount > 0">参数 {{ visibleConfigCount }}</span>
+        </div>
       </div>
 
       <div class="ew-graph-node__ports-out">
@@ -62,6 +73,7 @@
 
 <script setup lang="ts">
 import EwGraphPort from "./EwGraphPort.vue";
+import { getModuleCategoryVisual } from "./graph-visuals";
 import { MODULE_REGISTRY } from "./module-registry";
 import type {
   ModulePortDef,
@@ -104,6 +116,10 @@ const blueprint = computed(
   () => MODULE_REGISTRY.get(props.node.moduleId) ?? null,
 );
 
+const categoryVisual = computed(() =>
+  getModuleCategoryVisual(blueprint.value?.category ?? "config"),
+);
+
 const summaryText = computed(() => {
   const configEntries = Object.entries(props.node.config ?? {})
     .filter(
@@ -125,6 +141,16 @@ const summaryText = computed(() => {
 
   return blueprint.value?.description ?? "在右侧属性面板中配置此模块";
 });
+
+const visibleConfigCount = computed(() =>
+  Object.entries(props.node.config ?? {}).filter(
+    ([key, value]) =>
+      !key.startsWith("_") &&
+      value !== "" &&
+      value !== null &&
+      value !== undefined,
+  ).length,
+);
 
 function shouldRenderPort(port: ModulePortDef): boolean {
   return !port.uiHidden || props.showHiddenPorts || isPortConnected(port.id);
@@ -218,24 +244,27 @@ defineExpose({ nodeEl, getPortCenter });
   position: absolute;
   top: 0;
   left: 0;
-  width: 240px;
-  min-height: 60px;
-  border-radius: 12px;
+  width: 280px;
+  min-height: 68px;
+  border-radius: 16px;
   background: color-mix(
     in srgb,
-    var(--node-color, #6366f1) 8%,
-    rgba(20, 20, 30, 0.92)
+    var(--node-color, #6366f1) 12%,
+    rgba(14, 18, 28, 0.96)
   );
   border: 1px solid
-    color-mix(in srgb, var(--node-color, #6366f1) 30%, transparent);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+    color-mix(in srgb, var(--node-color, #6366f1) 34%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.3),
+    0 14px 38px rgba(0, 0, 0, 0.34),
     0 0 0 1px rgba(255, 255, 255, 0.06) inset;
   cursor: default;
   user-select: none;
-  transition: box-shadow 0.2s ease;
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease;
   will-change: transform;
   transform: translateZ(0);
   -webkit-font-smoothing: antialiased;
@@ -245,27 +274,33 @@ defineExpose({ nodeEl, getPortCenter });
 
 .ew-graph-node.is-selected {
   box-shadow:
-    0 4px 24px rgba(0, 0, 0, 0.3),
-    0 0 0 2px rgba(100, 160, 255, 0.6),
-    0 0 16px rgba(100, 160, 255, 0.15);
+    0 18px 42px rgba(0, 0, 0, 0.38),
+    0 0 0 1px color-mix(in srgb, var(--node-color, #6366f1) 58%, white 20%),
+    0 0 0 3px color-mix(in srgb, var(--node-color, #6366f1) 20%, transparent),
+    0 0 22px color-mix(in srgb, var(--node-color, #6366f1) 22%, transparent);
 }
 
 .ew-graph-node:hover {
   box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    0 0 16px color-mix(in srgb, var(--node-color, #6366f1) 20%, transparent),
+    0 18px 40px rgba(0, 0, 0, 0.4),
+    0 0 18px color-mix(in srgb, var(--node-color, #6366f1) 20%, transparent),
     0 0 0 1px rgba(255, 255, 255, 0.1) inset;
 }
 
 .ew-graph-node__header {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   cursor: grab;
-  border-radius: 12px 12px 0 0;
-  background: color-mix(in srgb, var(--node-color, #6366f1) 15%, transparent);
+  border-radius: 16px 16px 0 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--node-color, #6366f1) 20%, transparent),
+      rgba(255, 255, 255, 0.02)
+    );
 }
 
 .ew-graph-node__header:active {
@@ -273,12 +308,26 @@ defineExpose({ nodeEl, getPortCenter });
 }
 
 .ew-graph-node__icon {
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--node-color, #6366f1) 20%, rgba(255, 255, 255, 0.04));
+  font-size: 15px;
   flex-shrink: 0;
 }
 
-.ew-graph-node__title {
+.ew-graph-node__title-stack {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ew-graph-node__title {
   font-size: 13px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.95);
@@ -288,13 +337,35 @@ defineExpose({ nodeEl, getPortCenter });
   letter-spacing: 0.01em;
 }
 
+.ew-graph-node__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ew-graph-node__category,
 .ew-graph-node__module-id {
-  max-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.ew-graph-node__category {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.ew-graph-node__module-id {
+  max-width: 116px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 9px;
-  line-height: 1;
   color: rgba(255, 255, 255, 0.38);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -317,31 +388,44 @@ defineExpose({ nodeEl, getPortCenter });
 .ew-graph-node__ports {
   display: flex;
   justify-content: space-between;
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 8px 8px 10px;
 }
 
 .ew-graph-node__ports-in,
 .ew-graph-node__ports-out {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  min-width: 96px;
 }
 
 .ew-graph-node__body {
-  padding: 4px 12px 8px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  overflow: hidden;
+  flex: 1;
   min-width: 0;
+  padding: 2px 8px 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.56);
+  overflow: hidden;
 }
 
 .ew-graph-node__summary {
-  line-height: 1.35;
+  line-height: 1.45;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
+}
+
+.ew-graph-node__body-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.36);
 }
 
 .ew-graph-node[data-collapsed="1"] .ew-graph-node__ports {

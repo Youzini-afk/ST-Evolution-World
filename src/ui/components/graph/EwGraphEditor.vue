@@ -42,7 +42,7 @@
                 :cx="(20 * graph.state.viewport.zoom) / 2"
                 :cy="(20 * graph.state.viewport.zoom) / 2"
                 :r="1 * graph.state.viewport.zoom"
-                fill="rgba(255, 255, 255, 0.12)"
+                fill="rgba(148, 163, 184, 0.18)"
               />
             </pattern>
           </defs>
@@ -71,7 +71,9 @@
               :source-y="getEdgeSourceY(edge)"
               :target-x="getEdgeTargetX(edge)"
               :target-y="getEdgeTargetY(edge)"
-              :source-color="getNodeColor(edge.source)"
+              :source-color="getEdgeSourceColor(edge)"
+              :target-color="getEdgeTargetColor(edge)"
+              :kind="getEdgeKind(edge)"
               :selected="selectedEdge === edge.id"
               @select="selectedEdge = $event"
               @context-menu="onEdgeContextMenu"
@@ -82,9 +84,6 @@
               class="ew-graph-editor__drag-edge"
               :d="dragEdgePath"
               fill="none"
-              stroke="rgba(255, 255, 255, 0.5)"
-              stroke-width="2"
-              stroke-dasharray="6 4"
             />
           </svg>
 
@@ -274,8 +273,10 @@ import EwGraphEdge from "./EwGraphEdge.vue";
 import EwGraphNode from "./EwGraphNode.vue";
 import EwModulePalette from "./EwModulePalette.vue";
 import EwNodePropertyPanel from "./EwNodePropertyPanel.vue";
+import { getPortTypeVisual } from "./graph-visuals";
 import { instantiateCompositeTemplate, MODULE_REGISTRY } from "./module-registry";
 import type {
+  ModulePortDef,
   WorkbenchEdge,
   WorkbenchGraph,
   WorkbenchNode,
@@ -1002,6 +1003,47 @@ function getNodeColor(nodeId: string): string {
   return MODULE_REGISTRY.get(node.moduleId)?.color ?? "#6366f1";
 }
 
+function getPortDef(
+  nodeId: string,
+  portId: string,
+  direction: "in" | "out",
+): ModulePortDef | null {
+  const node = graph.nodeMap.value.get(nodeId);
+  if (!node) {
+    return null;
+  }
+  return (
+    MODULE_REGISTRY.get(node.moduleId)?.ports.find(
+      (port) => port.direction === direction && port.id === portId,
+    ) ?? null
+  );
+}
+
+function getEdgeKind(edge: WorkbenchEdge): "data" | "activation" {
+  return getPortDef(edge.source, edge.sourcePort, "out")?.dataType === "activation"
+    ? "activation"
+    : "data";
+}
+
+function getEdgeSourceColor(edge: WorkbenchEdge): string {
+  const sourcePort = getPortDef(edge.source, edge.sourcePort, "out");
+  if (!sourcePort || sourcePort.dataType === "any") {
+    return getNodeColor(edge.source);
+  }
+  return getPortTypeVisual(sourcePort.dataType).color;
+}
+
+function getEdgeTargetColor(edge: WorkbenchEdge): string {
+  const sourcePort = getPortDef(edge.source, edge.sourcePort, "out");
+  if (!sourcePort || sourcePort.dataType === "any") {
+    return getNodeColor(edge.target);
+  }
+  if (sourcePort.dataType === "activation") {
+    return getPortTypeVisual("activation").color;
+  }
+  return getNodeColor(edge.target);
+}
+
 function getPortWorldPosition(
   nodeId: string,
   portId: string,
@@ -1045,8 +1087,8 @@ function getPortWorldPosition(
     0,
     ports.findIndex((port) => port.id === portId),
   );
-  const x = direction === "out" ? node.position.x + 240 : node.position.x;
-  const y = node.position.y + 46 + index * 24;
+  const x = direction === "out" ? node.position.x + 280 : node.position.x;
+  const y = node.position.y + 64 + index * 30;
   return { x, y };
 }
 
@@ -1697,11 +1739,10 @@ defineExpose({
   position: relative;
   flex: 1;
   overflow: hidden;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(15, 15, 30, 0.95),
-    rgba(5, 5, 15, 0.98)
-  );
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.12), transparent 26%),
+    radial-gradient(circle at bottom right, rgba(34, 197, 94, 0.08), transparent 22%),
+    radial-gradient(circle at center, rgba(18, 24, 40, 0.9), rgba(5, 8, 16, 0.98));
   cursor: grab;
 }
 
@@ -1730,6 +1771,20 @@ defineExpose({
 
 .ew-graph-editor__drag-edge {
   pointer-events: none;
+  stroke: rgba(125, 211, 252, 0.82);
+  stroke-width: 2.4px;
+  stroke-dasharray: 10 8;
+  filter: drop-shadow(0 0 8px rgba(125, 211, 252, 0.35));
+  animation: ew-drag-edge-flow 1.15s linear infinite;
+}
+
+@keyframes ew-drag-edge-flow {
+  from {
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 .ew-graph-editor__toolbar {
