@@ -1,6 +1,12 @@
 <template>
   <Teleport to="body" :disabled="!isFullscreen">
-    <div class="ew-graph-root" :class="{ 'is-fullscreen': isFullscreen }">
+    <div
+      class="ew-graph-root"
+      :class="{
+        'is-fullscreen': isFullscreen,
+        'is-embedded': embeddedShell && !isFullscreen,
+      }"
+    >
       <!-- Left palette -->
       <EwModulePalette
         v-if="showModulePalette"
@@ -112,7 +118,7 @@
         </div>
 
         <!-- Toolbar -->
-        <div class="ew-graph-editor__toolbar">
+        <div v-if="showToolbar" class="ew-graph-editor__toolbar">
           <button type="button" @click="undo" title="撤销 (Ctrl+Z)">↩</button>
           <button type="button" @click="redo" title="重做 (Ctrl+Shift+Z)">
             ↪
@@ -136,7 +142,7 @@
         </div>
 
         <!-- Canvas slot bar -->
-        <div class="ew-graph-editor__slots">
+        <div v-if="showCanvasSlots" class="ew-graph-editor__slots">
           <button
             v-for="slot in canvasSlots"
             :key="slot.id"
@@ -184,6 +190,7 @@
 
         <!-- Minimap -->
         <div
+          v-if="showMinimap"
           class="ew-graph-minimap"
           :style="{ right: minimapPos.x + 'px', bottom: minimapPos.y + 'px' }"
           @contextmenu.prevent
@@ -280,6 +287,10 @@ const props = defineProps<{
   savedSlots?: Array<any>;
   showModulePalette?: boolean;
   showPropertyPanel?: boolean;
+  showToolbar?: boolean;
+  showCanvasSlots?: boolean;
+  showMinimap?: boolean;
+  embeddedShell?: boolean;
   selectedNodeId?: string | null;
 }>();
 
@@ -291,6 +302,10 @@ const emit = defineEmits<{
 
 const showModulePalette = computed(() => props.showModulePalette !== false);
 const showPropertyPanel = computed(() => props.showPropertyPanel !== false);
+const showToolbar = computed(() => props.showToolbar !== false);
+const showCanvasSlots = computed(() => props.showCanvasSlots !== false);
+const showMinimap = computed(() => props.showMinimap !== false);
+const embeddedShell = computed(() => props.embeddedShell === true);
 
 // ── Inline reactive graph state (replaces createGraphState) ──
 const graphState = reactive({
@@ -1633,6 +1648,17 @@ onUnmounted(() => {
   emitSaveSlots();
   window.removeEventListener("keydown", onFullscreenKeydown);
 });
+
+defineExpose({
+  zoomIn,
+  zoomOut,
+  fitView,
+  autoLayout,
+  reloadCurrentSlot,
+  toggleFullscreen,
+  undo,
+  redo,
+});
 </script>
 
 <style scoped>
@@ -1647,6 +1673,13 @@ onUnmounted(() => {
     border-radius 0.22s cubic-bezier(0.25, 1, 0.5, 1),
     box-shadow 0.22s cubic-bezier(0.25, 1, 0.5, 1),
     border-color 0.22s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.ew-graph-root.is-embedded {
+  height: 100%;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
 }
 
 .ew-graph-root.is-fullscreen {

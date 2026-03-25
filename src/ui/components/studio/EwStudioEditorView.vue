@@ -4,10 +4,15 @@
       <div class="ew-studio-editor__canvas-shell">
         <div class="ew-studio-editor__canvas">
           <EwGraphEditor
+            ref="graphEditorRef"
             :graph="activeGraph"
             :saved-slots="savedSlots"
             :show-module-palette="false"
             :show-property-panel="false"
+            :show-toolbar="false"
+            :show-canvas-slots="false"
+            :show-minimap="false"
+            :embedded-shell="true"
             :selected-node-id="selectedNodeId"
             @save-slots="$emit('save-slots', $event)"
             @update:graph="onGraphUpdated"
@@ -17,22 +22,38 @@
 
         <div class="ew-studio-editor__overlay ew-studio-editor__overlay--top">
           <div class="ew-studio-editor__topbar">
-            <div class="ew-studio-editor__tabs">
-              <button
-                v-for="(graph, index) in localGraphs"
-                :key="graph.id"
-                class="ew-studio-editor__tab"
-                :class="{ active: localActiveGraphId === graph.id }"
-                @click="localActiveGraphId = graph.id"
-              >
-                {{ graph.name || `图 ${index + 1}` }}
-              </button>
-              <button
-                class="ew-studio-editor__tab ew-studio-editor__tab--add"
-                @click="addGraph"
-              >
-                +
-              </button>
+            <div class="ew-studio-editor__topbar-main">
+              <div class="ew-studio-editor__tabs">
+                <button
+                  v-for="(graph, index) in localGraphs"
+                  :key="graph.id"
+                  class="ew-studio-editor__tab"
+                  :class="{ active: localActiveGraphId === graph.id }"
+                  @click="localActiveGraphId = graph.id"
+                >
+                  {{ graph.name || `图 ${index + 1}` }}
+                </button>
+                <button
+                  class="ew-studio-editor__tab ew-studio-editor__tab--add"
+                  @click="addGraph"
+                >
+                  +
+                </button>
+              </div>
+              <div class="ew-studio-editor__meta-pills">
+                <span class="ew-studio-editor__meta-pill">
+                  模式 {{ currentBuilderMode === "simple" ? "Simple" : "Advanced" }}
+                </span>
+                <span class="ew-studio-editor__meta-pill">
+                  {{ currentGenerationOwnership === "optional_main_takeover" ? "渐进主生成接管" : "辅助工作流" }}
+                </span>
+                <span class="ew-studio-editor__meta-pill">
+                  {{ currentTiming === "before_reply" ? "回复前" : currentTiming === "after_reply" ? "回复后" : "默认" }}
+                </span>
+                <span class="ew-studio-editor__meta-pill">
+                  节点 {{ activeGraph.nodes.length }} / 连线 {{ activeGraph.edges.length }}
+                </span>
+              </div>
             </div>
             <div class="ew-studio-editor__controls">
               <button class="ew-studio-editor__ctrl" @click="renameGraph">重命名</button>
@@ -98,63 +119,6 @@
 
         <div class="ew-studio-editor__overlay ew-studio-editor__overlay--right">
           <aside class="ew-studio-editor__right">
-            <section class="ew-studio-editor__summary">
-              <div class="ew-studio-editor__summary-main">
-                <div class="ew-studio-editor__summary-item">
-                  <span>名称</span>
-                  <input
-                    v-model="activeGraph.name"
-                    class="ew-studio-editor__input"
-                    @change="emitGraphs"
-                  />
-                </div>
-                <div class="ew-studio-editor__summary-item">
-                  <span>Builder 模式</span>
-                  <div class="ew-studio-editor__mode-switch">
-                    <button
-                      class="ew-studio-editor__mode-btn"
-                      :class="{ active: currentBuilderMode === 'simple' }"
-                      @click="setBuilderMode('simple')"
-                    >
-                      Simple
-                    </button>
-                    <button
-                      class="ew-studio-editor__mode-btn"
-                      :class="{ active: currentBuilderMode === 'advanced' }"
-                      @click="setBuilderMode('advanced')"
-                    >
-                      Advanced
-                    </button>
-                  </div>
-                </div>
-                <div class="ew-studio-editor__summary-item">
-                  <span>生成定位</span>
-                  <select
-                    v-model="currentGenerationOwnership"
-                    class="ew-studio-editor__select"
-                  >
-                    <option value="assistive">辅助工作流</option>
-                    <option value="optional_main_takeover">渐进主生成接管</option>
-                  </select>
-                </div>
-                <div class="ew-studio-editor__summary-item">
-                  <span>触发时机</span>
-                  <select v-model="currentTiming" class="ew-studio-editor__select">
-                    <option value="default">默认</option>
-                    <option value="before_reply">回复前</option>
-                    <option value="after_reply">回复后</option>
-                  </select>
-                </div>
-              </div>
-              <div class="ew-studio-editor__summary-stats">
-                <span class="ew-studio-editor__stat">节点 {{ activeGraph.nodes.length }}</span>
-                <span class="ew-studio-editor__stat">连线 {{ activeGraph.edges.length }}</span>
-                <span class="ew-studio-editor__stat">
-                  模板 {{ activeTemplate?.label ?? "自定义图" }}
-                </span>
-              </div>
-            </section>
-
             <template v-if="selectedNode">
               <EwNodePropertyPanel
                 embedded
@@ -166,7 +130,8 @@
             </template>
             <template v-else>
               <section class="ew-studio-editor__card">
-                <div class="ew-studio-editor__card-label">图属性</div>
+                <div class="ew-studio-editor__card-label">Inspector</div>
+                <div class="ew-studio-editor__card-title">当前图</div>
                 <div class="ew-studio-editor__field">
                   <span>名称</span>
                   <input
@@ -195,7 +160,7 @@
                 </div>
               </section>
               <section class="ew-studio-editor__card">
-                <div class="ew-studio-editor__card-label">当前引导</div>
+                <div class="ew-studio-editor__card-label">引导</div>
                 <p class="ew-studio-editor__text">
                   {{
                     currentBuilderMode === "simple"
@@ -222,6 +187,36 @@
               </section>
             </template>
           </aside>
+        </div>
+
+        <div class="ew-studio-editor__overlay ew-studio-editor__overlay--dock">
+          <div class="ew-studio-editor__control-dock">
+            <button class="ew-studio-editor__dock-btn" @click="undoGraph" title="撤销">
+              ↩
+            </button>
+            <button class="ew-studio-editor__dock-btn" @click="redoGraph" title="重做">
+              ↪
+            </button>
+            <button class="ew-studio-editor__dock-btn" @click="zoomOutGraph" title="缩小">
+              −
+            </button>
+            <span class="ew-studio-editor__dock-zoom">{{ zoomPercent }}%</span>
+            <button class="ew-studio-editor__dock-btn" @click="zoomInGraph" title="放大">
+              +
+            </button>
+            <button class="ew-studio-editor__dock-btn" @click="fitGraph" title="适配视图">
+              ◎
+            </button>
+            <button class="ew-studio-editor__dock-btn" @click="autoLayoutGraph" title="自动排列">
+              ⊞
+            </button>
+            <button class="ew-studio-editor__dock-btn" @click="reloadGraph" title="重新加载">
+              ↻
+            </button>
+            <button class="ew-studio-editor__dock-btn" @click="toggleGraphFullscreen" title="全屏">
+              ⛶
+            </button>
+          </div>
         </div>
 
         <div class="ew-studio-editor__overlay ew-studio-editor__overlay--bottom">
@@ -291,6 +286,17 @@ import type {
   WorkbenchNode,
 } from "../graph/module-types";
 
+type GraphEditorExpose = {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitView: () => void;
+  autoLayout: () => void;
+  reloadCurrentSlot: () => void;
+  toggleFullscreen: () => void;
+  undo: () => void;
+  redo: () => void;
+};
+
 const props = withDefaults(
   defineProps<{
     graphs: WorkbenchGraph[];
@@ -322,6 +328,7 @@ const selectedNodeId = ref<string | null>(null);
 const selectedResourceEntryId = ref<string | null>(getFirstStudioComponentEntryId());
 const bottomOpen = ref(true);
 const componentDirectory = getStudioComponentDirectory();
+const graphEditorRef = ref<GraphEditorExpose | null>(null);
 
 watch(
   () => props.graphs,
@@ -427,6 +434,10 @@ const visibleRunEvents = computed(() => {
     return [];
   }
   return (props.runEvents ?? []).filter((event) => event.graphId === activeGraph.value?.id);
+});
+
+const zoomPercent = computed(() => {
+  return Math.round((activeGraph.value?.viewport.zoom ?? 1) * 100);
 });
 
 const selectedNodeDiagnostics = computed<GraphNodeDiagnosticsViewModel | null>(() => {
@@ -570,6 +581,38 @@ function getNodeLabel(node: WorkbenchNode): string {
     return node.moduleId;
   }
 }
+
+function zoomInGraph() {
+  graphEditorRef.value?.zoomIn();
+}
+
+function zoomOutGraph() {
+  graphEditorRef.value?.zoomOut();
+}
+
+function fitGraph() {
+  graphEditorRef.value?.fitView();
+}
+
+function autoLayoutGraph() {
+  graphEditorRef.value?.autoLayout();
+}
+
+function reloadGraph() {
+  graphEditorRef.value?.reloadCurrentSlot();
+}
+
+function toggleGraphFullscreen() {
+  graphEditorRef.value?.toggleFullscreen();
+}
+
+function undoGraph() {
+  graphEditorRef.value?.undo();
+}
+
+function redoGraph() {
+  graphEditorRef.value?.redo();
+}
 </script>
 
 <style scoped>
@@ -580,12 +623,7 @@ function getNodeLabel(node: WorkbenchNode): string {
 }
 
 .ew-studio-editor__workspace {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(10, 16, 32, 0.92), rgba(7, 11, 22, 0.9));
-  border-radius: 22px;
-  padding: 12px;
   min-height: min(82vh, 1080px);
-  overflow: hidden;
 }
 
 .ew-studio-editor__topbar {
@@ -593,6 +631,7 @@ function getNodeLabel(node: WorkbenchNode): string {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 10px 12px;
 }
 
 .ew-studio-editor__tabs,
@@ -602,6 +641,30 @@ function getNodeLabel(node: WorkbenchNode): string {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.ew-studio-editor__topbar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ew-studio-editor__meta-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ew-studio-editor__meta-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 11px;
 }
 
 .ew-studio-editor__tab,
@@ -625,14 +688,7 @@ function getNodeLabel(node: WorkbenchNode): string {
 }
 
 .ew-studio-editor__summary {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 18px;
-  padding: 12px 14px;
+  display: none;
 }
 
 .ew-studio-editor__summary-main {
@@ -677,19 +733,26 @@ function getNodeLabel(node: WorkbenchNode): string {
 
 .ew-studio-editor__canvas-shell {
   position: relative;
+  isolation: isolate;
   min-width: 0;
   min-height: min(78vh, 1020px);
   height: min(78vh, 1020px);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(4, 8, 18, 0.52);
-  border-radius: 22px;
+  background:
+    radial-gradient(circle at top, rgba(22, 29, 50, 0.5), transparent 42%),
+    linear-gradient(180deg, rgba(10, 16, 32, 0.94), rgba(4, 8, 18, 0.96));
+  border-radius: 24px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 24px 60px rgba(0, 0, 0, 0.28);
   overflow: hidden;
 }
 
 .ew-studio-editor__canvas {
+  position: absolute;
+  inset: 0;
   min-width: 0;
   min-height: 0;
-  height: 100%;
 }
 
 .ew-studio-editor__canvas :deep(.ew-graph-root) {
@@ -699,44 +762,52 @@ function getNodeLabel(node: WorkbenchNode): string {
 .ew-studio-editor__overlay {
   position: absolute;
   z-index: 20;
+  pointer-events: none;
 }
 
 .ew-studio-editor__overlay--top {
   top: 12px;
   left: 12px;
   right: 12px;
-  display: grid;
-  gap: 10px;
   pointer-events: none;
 }
 
 .ew-studio-editor__overlay--left {
-  top: 124px;
+  top: 86px;
   left: 12px;
-  bottom: 188px;
-  width: min(320px, calc(34% - 18px));
+  bottom: 176px;
+  width: min(300px, calc(28% - 18px));
 }
 
 .ew-studio-editor__overlay--right {
-  top: 124px;
+  top: 86px;
   right: 12px;
-  bottom: 188px;
-  width: min(320px, calc(30% - 18px));
+  bottom: 176px;
+  width: min(320px, calc(28% - 18px));
 }
 
 .ew-studio-editor__overlay--bottom {
-  left: 12px;
-  right: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 12px;
+  width: min(920px, calc(100% - 24px));
+}
+
+.ew-studio-editor__overlay--dock {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(12px + 56px + 12px);
+  width: auto;
 }
 
 .ew-studio-editor__topbar,
 .ew-studio-editor__summary,
 .ew-studio-editor__left,
 .ew-studio-editor__right,
-.ew-studio-editor__bottom {
+.ew-studio-editor__bottom,
+.ew-studio-editor__control-dock {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 12, 24, 0.68);
+  background: rgba(8, 12, 24, 0.74);
   border-radius: 18px;
   pointer-events: auto;
 }
@@ -748,6 +819,7 @@ function getNodeLabel(node: WorkbenchNode): string {
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  backdrop-filter: blur(18px);
 }
 
 .ew-studio-editor__left-panel {
@@ -801,7 +873,8 @@ function getNodeLabel(node: WorkbenchNode): string {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 240px;
+  max-height: 210px;
+  backdrop-filter: blur(18px);
 }
 
 .ew-studio-editor__empty {
@@ -821,15 +894,46 @@ function getNodeLabel(node: WorkbenchNode): string {
 }
 
 .ew-studio-editor__bottom-body {
-  min-height: 220px;
-  max-height: 320px;
+  min-height: 150px;
+  max-height: 210px;
   overflow: auto;
+}
+
+.ew-studio-editor__control-dock {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  backdrop-filter: blur(18px);
+}
+
+.ew-studio-editor__dock-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+}
+
+.ew-studio-editor__dock-zoom {
+  min-width: 52px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+}
+
+.ew-studio-editor__card-title {
+  font-size: 18px;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.94);
 }
 
 @media (max-width: 1280px) {
   .ew-studio-editor__overlay--left,
   .ew-studio-editor__overlay--right {
-    width: 280px;
+    width: 260px;
   }
 
   .ew-studio-editor__summary,
@@ -856,10 +960,16 @@ function getNodeLabel(node: WorkbenchNode): string {
   .ew-studio-editor__canvas-shell {
     display: grid;
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto minmax(360px, 1fr) auto auto;
+    grid-template-rows: auto auto minmax(360px, 1fr) auto auto auto;
     gap: 10px;
     padding: 12px;
     overflow: auto;
+  }
+
+  .ew-studio-editor__overlay--dock {
+    left: auto;
+    right: auto;
+    transform: none;
   }
 
   .ew-studio-editor__summary-main {
