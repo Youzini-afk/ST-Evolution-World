@@ -121,11 +121,13 @@ function toggleExpanded(entryId: string) {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  padding: 2px;
+  border-radius: 14px;
 }
 
 .ew-studio-tree__row.active {
   background: rgba(99, 102, 241, 0.16);
-  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.18);
 }
 
 .ew-studio-tree__toggle {
@@ -151,12 +153,22 @@ function toggleExpanded(entryId: string) {
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  border: 0;
-  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
   color: rgba(255, 255, 255, 0.88);
   padding: 8px 10px;
   cursor: pointer;
   text-align: left;
+}
+
+.ew-studio-tree__label:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ew-studio-tree__entry[data-kind="group"] > .ew-studio-tree__row .ew-studio-tree__label {
+  background: rgba(255, 255, 255, 0.02);
+  font-weight: 600;
 }
 
 .ew-studio-tree__label small {
@@ -171,6 +183,7 @@ function toggleExpanded(entryId: string) {
   border-radius: 10px;
   padding: 6px 10px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .ew-studio-tree__children {

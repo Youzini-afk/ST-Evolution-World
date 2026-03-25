@@ -405,10 +405,31 @@ function toJsonFieldValue(key: string): string {
   right: auto;
   width: 100%;
   height: 100%;
-  border-left: 0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
   box-shadow: none;
+}
+
+.ew-prop-panel.is-embedded .ew-prop-panel__header {
+  padding: 0 0 10px;
+}
+
+.ew-prop-panel.is-embedded .ew-prop-panel__desc {
+  padding: 0 0 12px;
+}
+
+.ew-prop-panel.is-embedded .ew-prop-panel__body {
+  padding: 0;
+}
+
+.ew-prop-panel.is-embedded .ew-prop-panel__section {
+  padding: 6px 0 10px;
+}
+
+.ew-prop-panel.is-embedded .ew-prop-panel__close {
+  display: none;
 }
 
 /* Slide animation */

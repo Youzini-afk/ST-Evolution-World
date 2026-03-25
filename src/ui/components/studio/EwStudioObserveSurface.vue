@@ -333,4 +333,52 @@ function formatEventTime(timestamp: number): string {
   color: rgba(255, 255, 255, 0.9);
   font-size: 12px;
 }
+
+.ew-studio-observe[data-embedded="1"] {
+  gap: 8px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__tabs {
+  gap: 4px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__tab {
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__stack {
+  gap: 8px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__chip {
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__kv {
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__kv span {
+  padding-top: 2px;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__kv strong {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__text,
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__empty,
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__timeline-copy {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ew-studio-observe[data-embedded="1"] .ew-studio-observe__timeline-item {
+  padding: 8px 10px;
+}
 </style>

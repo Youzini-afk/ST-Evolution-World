@@ -40,19 +40,37 @@
                   +
                 </button>
               </div>
-              <div class="ew-studio-editor__meta-pills">
-                <span class="ew-studio-editor__meta-pill">
-                  模式 {{ currentBuilderMode === "simple" ? "Simple" : "Advanced" }}
-                </span>
-                <span class="ew-studio-editor__meta-pill">
-                  {{ currentGenerationOwnership === "optional_main_takeover" ? "渐进主生成接管" : "辅助工作流" }}
-                </span>
-                <span class="ew-studio-editor__meta-pill">
-                  {{ currentTiming === "before_reply" ? "回复前" : currentTiming === "after_reply" ? "回复后" : "默认" }}
-                </span>
-                <span class="ew-studio-editor__meta-pill">
-                  节点 {{ activeGraph.nodes.length }} / 连线 {{ activeGraph.edges.length }}
-                </span>
+              <div class="ew-studio-editor__topbar-strip">
+                <div class="ew-studio-editor__meta-pills">
+                  <span class="ew-studio-editor__meta-pill">
+                    {{ currentGenerationOwnership === "optional_main_takeover" ? "渐进主生成接管" : "辅助工作流" }}
+                  </span>
+                  <span class="ew-studio-editor__meta-pill">
+                    {{ currentTiming === "before_reply" ? "回复前" : currentTiming === "after_reply" ? "回复后" : "默认" }}
+                  </span>
+                  <span class="ew-studio-editor__meta-pill">
+                    模板 {{ currentTemplateLabel }}
+                  </span>
+                  <span class="ew-studio-editor__meta-pill">
+                    节点 {{ activeGraph.nodes.length }} / 连线 {{ activeGraph.edges.length }}
+                  </span>
+                </div>
+                <div class="ew-studio-editor__mode-switch">
+                  <button
+                    class="ew-studio-editor__mode-btn"
+                    :class="{ active: currentBuilderMode === 'simple' }"
+                    @click="setBuilderMode('simple')"
+                  >
+                    Simple
+                  </button>
+                  <button
+                    class="ew-studio-editor__mode-btn"
+                    :class="{ active: currentBuilderMode === 'advanced' }"
+                    @click="setBuilderMode('advanced')"
+                  >
+                    Advanced
+                  </button>
+                </div>
               </div>
             </div>
             <div class="ew-studio-editor__controls">
@@ -67,8 +85,36 @@
           </div>
         </div>
 
-        <div class="ew-studio-editor__overlay ew-studio-editor__overlay--left">
-          <aside class="ew-studio-editor__left">
+        <div
+          class="ew-studio-editor__overlay ew-studio-editor__overlay--left"
+          :data-collapsed="leftDockOpen ? '0' : '1'"
+        >
+          <button
+            type="button"
+            class="ew-studio-editor__edge-toggle ew-studio-editor__edge-toggle--left"
+            @click="leftDockOpen = !leftDockOpen"
+          >
+            {{ leftDockOpen ? "收起构件" : "构件抽屉" }}
+          </button>
+          <aside v-if="leftDockOpen" class="ew-studio-editor__left">
+            <div class="ew-studio-editor__rail-head">
+              <div>
+                <div class="ew-studio-editor__card-label">Workspace</div>
+                <div class="ew-studio-editor__rail-title">
+                  {{ leftTab === "components" ? "构件抽屉" : "图结构" }}
+                </div>
+                <p class="ew-studio-editor__rail-copy">
+                  {{
+                    leftTab === "components"
+                      ? "把包、片段和模块当成工作台抽屉来用，先选再插入到画布。"
+                      : "按画布位置快速查看当前图的节点脉络，适合大图定位。"
+                  }}
+                </p>
+              </div>
+              <span class="ew-studio-editor__rail-counter">
+                {{ leftTab === "components" ? filteredComponentModuleCount : filteredGraphNodes.length }}
+              </span>
+            </div>
             <div class="ew-studio-editor__left-tabs">
               <button
                 class="ew-studio-editor__left-tab"
@@ -85,26 +131,70 @@
                 当前图结构
               </button>
             </div>
+            <div class="ew-studio-editor__rail-search">
+              <input
+                v-model="leftFilter"
+                class="ew-studio-editor__input"
+                :placeholder="
+                  leftTab === 'components'
+                    ? '筛选构件、片段或模块'
+                    : '筛选节点名或模块 id'
+                "
+              />
+            </div>
 
             <div v-if="leftTab === 'components'" class="ew-studio-editor__left-panel">
-              <p class="ew-studio-editor__hint">
-                模板以下的资源统一视为构件体系，可逐层展开并插入到当前图。
-              </p>
+              <section
+                v-if="selectedComponentEntry"
+                class="ew-studio-editor__card ew-studio-editor__card--spotlight"
+              >
+                <div class="ew-studio-editor__card-label">当前选中</div>
+                <div class="ew-studio-editor__card-title">
+                  {{ selectedComponentEntry.label }}
+                </div>
+                <p class="ew-studio-editor__rail-copy">
+                  {{ selectedComponentEntry.description }}
+                </p>
+                <div class="ew-studio-editor__tags">
+                  <span class="ew-studio-editor__tag">
+                    {{ selectedComponentEntry.compositeKind ?? "atomic" }}
+                  </span>
+                  <span
+                    v-if="selectedComponentEntry.recommendedBuilderMode"
+                    class="ew-studio-editor__tag"
+                  >
+                    建议 {{ selectedComponentEntry.recommendedBuilderMode }}
+                  </span>
+                </div>
+                <button
+                  v-if="selectedComponentEntry.moduleId"
+                  class="ew-studio-editor__ctrl ew-studio-editor__ctrl--primary"
+                  @click="insertComponent(selectedComponentEntry.moduleId)"
+                >
+                  插入到当前图
+                </button>
+              </section>
               <EwStudioComponentTree
-                :entries="componentDirectory"
+                :entries="filteredComponentEntries"
                 :selected-id="selectedResourceEntryId"
                 insertable
                 @select="selectedResourceEntryId = $event"
                 @insert="insertComponent"
               />
+              <div
+                v-if="filteredComponentEntries.length === 0"
+                class="ew-studio-editor__rail-empty"
+              >
+                没有找到匹配的构件，试试更短的关键词。
+              </div>
             </div>
 
             <div v-else class="ew-studio-editor__left-panel">
               <p class="ew-studio-editor__hint">
-                当前图结构按画布位置排序，点击可切到对应节点属性。
+                当前图结构按画布位置排序，点击即可把 inspector 切到对应节点。
               </p>
               <button
-                v-for="node in sortedGraphNodes"
+                v-for="node in filteredGraphNodes"
                 :key="node.id"
                 class="ew-studio-editor__structure-node"
                 :class="{ active: selectedNodeId === node.id }"
@@ -113,13 +203,57 @@
                 <strong>{{ getNodeLabel(node) }}</strong>
                 <span>{{ node.moduleId }}</span>
               </button>
+              <div
+                v-if="filteredGraphNodes.length === 0"
+                class="ew-studio-editor__rail-empty"
+              >
+                当前筛选条件下没有匹配节点。
+              </div>
             </div>
           </aside>
         </div>
 
-        <div class="ew-studio-editor__overlay ew-studio-editor__overlay--right">
-          <aside class="ew-studio-editor__right">
+        <div
+          class="ew-studio-editor__overlay ew-studio-editor__overlay--right"
+          :data-collapsed="rightDockOpen ? '0' : '1'"
+        >
+          <button
+            type="button"
+            class="ew-studio-editor__edge-toggle ew-studio-editor__edge-toggle--right"
+            @click="rightDockOpen = !rightDockOpen"
+          >
+            {{ rightDockOpen ? "收起 Inspector" : selectedNode ? "节点 Inspector" : "图 Inspector" }}
+          </button>
+          <aside v-if="rightDockOpen" class="ew-studio-editor__right">
+            <div class="ew-studio-editor__rail-head ew-studio-editor__rail-head--right">
+              <div>
+                <div class="ew-studio-editor__card-label">Inspector</div>
+                <div class="ew-studio-editor__rail-title">
+                  {{ selectedNode ? getNodeLabel(selectedNode) : activeGraph.name || "当前图" }}
+                </div>
+                <p class="ew-studio-editor__rail-copy">
+                  {{
+                    selectedNode
+                      ? `${selectedNode.moduleId} · ${Math.round(selectedNode.position.x)}, ${Math.round(selectedNode.position.y)}`
+                      : "右侧只做选中对象和图级事实，不再承担整块总结看板。"
+                  }}
+                </p>
+              </div>
+              <button
+                v-if="selectedNode"
+                class="ew-studio-editor__ctrl"
+                @click="selectedNodeId = null"
+              >
+                回到图级
+              </button>
+            </div>
             <template v-if="selectedNode">
+              <div class="ew-studio-editor__tags">
+                <span class="ew-studio-editor__tag">{{ selectedNode.moduleId }}</span>
+                <span class="ew-studio-editor__tag">
+                  {{ currentBuilderMode === "simple" ? "Simple" : "Advanced" }}
+                </span>
+              </div>
               <EwNodePropertyPanel
                 embedded
                 :node="selectedNode"
@@ -130,8 +264,17 @@
             </template>
             <template v-else>
               <section class="ew-studio-editor__card">
-                <div class="ew-studio-editor__card-label">Inspector</div>
+                <div class="ew-studio-editor__card-label">图概览</div>
                 <div class="ew-studio-editor__card-title">当前图</div>
+                <div class="ew-studio-editor__tags">
+                  <span class="ew-studio-editor__tag">
+                    {{ activeGraph.enabled ? "已启用" : "已禁用" }}
+                  </span>
+                  <span class="ew-studio-editor__tag">{{ currentTemplateLabel }}</span>
+                  <span class="ew-studio-editor__tag">
+                    节点 {{ activeGraph.nodes.length }}
+                  </span>
+                </div>
                 <div class="ew-studio-editor__field">
                   <span>名称</span>
                   <input
@@ -157,6 +300,25 @@
                     <option value="before_reply">回复前</option>
                     <option value="after_reply">回复后</option>
                   </select>
+                </div>
+                <div class="ew-studio-editor__field">
+                  <span>Builder 模式</span>
+                  <div class="ew-studio-editor__mode-switch">
+                    <button
+                      class="ew-studio-editor__mode-btn"
+                      :class="{ active: currentBuilderMode === 'simple' }"
+                      @click="setBuilderMode('simple')"
+                    >
+                      Simple
+                    </button>
+                    <button
+                      class="ew-studio-editor__mode-btn"
+                      :class="{ active: currentBuilderMode === 'advanced' }"
+                      @click="setBuilderMode('advanced')"
+                    >
+                      Advanced
+                    </button>
+                  </div>
                 </div>
               </section>
               <section class="ew-studio-editor__card">
@@ -222,15 +384,32 @@
         <div class="ew-studio-editor__overlay ew-studio-editor__overlay--bottom">
           <section class="ew-studio-editor__bottom" :data-open="bottomOpen ? '1' : '0'">
             <div class="ew-studio-editor__bottom-header">
-              <div>
+              <div class="ew-studio-editor__bottom-heading">
                 <div class="ew-studio-editor__card-label">运行观测</div>
                 <p class="ew-studio-editor__bottom-copy">
-                  默认半开，围绕当前工作流展示运行摘要、关键节点诊断与事件时间线。
+                  围绕当前工作流展示运行摘要、关键节点诊断与事件时间线。
                 </p>
+                <div
+                  v-if="observeSummaryChips.length > 0"
+                  class="ew-studio-editor__bottom-meta"
+                >
+                  <span
+                    v-for="chip in observeSummaryChips"
+                    :key="chip"
+                    class="ew-studio-editor__tag"
+                  >
+                    {{ chip }}
+                  </span>
+                </div>
               </div>
-              <button class="ew-studio-editor__ctrl" @click="bottomOpen = !bottomOpen">
-                {{ bottomOpen ? "收起" : "展开" }}
-              </button>
+              <div class="ew-studio-editor__bottom-actions">
+                <button class="ew-studio-editor__ctrl" @click="$emit('open-observe')">
+                  全页观测
+                </button>
+                <button class="ew-studio-editor__ctrl" @click="bottomOpen = !bottomOpen">
+                  {{ bottomOpen ? "收起" : "展开" }}
+                </button>
+              </div>
             </div>
             <div v-if="bottomOpen" class="ew-studio-editor__bottom-body">
               <EwStudioObserveSurface
@@ -271,9 +450,11 @@ import {
   resolveModuleConfigWithDefaults,
 } from "../graph/module-registry";
 import {
+  findStudioComponentDirectoryEntry,
   getStudioComponentDirectory,
   getFirstStudioComponentEntryId,
 } from "../graph/studio-library";
+import type { StudioComponentDirectoryEntry } from "../graph/studio-library";
 import type {
   GraphActiveRunSummaryViewModel,
   GraphNodeDiagnosticsViewModel,
@@ -324,6 +505,9 @@ const emit = defineEmits<{
 const localGraphs = ref<WorkbenchGraph[]>(klona(props.graphs));
 const localActiveGraphId = ref(props.activeGraphId || localGraphs.value[0]?.id || "");
 const leftTab = ref<"components" | "structure">("components");
+const leftDockOpen = ref(true);
+const rightDockOpen = ref(true);
+const leftFilter = ref("");
 const selectedNodeId = ref<string | null>(null);
 const selectedResourceEntryId = ref<string | null>(getFirstStudioComponentEntryId());
 const bottomOpen = ref(true);
@@ -356,6 +540,16 @@ watch(localActiveGraphId, (graphId) => {
   emit("update:activeGraphId", graphId);
 });
 
+watch(leftTab, () => {
+  leftFilter.value = "";
+});
+
+watch(selectedNodeId, (nodeId) => {
+  if (nodeId) {
+    rightDockOpen.value = true;
+  }
+});
+
 const activeGraph = computed(() => {
   return localGraphs.value.find((graph) => graph.id === localActiveGraphId.value) ?? null;
 });
@@ -363,6 +557,8 @@ const activeGraph = computed(() => {
 const activeTemplate = computed(() =>
   findBuilderWorkflowTemplate(activeGraph.value?.runtimeMeta?.templateId),
 );
+
+const currentTemplateLabel = computed(() => activeTemplate.value?.label ?? "自定义图");
 
 const currentBuilderMode = computed<WorkbenchBuilderMode>({
   get() {
@@ -440,6 +636,18 @@ const zoomPercent = computed(() => {
   return Math.round((activeGraph.value?.viewport.zoom ?? 1) * 100);
 });
 
+const selectedComponentEntry = computed(() => {
+  return findStudioComponentDirectoryEntry(selectedResourceEntryId.value, componentDirectory);
+});
+
+const filteredComponentEntries = computed(() => {
+  return filterStudioComponentEntries(componentDirectory, leftFilter.value);
+});
+
+const filteredComponentModuleCount = computed(() => {
+  return countStudioComponentModules(filteredComponentEntries.value);
+});
+
 const selectedNodeDiagnostics = computed<GraphNodeDiagnosticsViewModel | null>(() => {
   const diagnostics = visibleActiveRunSummary.value?.nodeDiagnostics;
   if (!diagnostics || !selectedNodeId.value) {
@@ -455,6 +663,40 @@ const sortedGraphNodes = computed(() => {
     }
     return left.position.y - right.position.y;
   });
+});
+
+const filteredGraphNodes = computed(() => {
+  const needle = normalizeStudioSearch(leftFilter.value);
+  if (!needle) {
+    return sortedGraphNodes.value;
+  }
+  return sortedGraphNodes.value.filter((node) => {
+    return [getNodeLabel(node), node.moduleId]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.toLowerCase().includes(needle));
+  });
+});
+
+const observeSummaryChips = computed(() => {
+  if (visibleActiveRunSummary.value) {
+    return [
+      visibleActiveRunSummary.value.statusLabel,
+      visibleActiveRunSummary.value.phaseLabel,
+      visibleActiveRunSummary.value.latestNodeLabel,
+      visibleActiveRunSummary.value.latestRetryLabel,
+    ].filter((value): value is string => Boolean(value));
+  }
+  if (visibleDiagnosticsSummary.value) {
+    return [
+      visibleDiagnosticsSummary.value.runStatusLabel,
+      `指纹 ${visibleDiagnosticsSummary.value.compileFingerprintShort}`,
+      `节点 ${visibleDiagnosticsSummary.value.nodeCount}`,
+      visibleDiagnosticsSummary.value.retryExhaustedNodeCount > 0
+        ? `重试耗尽 ${visibleDiagnosticsSummary.value.retryExhaustedNodeCount}`
+        : "",
+    ].filter((value): value is string => Boolean(value));
+  }
+  return [];
 });
 
 function emitGraphs() {
@@ -582,6 +824,47 @@ function getNodeLabel(node: WorkbenchNode): string {
   }
 }
 
+function normalizeStudioSearch(input: string): string {
+  return input.trim().toLowerCase();
+}
+
+function filterStudioComponentEntries(
+  entries: StudioComponentDirectoryEntry[],
+  rawQuery: string,
+): StudioComponentDirectoryEntry[] {
+  const query = normalizeStudioSearch(rawQuery);
+  if (!query) {
+    return entries;
+  }
+
+  return entries.flatMap((entry) => {
+    const matchesSelf = [entry.label, entry.description, entry.moduleId]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.toLowerCase().includes(query));
+    const filteredChildren = filterStudioComponentEntries(entry.children, query);
+    if (!matchesSelf && filteredChildren.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...entry,
+        children: matchesSelf ? entry.children : filteredChildren,
+      },
+    ];
+  });
+}
+
+function countStudioComponentModules(entries: StudioComponentDirectoryEntry[]): number {
+  let total = 0;
+  for (const entry of entries) {
+    if (entry.kind === "module") {
+      total += 1;
+    }
+    total += countStudioComponentModules(entry.children);
+  }
+  return total;
+}
+
 function zoomInGraph() {
   graphEditorRef.value?.zoomIn();
 }
@@ -628,10 +911,10 @@ function redoGraph() {
 
 .ew-studio-editor__topbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 10px 12px 12px;
 }
 
 .ew-studio-editor__tabs,
@@ -648,6 +931,15 @@ function redoGraph() {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  flex: 1;
+}
+
+.ew-studio-editor__topbar-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .ew-studio-editor__meta-pills {
@@ -659,10 +951,11 @@ function redoGraph() {
 .ew-studio-editor__meta-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 26px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.84);
   font-size: 11px;
 }
@@ -677,6 +970,16 @@ function redoGraph() {
   border-radius: 999px;
   padding: 7px 12px;
   cursor: pointer;
+}
+
+.ew-studio-editor__controls {
+  justify-content: flex-end;
+}
+
+.ew-studio-editor__ctrl--primary {
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: rgba(255, 255, 255, 0.98);
 }
 
 .ew-studio-editor__tab.active,
@@ -703,6 +1006,13 @@ function redoGraph() {
 .ew-studio-editor__card {
   display: grid;
   gap: 6px;
+}
+
+.ew-studio-editor__card {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .ew-studio-editor__summary-item span,
@@ -776,14 +1086,14 @@ function redoGraph() {
   top: 86px;
   left: 12px;
   bottom: 176px;
-  width: min(300px, calc(28% - 18px));
+  width: min(296px, calc(26% - 18px));
 }
 
 .ew-studio-editor__overlay--right {
   top: 86px;
   right: 12px;
   bottom: 176px;
-  width: min(320px, calc(28% - 18px));
+  width: min(308px, calc(25% - 18px));
 }
 
 .ew-studio-editor__overlay--bottom {
@@ -807,19 +1117,72 @@ function redoGraph() {
 .ew-studio-editor__bottom,
 .ew-studio-editor__control-dock {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 12, 24, 0.74);
-  border-radius: 18px;
+  background: rgba(8, 12, 24, 0.72);
+  border-radius: 20px;
   pointer-events: auto;
 }
 
 .ew-studio-editor__left,
 .ew-studio-editor__right {
+  height: 100%;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
   backdrop-filter: blur(18px);
+}
+
+.ew-studio-editor__rail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ew-studio-editor__rail-head--right {
+  align-items: center;
+}
+
+.ew-studio-editor__rail-title {
+  font-size: 17px;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.ew-studio-editor__rail-copy {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.ew-studio-editor__rail-counter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 12px;
+}
+
+.ew-studio-editor__rail-search {
+  display: grid;
+  gap: 6px;
+}
+
+.ew-studio-editor__rail-empty {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .ew-studio-editor__left-panel {
@@ -840,11 +1203,18 @@ function redoGraph() {
   color: rgba(255, 255, 255, 0.68);
 }
 
+.ew-studio-editor__card--spotlight {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .ew-studio-editor__structure-node {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   display: grid;
   gap: 4px;
   text-align: left;
@@ -860,20 +1230,20 @@ function redoGraph() {
 .ew-studio-editor__input,
 .ew-studio-editor__select {
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.92);
   padding: 0 12px;
 }
 
 .ew-studio-editor__bottom {
-  padding: 12px 14px;
+  padding: 12px 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: 210px;
+  gap: 8px;
+  max-height: 220px;
   backdrop-filter: blur(18px);
 }
 
@@ -893,9 +1263,27 @@ function redoGraph() {
   gap: 12px;
 }
 
+.ew-studio-editor__bottom-heading,
+.ew-studio-editor__bottom-actions,
+.ew-studio-editor__bottom-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ew-studio-editor__bottom-heading {
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.ew-studio-editor__bottom-actions {
+  justify-content: flex-end;
+}
+
 .ew-studio-editor__bottom-body {
-  min-height: 150px;
-  max-height: 210px;
+  min-height: 132px;
+  max-height: 180px;
   overflow: auto;
 }
 
@@ -925,15 +1313,55 @@ function redoGraph() {
 }
 
 .ew-studio-editor__card-title {
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
   color: rgba(255, 255, 255, 0.94);
+}
+
+.ew-studio-editor__edge-toggle {
+  position: absolute;
+  top: 14px;
+  width: 34px;
+  min-height: 120px;
+  padding: 10px 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(7, 10, 20, 0.88);
+  color: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.ew-studio-editor__edge-toggle--left {
+  left: -6px;
+}
+
+.ew-studio-editor__edge-toggle--right {
+  right: -6px;
+}
+
+.ew-studio-editor__overlay--left[data-collapsed="1"],
+.ew-studio-editor__overlay--right[data-collapsed="1"] {
+  bottom: auto;
+  width: 34px;
+}
+
+.ew-studio-editor__overlay--left[data-collapsed="1"] {
+  top: 124px;
+}
+
+.ew-studio-editor__overlay--right[data-collapsed="1"] {
+  top: 124px;
 }
 
 @media (max-width: 1280px) {
   .ew-studio-editor__overlay--left,
   .ew-studio-editor__overlay--right {
-    width: 260px;
+    width: 252px;
   }
 
   .ew-studio-editor__summary,
@@ -970,6 +1398,20 @@ function redoGraph() {
     left: auto;
     right: auto;
     transform: none;
+  }
+
+  .ew-studio-editor__edge-toggle {
+    position: static;
+    writing-mode: horizontal-tb;
+    min-height: 40px;
+    width: auto;
+    border-radius: 999px;
+    letter-spacing: normal;
+  }
+
+  .ew-studio-editor__overlay--left[data-collapsed="1"],
+  .ew-studio-editor__overlay--right[data-collapsed="1"] {
+    width: auto;
   }
 
   .ew-studio-editor__summary-main {
